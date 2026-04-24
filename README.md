@@ -15,7 +15,7 @@ It is meant for radio-side computers like a Raspberry Pi, an Apache Labs ANAN G2
 
 ## What you need
 
-- An SPE Expert amplifier. Development and live testing have used an Expert 1.3K-FA; the protocol family should be relevant to other SPE Expert models such as the 1.5K-FA and 2K-FA, but those still need user confirmation.
+- An SPE Expert amplifier. Development and live testing started on an Expert 1.3K-FA, and a user has also reported it running on an Expert 1.5K-FA. The 2K-FA is the same documented family but still needs user confirmation.
 - A Raspberry Pi or other small Linux computer near the amp.
 - A USB cable from that computer to the amp's USB control port. On SPE Expert amps this is the built-in USB Type-B control connection, not the separate CAT radio serial ports.
 - A trusted station LAN so your browser, Node-RED host, logger, or radio-control computer can reach the server.
