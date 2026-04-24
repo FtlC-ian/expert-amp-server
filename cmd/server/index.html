@@ -794,7 +794,7 @@
     }
 
     /* ═══════════════════════════════════════════════
-       1.3K FRONT PANEL LAYOUT
+       SPE EXPERT FRONT PANEL LAYOUT
     ═══════════════════════════════════════════════ */
 
     /* Outer chassis wrapper */
@@ -1040,7 +1040,7 @@
         <!-- Chassis header -->
         <div class="panel-1k3-header">
           <span class="panel-1k3-brand">SPE Expert</span>
-          <span class="panel-1k3-model" id="panel-model-label">1.3K</span>
+          <span class="panel-1k3-model" id="panel-model-label">SPE</span>
         </div>
 
         <!-- Main body: left cluster | display | right cluster -->
@@ -2039,7 +2039,7 @@
       setLed('led-on', 'led-off');
       setLed('led-tune', 'led-off');
       setLed('led-set', 'led-off');
-      if (panelModelLabel) panelModelLabel.textContent = '1.3K';
+      if (panelModelLabel) panelModelLabel.textContent = 'SPE';
     }
 
     function updateStatusIndicators(status) {
@@ -2050,7 +2050,7 @@
       }
 
       if (panelModelLabel) {
-        panelModelLabel.textContent = status.modelName || '1.3K';
+        panelModelLabel.textContent = shortModelLabel(status.modelName) || 'SPE';
       }
 
       const headerModel = document.getElementById('header-model');
