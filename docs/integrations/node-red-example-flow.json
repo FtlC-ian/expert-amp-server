@@ -1,0 +1,1635 @@
+[
+  {
+    "id": "e7f8cbd87d347be8",
+    "type": "tab",
+    "label": "Expert Amp Server v1",
+    "disabled": false,
+    "info": "Dashboard-fidelity Expert Amp Server flow. Preserves WB2WGH CSS, button styles, groups (SPE/SPE Auxiliary), gauges, and level indicators. Live status is websocket-first via /api/v1/status/ws with HTTP fallback polling. Display render stays on its own refresh path. Required: node-red-dashboard, node-red-contrib-ui-level."
+  },
+  {
+    "id": "2dd93cb9ed85feb5",
+    "type": "ui_tab",
+    "name": "Expert Amp",
+    "icon": "dashboard",
+    "order": 1,
+    "disabled": false,
+    "hidden": false
+  },
+  {
+    "id": "56fa70fb783eafc8",
+    "type": "ui_group",
+    "z": "e7f8cbd87d347be8",
+    "name": "Default",
+    "tab": "2dd93cb9ed85feb5",
+    "order": 1,
+    "disp": false,
+    "width": 6,
+    "collapse": false
+  },
+  {
+    "id": "39b7b3f4da507418",
+    "type": "ui_group",
+    "z": "e7f8cbd87d347be8",
+    "name": "Display",
+    "tab": "2dd93cb9ed85feb5",
+    "order": 2,
+    "disp": true,
+    "width": 12,
+    "collapse": true,
+    "className": ""
+  },
+  {
+    "id": "7289d09cb900b64b",
+    "type": "ui_group",
+    "z": "e7f8cbd87d347be8",
+    "name": "SPE",
+    "tab": "2dd93cb9ed85feb5",
+    "order": 3,
+    "disp": true,
+    "width": 6,
+    "collapse": false
+  },
+  {
+    "id": "0bc47e0db6c53ad2",
+    "type": "ui_group",
+    "z": "e7f8cbd87d347be8",
+    "name": "SPE Auxiliary",
+    "tab": "2dd93cb9ed85feb5",
+    "order": 4,
+    "disp": true,
+    "width": 4,
+    "collapse": false
+  },
+  {
+    "id": "20525247da9315ee",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "56fa70fb783eafc8",
+    "name": "SPE Master CSS",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "format": "<style>\n  .SPEhoverblue:hover {\n    color: blue;\n    border-radius: 10px;\n    border: 5px solid blue;\n  }\n  .SPEhoverred:hover {\n    color: red;\n    border-radius: 10px;\n    border: 5px solid red;\n  }\n  .SPEfilled {\n    height: 100% !important;\n    padding: 0 !important;\n    margin: 0 !important;\n  }\n  .SPEnr-dashboard-template {\n    padding: 0;\n    margin: 0;\n  }\n  .SPErounded {\n    border-radius: 12px 12px 12px 12px;\n  }\n  .SPEbigfont {\n    font-size: 18px;\n  }\n  .SPEmedfont {\n    font-size: 16px;\n  }\n  .SPEsmallfont {\n    font-size: 12px;\n  }\n</style>\n\n<script>\n$('.SPEvibrate').on('click', function() {\n  navigator.vibrate(100);\n});\n\nfunction restore_bg(x) {\n  $(this).css(\"background-color\", x);\n}\n\n$('.SPEtouched').on('mousedown', function() {\n  var x = $(this).css(\"background-color\");\n  $(this).css(\"background-color\", \"yellow\");\n  setTimeout(restore_bg.bind(this, x), 100);\n  navigator.vibrate(80);\n});\n</script>",
+    "storeOutMessages": true,
+    "fwdInMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "global",
+    "className": "",
+    "x": 100,
+    "y": 40,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "40a9479fb992e24e",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "39b7b3f4da507418",
+    "name": "Expert Amp Display Render",
+    "order": 1,
+    "width": 12,
+    "height": 4,
+    "format": "<div style=\"text-align:center; padding:0; margin:0; line-height:0;\">\n  <img ng-src=\"{{msg.renderPngFresh}}\" alt=\"Expert Amp Display\" style=\"display:block; max-width:100%; height:auto; margin:0 auto; border:1px solid #444; border-radius:4px;\" onerror=\"this.style.opacity=0.3\" />\n</div>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 300,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "4da15fe02432dff8",
+    "type": "inject",
+    "z": "e7f8cbd87d347be8",
+    "name": "Initialize (startup)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 80,
+    "wires": [
+      [
+        "aaebf421bfe30089",
+        "3ca0d10195c1d327"
+      ]
+    ]
+  },
+  {
+    "id": "aaebf421bfe30089",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Set expertAmpBaseUrl",
+    "func": "// Expert Amp Server base URL\n// Change this to match your installation (e.g. http://192.168.1.100:8088)\nconst baseUrl = 'http://localhost:8088';\nflow.set('expertAmpBaseUrl', baseUrl);\nflow.set('wsConnected', false);\nflow.set('statusTransport', 'startup');\nflow.set('usbOk', false);\nmsg.payload = 'expertAmpBaseUrl=' + baseUrl;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 380,
+    "y": 80,
+    "wires": [
+      [
+        "505cdf58da5d8dce"
+      ]
+    ]
+  },
+  {
+    "id": "505cdf58da5d8dce",
+    "type": "debug",
+    "z": "e7f8cbd87d347be8",
+    "name": "base URL",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 600,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "7dfb8515fc54cf73",
+    "type": "websocket-client",
+    "path": "ws://localhost:8088/api/v1/status/ws",
+    "tls": "",
+    "wholemsg": "false",
+    "hb": "30",
+    "subprotocol": "",
+    "headers": []
+  },
+  {
+    "id": "4cf44ec6c8a5f350",
+    "type": "websocket in",
+    "z": "e7f8cbd87d347be8",
+    "name": "Status websocket",
+    "server": "",
+    "client": "7dfb8515fc54cf73",
+    "x": 180,
+    "y": 160,
+    "wires": [
+      [
+        "b69197f5c1fe98b7"
+      ]
+    ]
+  },
+  {
+    "id": "b69197f5c1fe98b7",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Wrap WS status payload",
+    "func": "let status = msg.payload;\nif (Buffer.isBuffer(status)) {\n  status = status.toString();\n}\nif (typeof status === 'string') {\n  try {\n    status = JSON.parse(status);\n  } catch (err) {\n    flow.set('usbOk', false);\n    flow.set('statusTransport', 'error');\n    node.error('invalid websocket status payload', msg);\n    return null;\n  }\n}\nif (!status || typeof status !== 'object' || Array.isArray(status)) {\n  flow.set('usbOk', false);\n  flow.set('statusTransport', 'error');\n  node.error('unexpected websocket status payload', msg);\n  return null;\n}\nflow.set('wsConnected', true);\nflow.set('statusTransport', 'ws');\nflow.set('usbOk', true);\nmsg.baseUrl = flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\nmsg.transport = 'ws';\nmsg.payload = { success: true, data: status };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 470,
+    "y": 160,
+    "wires": [
+      [
+        "ae23c8780da29f05"
+      ]
+    ]
+  },
+  {
+    "id": "4837ae8ec77fe42b",
+    "type": "status",
+    "z": "e7f8cbd87d347be8",
+    "name": "Watch websocket status",
+    "scope": [
+      "4cf44ec6c8a5f350"
+    ],
+    "x": 180,
+    "y": 320,
+    "wires": [
+      [
+        "e166f9626aad2467"
+      ]
+    ]
+  },
+  {
+    "id": "e166f9626aad2467",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Track WS connect/disconnect",
+    "func": "const status = msg.status || {};\nconst event = String(status.event || '').toLowerCase();\nconst text = String(status.text || '').toLowerCase();\nconst connected = event === 'connect' || text.includes('connected');\nif (connected) {\n  flow.set('wsConnected', true);\n  flow.set('statusTransport', 'ws');\n  flow.set('usbOk', true);\n  return [{ payload: { label: 'WS<br/>Live', background: 'linear-gradient(180deg, green, green)' } }, null];\n}\nflow.set('wsConnected', false);\nflow.set('statusTransport', 'http-fallback');\nflow.set('usbOk', false);\nreturn [\n  { payload: { label: 'HTTP<br/>Fallback', background: 'linear-gradient(180deg, orange, orange)' } },\n  { payload: Date.now() }\n];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 470,
+    "y": 320,
+    "wires": [
+      [
+        "d0babaa080945d9d"
+      ],
+      [
+        "1e067d1d40ae8b48"
+      ]
+    ]
+  },
+  {
+    "id": "20ecc3bfaea8ae2e",
+    "type": "inject",
+    "z": "e7f8cbd87d347be8",
+    "name": "Fallback poll status (5s)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 170,
+    "y": 200,
+    "wires": [
+      [
+        "1e067d1d40ae8b48"
+      ]
+    ]
+  },
+  {
+    "id": "1e067d1d40ae8b48",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Build fallback status URL",
+    "func": "const wsConnected = flow.get('wsConnected') === true;\nif (wsConnected) {\n  return null;\n}\nconst base = flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\nmsg.url = base + '/api/v1/status';\nmsg.method = 'GET';\nmsg.baseUrl = base;\nmsg.transport = 'http-fallback';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 200,
+    "wires": [
+      [
+        "c59264edcfea7105"
+      ]
+    ]
+  },
+  {
+    "id": "c59264edcfea7105",
+    "type": "http request",
+    "z": "e7f8cbd87d347be8",
+    "name": "GET /api/v1/status (fallback)",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "authType": "",
+    "x": 700,
+    "y": 200,
+    "wires": [
+      [
+        "ae23c8780da29f05"
+      ]
+    ]
+  },
+  {
+    "id": "ae23c8780da29f05",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Parse status -> tiles",
+    "func": "const envelope = msg.payload || {};\nif (!envelope.success) {\n  flow.set('usbOk', false);\n  flow.set('statusTransport', 'error');\n  node.error(envelope.error || 'status failed', msg);\n  return null;\n}\nconst status = envelope.data || {};\nconst transport = msg.transport || flow.get('statusTransport') || 'http-fallback';\nconst wsConnected = flow.get('wsConnected') === true;\nif (transport === 'ws') {\n  flow.set('wsConnected', true);\n  flow.set('statusTransport', 'ws');\n  flow.set('usbOk', true);\n} else if (!wsConnected) {\n  flow.set('statusTransport', 'http-fallback');\n  flow.set('usbOk', true);\n}\nconst base = msg.baseUrl || flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\n\nconst txBool = status.tx;\nconst rxTxBg = txBool === true ? 'linear-gradient(180deg, red, yellow)' : 'linear-gradient(180deg, green, green)';\nconst rxTxLabel = txBool === true ? 'TRANSMIT' : 'RECEIVE';\n\nconst opState = status.operatingState || '';\nconst modeVal = (opState || '').toLowerCase().includes('operat') ? 'Operate' : (opState || 'Standby');\nconst modeBg  = modeVal === 'Operate' ? 'linear-gradient(180deg, red, red)' : 'linear-gradient(180deg, green, green)';\n\nconst pwr = String(status.outputLevel || '').trim().toUpperCase();\nlet pwrLabel = status.outputLevel || '\u2014';\nlet pwrBg = 'linear-gradient(180deg, gray, gray)';\nif (pwr === 'L' || pwr === 'LOW') {\n  pwrLabel = 'Low';\n  pwrBg = modeVal === 'Operate' ? 'linear-gradient(180deg, purple, purple)' : 'linear-gradient(180deg, green, green)';\n} else if (pwr === 'M' || pwr === 'MED' || pwr === 'MID' || pwr === 'MIDDLE') {\n  pwrLabel = 'Middle';\n  pwrBg = modeVal === 'Operate' ? 'linear-gradient(180deg, red, purple)' : 'linear-gradient(180deg, green, green)';\n} else if (pwr === 'H' || pwr === 'HIGH' || pwr === 'MAX' || pwr === 'MAXIMUM') {\n  pwrLabel = 'Maximum';\n  pwrBg = modeVal === 'Operate' ? 'linear-gradient(180deg, red, red)' : 'linear-gradient(180deg, green, green)';\n}\n\nconst bandVal = String(status.bandText || status.band || status.bandCode || '').trim();\nconst bandLabel = bandVal ? 'Band<br/>' + bandVal : 'Band<br/>\u2014';\nconst rxAntVal = status.rxAntenna || status.antenna || '';\nconst rxAntLabel = rxAntVal ? 'RX Ant ' + rxAntVal + (status.antennaBank ? '<br/>Bank ' + status.antennaBank : '') : 'RX Ant \u2014';\nconst modelLabel = status.modelName ? String(status.modelName).replace(/ /g, '<br/>') : 'Model<br/>\u2014';\nconst inputLabel = status.input ? 'Input ' + status.input : 'Input \u2014';\nconst antLabel = status.antenna ? 'Ant ' + status.antenna + (status.antennaBank ? '<br/>Bank ' + status.antennaBank : '') : 'Ant \u2014';\nconst bankVal = String(status.antennaBank || '').trim();\nconst bankLabel = bankVal ? 'Bank ' + bankVal : 'Bank \u2014';\n\nconst warnings = Array.isArray(status.warningsText) ? status.warningsText : (Array.isArray(status.warnings) ? status.warnings : []);\nconst alarms = Array.isArray(status.alarmsText) ? status.alarmsText : (Array.isArray(status.activeAlarms) ? status.activeAlarms : []);\nconst warningsLabel = warnings.length ? ('Warnings<br/>' + warnings.join('<br/>')) : 'No Warnings';\nconst warningsBg = warnings.length ? 'linear-gradient(180deg, orange, orange)' : 'linear-gradient(180deg, blue, blue)';\nconst alarmsLabel = alarms.length ? ('Alarms<br/>' + alarms.join('<br/>')) : 'No Alarms';\nconst alarmsBg = alarms.length ? 'linear-gradient(180deg, red, red)' : 'linear-gradient(180deg, blue, blue)';\n\nconst statusTransport = flow.get('statusTransport') || transport;\nlet usbLbl = 'HTTP<br/>Error';\nlet usbBg = 'linear-gradient(180deg, red, red)';\nif (statusTransport === 'ws' && flow.get('usbOk') !== false) {\n  usbLbl = 'WS<br/>Live';\n  usbBg = 'linear-gradient(180deg, green, green)';\n} else if (statusTransport === 'http-fallback' && flow.get('usbOk') !== false) {\n  usbLbl = 'HTTP<br/>Fallback';\n  usbBg = 'linear-gradient(180deg, orange, orange)';\n} else if (statusTransport === 'manual-http' && flow.get('usbOk') !== false) {\n  usbLbl = wsConnected ? 'WS<br/>Live' : 'HTTP<br/>Fallback';\n  usbBg = wsConnected ? 'linear-gradient(180deg, green, green)' : 'linear-gradient(180deg, orange, orange)';\n}\nconst syncBg = 'linear-gradient(180deg, blue, blue)';\nconst syncLbl = 'USB<br/>Sync';\n\nreturn [\n  { label: modelLabel, background: 'linear-gradient(180deg, blue, blue)' },\n  { label: rxTxLabel, background: rxTxBg },\n  { label: modeVal, background: modeBg },\n  { label: pwrLabel, background: pwrBg },\n  { label: antLabel, background: 'linear-gradient(180deg, green, green)' },\n  { label: inputLabel, background: 'linear-gradient(180deg, blue, blue)' },\n  { label: bandLabel, background: 'linear-gradient(180deg, blue, blue)' },\n  { label: rxAntLabel, background: 'linear-gradient(180deg, blue, blue)' },\n  { label: usbLbl, background: usbBg },\n  { label: syncLbl, background: syncBg },\n  null,\n  Object.assign({}, msg, { status: status }),\n  { label: bankLabel, background: 'linear-gradient(180deg, blue, blue)' },\n  { label: warningsLabel, background: warningsBg },\n  { label: alarmsLabel, background: alarmsBg }\n];",
+    "outputs": 15,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1010,
+    "y": 220,
+    "wires": [
+      [
+        "12c2064d0b042a92"
+      ],
+      [
+        "081d63b4787182d5"
+      ],
+      [
+        "f0476be5df676bf5"
+      ],
+      [
+        "22b8ef9a73ab59b5"
+      ],
+      [
+        "b2083d3543a3ccc8"
+      ],
+      [
+        "63f22ce4cf4233be"
+      ],
+      [
+        "608d855b97b25ad2"
+      ],
+      [
+        "15ac992162d176bd"
+      ],
+      [
+        "d0babaa080945d9d"
+      ],
+      [
+        "42291c4dced57204"
+      ],
+      [
+        "40a9479fb992e24e"
+      ],
+      [
+        "8b31b2cadb2abe80"
+      ],
+      [
+        "b2b534eaa646e310"
+      ],
+      [
+        "e701e46c457b9e4b"
+      ],
+      [
+        "17e792d3521eb940"
+      ]
+    ]
+  },
+  {
+    "id": "265b9a465832c87c",
+    "type": "debug",
+    "z": "e7f8cbd87d347be8",
+    "name": "status raw",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 920,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "8b31b2cadb2abe80",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Fan out levels/gauges/history",
+    "func": "const status = msg.status || {};\nconst atuSwr = status.swr !== undefined && status.swr !== null ? Number(status.swr) : null;\nconst antSwr = atuSwr;\nconst pwrW   = status.powerWatts !== undefined ? Number(status.powerWatts) : null;\nconst pwrPct = pwrW !== null ? Math.min(100, Math.round(pwrW / 15)) : null;\n\nconst atuMsg = atuSwr !== null ? {payload: atuSwr} : null;\nconst antMsg = antSwr !== null ? {payload: antSwr} : null;\nconst pwrMsg = pwrPct !== null ? {payload: pwrPct} : null;\n\nreturn [atuMsg, antMsg, pwrMsg];",
+    "outputs": 3,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1180,
+    "y": 160,
+    "wires": [
+      [
+        "6c3bdd1ac3ebd622"
+      ],
+      [
+        "5ca3bb4b9c0087f1"
+      ],
+      [
+        "94747badeb9a33ec"
+      ]
+    ]
+  },
+  {
+    "id": "b8c2ca95cdf8d76b",
+    "type": "inject",
+    "z": "e7f8cbd87d347be8",
+    "name": "Poll alarms (10s)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "10",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "2",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 240,
+    "wires": [
+      [
+        "5c78d226cf6b30b3"
+      ]
+    ]
+  },
+  {
+    "id": "5c78d226cf6b30b3",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Build alarm URL",
+    "func": "const base = flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\nmsg.url    = base + '/api/v1/alarms';\nmsg.method = 'GET';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 380,
+    "y": 240,
+    "wires": [
+      [
+        "aa5ce1d412dfda59"
+      ]
+    ]
+  },
+  {
+    "id": "aa5ce1d412dfda59",
+    "type": "http request",
+    "z": "e7f8cbd87d347be8",
+    "name": "GET /api/v1/alarms",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "authType": "",
+    "x": 610,
+    "y": 240,
+    "wires": [
+      [
+        "eb1cd821a69d98f5"
+      ]
+    ]
+  },
+  {
+    "id": "eb1cd821a69d98f5",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Parse alarms -> tiles",
+    "func": "const envelope = msg.payload || {};\nconst data     = (envelope.data || {});\nconst active   = Array.isArray(data.active) ? data.active : [];\nconst hasWarn  = active.some(s => /warn/i.test(s));\nconst hasAlarm = active.length > 0 && !hasWarn;\n\nconst warnBg  = hasWarn  ? 'linear-gradient(180deg, orange, orange)' : 'linear-gradient(180deg, blue, blue)';\nconst alarmBg = hasAlarm ? 'linear-gradient(180deg, red, red)'       : 'linear-gradient(180deg, blue, blue)';\nconst warnLbl = hasWarn  ? 'Warnings<br/>' + active.filter(s=>/warn/i.test(s))[0] : 'No Warnings';\nconst alarmLbl= hasAlarm ? 'Alarms<br/>' + active[0] : 'No Alarms';\n\nreturn [\n  { label: warnLbl,  background: warnBg  },\n  { label: alarmLbl, background: alarmBg }\n];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 240,
+    "wires": [
+      [
+        "e701e46c457b9e4b"
+      ],
+      [
+        "17e792d3521eb940"
+      ]
+    ]
+  },
+  {
+    "id": "e8bc41aa8350bd2e",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "USB Sync -> re-poll status",
+    "func": "// USB Sync: triggers immediate HTTP status refresh\nconst base = flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\nmsg.url = base + '/api/v1/status';\nmsg.method = 'GET';\nmsg.baseUrl = base;\nmsg.transport = 'manual-http';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 400,
+    "wires": [
+      [
+        "c59264edcfea7105"
+      ]
+    ]
+  },
+  {
+    "id": "24961f1d1d05eacd",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "POST button/wake action",
+    "func": "const raw = msg.payload;\nlet name;\nif (typeof raw === 'string') {\n  name = raw;\n} else if (raw && typeof raw === 'object') {\n  name = raw.payload || raw.action || raw.name || msg.topic;\n} else {\n  name = msg.topic;\n}\nname = String(name || '').trim().toLowerCase();\n\nconst buttonActions = ['set','left','right','up','down','display','input','antenna',\n                       'band-','band+','l-','l+','c-','c+','tune','off','power','operate','cat'];\nconst base = flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\nmsg.method  = 'POST';\nmsg.headers = {'Content-Type': 'application/json'};\nmsg.topic   = name;\n\nif (name === 'wake') {\n  msg.url = base + '/api/v1/actions/wake';\n  msg.payload = null;\n  return msg;\n}\n\nif (!buttonActions.includes(name)) {\n  node.warn('blocked or unsupported action: ' + JSON.stringify(raw));\n  return null;\n}\nmsg.url     = base + '/api/v1/actions/button';\nmsg.payload = {name: name};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 400,
+    "wires": [
+      [
+        "497a4503ea2ffa78"
+      ]
+    ]
+  },
+  {
+    "id": "497a4503ea2ffa78",
+    "type": "http request",
+    "z": "e7f8cbd87d347be8",
+    "name": "send button action",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "authType": "",
+    "x": 660,
+    "y": 400,
+    "wires": [
+      [
+        "4b8044f456aaf8ba"
+      ]
+    ]
+  },
+  {
+    "id": "4b8044f456aaf8ba",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Format action result",
+    "func": "const env  = msg.payload || {};\nconst ok   = env.success !== false;\nconst name = (env.data && env.data.name) ? env.data.name : (msg.topic || '?');\nmsg.payload = ok ? 'OK: ' + name : 'FAIL: ' + name + ' (' + (env.error || '?') + ')';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 880,
+    "y": 400,
+    "wires": [
+      [
+        "4e3bebccf163bcfb"
+      ]
+    ]
+  },
+  {
+    "id": "4e3bebccf163bcfb",
+    "type": "debug",
+    "z": "e7f8cbd87d347be8",
+    "name": "button result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1100,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "4d184a2670152d51",
+    "type": "catch",
+    "z": "e7f8cbd87d347be8",
+    "name": "Catch HTTP errors",
+    "scope": null,
+    "uncaught": false,
+    "x": 160,
+    "y": 480,
+    "wires": [
+      [
+        "4bc825d8a7b894f2"
+      ]
+    ]
+  },
+  {
+    "id": "4bc825d8a7b894f2",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Mark HTTP error",
+    "func": "flow.set('usbOk', false);\nflow.set('statusTransport', 'error');\nmsg.payload = { label: 'HTTP<br/>Error', background: 'linear-gradient(180deg, red, red)' };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 560,
+    "wires": [
+      [
+        "d0babaa080945d9d"
+      ]
+    ]
+  },
+  {
+    "id": "382acf5400596846",
+    "type": "debug",
+    "z": "e7f8cbd87d347be8",
+    "name": "errors",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 600,
+    "y": 480,
+    "wires": []
+  },
+  {
+    "id": "12c2064d0b042a92",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Model",
+    "order": 1,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color: white; background-image :{{msg.background}}\" ng-click=\"send({payload: 'Hello World'})\">\n  <span ng-bind-html=\"msg.label\">{{msg.label}}</span>\n</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "081d63b4787182d5",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "RX/TX",
+    "order": 3,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color: white; background-image :{{msg.background}}\" ng-click=\"send({payload: 'Hello World'})\">\n  <span ng-bind-html=\"msg.label\">{{msg.label}}</span>\n</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "f0476be5df676bf5",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Mode",
+    "order": 5,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverblue\" style=\"background-image :{{msg.background}}\" ng-click=\"send({payload: 'operate'})\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "22b8ef9a73ab59b5",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "PWR Level",
+    "order": 7,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverblue\" style=\"background-image :{{msg.background}}\" ng-click=\"send({payload: 'power'})\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "b2083d3543a3ccc8",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Antenna",
+    "order": 10,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverblue\" style=\"background-image :{{msg.background}}\" ng-click=\"send({payload: 'antenna'})\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "63f22ce4cf4233be",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Input",
+    "order": 11,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverblue\" style=\"background-image :{{msg.background}}\" ng-click=\"send({payload: 'input'})\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "b2b534eaa646e310",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Bank",
+    "order": 14,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color:white; background-image:{{msg.background}}\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "8a4c15e14f8c2354",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Tune",
+    "order": 15,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverblue\" style=\"background-image :green\" ng-click=\"send({payload: 'tune'})\">Tune</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "1cd1754a8d7bc09e",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Logging State",
+    "order": 17,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color:white; background-image:linear-gradient(180deg,blue,blue)\">HTTP<br/>API</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 680,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "608d855b97b25ad2",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Band",
+    "order": 18,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color:white; background-image:{{msg.background}}\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "15ac992162d176bd",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "RX Antenna",
+    "order": 19,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color:white; background-image:{{msg.background}}\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "e701e46c457b9e4b",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Warnings",
+    "order": 20,
+    "width": 3,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color: white; background-image :{{msg.background}}\" ng-click=\"send({payload: 'Hello World'})\">\n  <span ng-bind-html=\"msg.label\"></span>\n</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 720,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "17e792d3521eb940",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Alarms",
+    "order": 21,
+    "width": 3,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color: white; background-image :{{msg.background}}\" ng-click=\"send({payload: 'Hello World'})\">\n  <span ng-bind-html=\"msg.label\"></span>\n</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 760,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "0b93d3d6e37bc5dd",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Power On",
+    "order": 22,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverred\" style=\"background-image :orange\" ng-click=\"send({payload: 'wake'})\">Power<br/>On</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": false,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 800,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "d0babaa080945d9d",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "USB Status",
+    "order": 23,
+    "width": 1,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPErounded\" style=\"color: white; background-image :{{msg.background}}\" ng-click=\"send({payload: 'Hello World'})\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 840,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "42291c4dced57204",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "USB Sync",
+    "order": 24,
+    "width": 1,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverblue\" style=\"background-image :{{msg.background}}\" ng-click=\"send({payload: 'sync'})\" ng-bind-html=\"msg.label\">{{msg.label}}</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 880,
+    "wires": [
+      [
+        "e8bc41aa8350bd2e"
+      ]
+    ]
+  },
+  {
+    "id": "6c9b6124c3c60349",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "Power Off",
+    "order": 25,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEbigfont SPEhoverred\" style=\"background-image :orange\" ng-click=\"send({payload: 'off'})\">Power<br/>Off</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": false,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1200,
+    "y": 920,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "6c3bdd1ac3ebd622",
+    "type": "ui_level",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "order": 2,
+    "width": 4,
+    "height": 1,
+    "name": "ATU SWR",
+    "label": "ATU SWR",
+    "colorHi": "#e60000",
+    "colorWarn": "#ff9900",
+    "colorNormal": "#00b33c",
+    "colorOff": "#595959",
+    "min": 1,
+    "max": 3,
+    "segWarn": 1.5,
+    "segHigh": 2,
+    "unit": "",
+    "layout": "sh",
+    "channelA": "",
+    "channelB": "",
+    "decimals": 1,
+    "animations": "soft",
+    "shape": 2,
+    "colorschema": "fixed",
+    "textoptions": "default",
+    "colorText": "#eeeeee",
+    "fontLabel": "",
+    "fontValue": "",
+    "fontSmall": "",
+    "colorFromTheme": true,
+    "textAnimations": false,
+    "hideValue": false,
+    "tickmode": "segments",
+    "peakmode": false,
+    "property": "payload",
+    "peaktime": 3000,
+    "x": 1400,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "5ca3bb4b9c0087f1",
+    "type": "ui_level",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "order": 4,
+    "width": 4,
+    "height": 1,
+    "name": "ANT SWR",
+    "label": "ANT SWR",
+    "colorHi": "#e60000",
+    "colorWarn": "#ff9900",
+    "colorNormal": "#00b33c",
+    "colorOff": "#595959",
+    "min": 1,
+    "max": 3,
+    "segWarn": 1.5,
+    "segHigh": 2,
+    "unit": "",
+    "layout": "sh",
+    "channelA": "",
+    "channelB": "",
+    "decimals": 1,
+    "animations": "soft",
+    "shape": 2,
+    "colorschema": "fixed",
+    "textoptions": "default",
+    "colorText": "#eeeeee",
+    "fontLabel": "",
+    "fontValue": "",
+    "fontSmall": "",
+    "colorFromTheme": true,
+    "textAnimations": false,
+    "hideValue": false,
+    "tickmode": "segments",
+    "peakmode": false,
+    "property": "payload",
+    "peaktime": 3000,
+    "x": 1400,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "94747badeb9a33ec",
+    "type": "ui_level",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "order": 6,
+    "width": 4,
+    "height": 1,
+    "name": "Output Power",
+    "label": "Output Power",
+    "colorHi": "#e60000",
+    "colorWarn": "#ff9900",
+    "colorNormal": "#00b33c",
+    "colorOff": "#595959",
+    "min": 0,
+    "max": 100,
+    "segWarn": 50,
+    "segHigh": 80,
+    "unit": "%",
+    "layout": "sh",
+    "channelA": "",
+    "channelB": "",
+    "decimals": 0,
+    "animations": "soft",
+    "shape": 2,
+    "colorschema": "fixed",
+    "textoptions": "default",
+    "colorText": "#eeeeee",
+    "fontLabel": "",
+    "fontValue": "",
+    "fontSmall": "",
+    "colorFromTheme": true,
+    "textAnimations": false,
+    "hideValue": false,
+    "tickmode": "segments",
+    "peakmode": false,
+    "property": "payload",
+    "peaktime": 3000,
+    "x": 1400,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "1ac07f2b26234a6c",
+    "type": "ui_gauge",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "",
+    "order": 8,
+    "width": 2,
+    "height": 2,
+    "gtype": "gage",
+    "title": "Power W",
+    "label": "Power W",
+    "format": "{{value}}",
+    "min": 0,
+    "max": 1500,
+    "seg1": 600,
+    "seg2": 1200,
+    "colorLow": "green",
+    "colorMid": "orange",
+    "colorHigh": "red",
+    "className": "",
+    "x": 1400,
+    "y": 600,
+    "wires": []
+  },
+  {
+    "id": "70e8539f10472eb2",
+    "type": "ui_gauge",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "",
+    "order": 9,
+    "width": 2,
+    "height": 2,
+    "gtype": "gage",
+    "title": "SWR",
+    "label": "SWR",
+    "format": "{{value}}",
+    "min": 1,
+    "max": 3,
+    "seg1": 1.5,
+    "seg2": 2,
+    "colorLow": "green",
+    "colorMid": "orange",
+    "colorHigh": "red",
+    "className": "",
+    "x": 1400,
+    "y": 600,
+    "wires": []
+  },
+  {
+    "id": "d019f7b6b522c810",
+    "type": "ui_gauge",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "",
+    "order": 12,
+    "width": 2,
+    "height": 2,
+    "gtype": "gage",
+    "title": "PA Volts",
+    "label": "PA Volts",
+    "format": "{{value}}",
+    "min": "0",
+    "max": "60",
+    "seg1": "44",
+    "seg2": "52",
+    "colorLow": "green",
+    "colorMid": "orange",
+    "colorHigh": "red",
+    "className": "",
+    "x": 1400,
+    "y": 600,
+    "wires": []
+  },
+  {
+    "id": "8658fc305da14952",
+    "type": "ui_gauge",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "",
+    "order": 13,
+    "width": 2,
+    "height": 2,
+    "gtype": "gage",
+    "title": "PA Amps",
+    "label": "PA Amps",
+    "format": "{{value}}",
+    "min": "0",
+    "max": "60",
+    "seg1": "20",
+    "seg2": "35",
+    "colorLow": "green",
+    "colorMid": "orange",
+    "colorHigh": "red",
+    "className": "",
+    "x": 1400,
+    "y": 600,
+    "wires": []
+  },
+  {
+    "id": "dae6566f6782a2cf",
+    "type": "ui_gauge",
+    "z": "e7f8cbd87d347be8",
+    "group": "7289d09cb900b64b",
+    "name": "",
+    "order": 16,
+    "width": 2,
+    "height": 2,
+    "gtype": "gage",
+    "title": "Temp Aux C",
+    "label": "Temp Aux C",
+    "format": "{{value}}",
+    "min": "0",
+    "max": "120",
+    "seg1": "60",
+    "seg2": "85",
+    "colorLow": "green",
+    "colorMid": "orange",
+    "colorHigh": "red",
+    "className": "",
+    "x": 1400,
+    "y": 600,
+    "wires": []
+  },
+  {
+    "id": "002c386a7ad4efbf",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Backlight Off",
+    "order": 1,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'display'})\">Backlight<br/>Off</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "1a752b7206921eb4",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Backlight On",
+    "order": 2,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'display'})\">Backlight<br/>On</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "30ea6811adca8af0",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "L -",
+    "order": 3,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'l-'})\">L -</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "e0b95d6124e36e1a",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "L +",
+    "order": 4,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'l+'})\">L +</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "1aea54cb7d737b63",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "C -",
+    "order": 5,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'c-'})\">C -</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "762b0a6d0cc3a0f7",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "C +",
+    "order": 6,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'c+'})\">C +</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "e73967e26a71eb49",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Band -",
+    "order": 7,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'band-'})\">Band -</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "b8085b3d279438d6",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Band +",
+    "order": 8,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'band+'})\">Band +</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "9545ccdd293c1301",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Set",
+    "order": 9,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'set'})\">Set</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "e322f4f19a9344ee",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Display",
+    "order": 10,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'display'})\">Display</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "cd9dde4673e0cfab",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Left Arrow",
+    "order": 11,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'left'})\">&#9664;</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "153b1713ca6b1597",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Right Arrow",
+    "order": 12,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'right'})\">&#9654;</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      [
+        "24961f1d1d05eacd"
+      ]
+    ]
+  },
+  {
+    "id": "eabb57602d9add63",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Fan Quiet or Toggle",
+    "order": 13,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPErounded\" style=\"color:#888; background-image:gray\">Fan Quiet<br/>(N/A)</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "c789bb267e1c4744",
+    "type": "ui_template",
+    "z": "e7f8cbd87d347be8",
+    "group": "0bc47e0db6c53ad2",
+    "name": "Fan Normal or N/A",
+    "order": 14,
+    "width": 2,
+    "height": 1,
+    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPErounded\" style=\"color:#888; background-image:gray\">Fan Normal<br/>(N/A)</md-button>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 1600,
+    "y": 500,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "eacb3d50f2ca6b79",
+    "type": "comment",
+    "z": "e7f8cbd87d347be8",
+    "name": "Expert Amp Server Node-RED example - WB2WGH dashboard fidelity pass",
+    "info": "Dashboard-fidelity port of the WB2WGH SPE Linear flow (V1.3) to Expert Amp Server /api/v1.\n\nPreserved from original:\n- SPE Master CSS (SPEvibrate, SPEfilled, SPEtouched, SPErounded, SPEhoverblue, SPEhoverred)\n- Group layout: SPE (width=6) + SPE Auxiliary (width=4) on one tab\n- All 25 original SPE tile names and order\n- All 14 SPE Auxiliary button names and order\n- ui_gauge x5 (order positions 8, 9, 12, 13, 16)\n- ui_level x3 for ATU SWR / ANT SWR / Output Power (order 2, 4, 6)\n- Color-state logic: RX/TX, Mode, PWR Level, Warnings, Alarms\n- Tune static-green button, Power On/Off orange buttons\n\nChanged from original:\n- Serial nodes removed; live status is websocket-first via /api/v1/status/ws with HTTP fallback polling (5s) + GET /api/v1/alarms (10s)\n- Display render invalidation is websocket-first via /api/v1/display/ws, with render.png refreshed only on real snapshot changes\n- Button actions POST to /api/v1/actions/button\n- Logging State shows 'HTTP API' (file/CSV logging removed)\n- USB Status reflects websocket-first/API connectivity, not physical USB\n- USB Sync triggers immediate HTTP status refresh\n- Gauges remapped to promoted API fields for PA volts, PA amps, ANT SWR, plus Power W / SWR / temperatures where available\n- Backlight On/Off mapped to 'display' (closest available action)\n- Fan Quiet / Fan Normal shown as disabled (not in current action table)\n- Bank tile is read-only (bank select not in current API)\n- Display render image added at top on its own refresh path (Expert Amp Server feature)\n- back / on / standby remain blocked per server policy\n\nRequired packages: node-red-dashboard, node-red-contrib-ui-level\nServer default: http://localhost:8088 -- edit 'Set expertAmpBaseUrl' to change.",
+    "x": 240,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "9c59e4c4ee0bd4af",
+    "type": "websocket-client",
+    "path": "ws://localhost:8088/api/v1/display/ws",
+    "tls": "",
+    "wholemsg": "false"
+  },
+  {
+    "id": "d8c0ab51fc44c7ce",
+    "type": "websocket in",
+    "z": "e7f8cbd87d347be8",
+    "name": "Display websocket",
+    "server": "",
+    "client": "9c59e4c4ee0bd4af",
+    "x": 180,
+    "y": 260,
+    "wires": [
+      [
+        "3ca0d10195c1d327"
+      ]
+    ]
+  },
+  {
+    "id": "3ca0d10195c1d327",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Build display render URL from WS event",
+    "func": "let event = msg.payload;\nif (Buffer.isBuffer(event)) {\n  event = event.toString();\n}\nconst isStartupKick = typeof event === 'number' || event === '' || event == null;\nif (typeof event === 'string' && !isStartupKick) {\n  try {\n    event = JSON.parse(event);\n  } catch (err) {\n    node.error('invalid display websocket payload', msg);\n    return null;\n  }\n}\nif (isStartupKick) {\n  event = { startup: true };\n}\nif (!event || typeof event !== 'object' || Array.isArray(event)) {\n  node.error('unexpected display websocket payload', msg);\n  return null;\n}\nconst seq = Number(event.sequence || 0);\nconst lastSeq = Number(flow.get('lastDisplaySequence') || 0);\nif (!event.startup && seq > 0 && seq === lastSeq) {\n  return null;\n}\nif (seq > 0) {\n  flow.set('lastDisplaySequence', seq);\n}\nconst base = flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\nconst nonce = encodeURIComponent(String(seq > 0 ? seq : Date.now()));\nmsg.renderPngFresh = base + '/api/v1/display/render.png?t=' + nonce;\nmsg.renderPng = base + '/api/v1/display/render.png';\nmsg.renderSvg = base + '/api/v1/display/render.svg';\nmsg.payload = event;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 510,
+    "y": 260,
+    "wires": [
+      [
+        "40a9479fb992e24e"
+      ]
+    ]
+  }
+]

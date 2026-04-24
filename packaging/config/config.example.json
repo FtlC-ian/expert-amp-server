@@ -1,0 +1,13 @@
+{
+  "serialPort": "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXXXXXX-if00-port0",
+  "listenAddress": ":8088",
+  "pollIntervalMs": 250,
+  "displayPollingEnabled": true,
+  "statusPollingEnabled": true,
+  "serialBaudRate": 115200,
+  "serialReadTimeoutMs": 250,
+  "statusPollCommandEnabled": true,
+  "statusPollIntervalMs": 125,
+  "serialAssertDTR": true,
+  "serialAssertRTS": true
+}

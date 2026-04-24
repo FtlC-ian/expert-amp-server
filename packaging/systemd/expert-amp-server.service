@@ -1,0 +1,22 @@
+[Unit]
+Description=Expert Amp Server
+Documentation=https://github.com/FtlC-ian/expert-amp-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=expert-amp
+Group=expert-amp
+SupplementaryGroups=dialout
+ExecStart=/usr/local/bin/expert-amp-server -config /var/lib/expert-amp-server/config.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/expert-amp-server
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expert Amp Server API Docs</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #111823;
+      --panel-2: #17212d;
+      --text: #e8eef5;
+      --muted: #93a4b7;
+      --accent: #66b3ff;
+      --ok: #74d99f;
+      --warn: #ffd166;
+      --line: #223244;
+      --code: #0e141c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    header {
+      padding: 24px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #101722, #0b0f14);
+    }
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 20px;
+    }
+    .hero, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+    }
+    .hero h1, .panel h2, .panel h3 { margin-top: 0; }
+    .muted { color: var(--muted); }
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      margin-right: 6px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    a { color: var(--accent); }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+    pre {
+      overflow: auto;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    .endpoint {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+    .endpoint summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--panel-2);
+    }
+    .endpoint summary::-webkit-details-marker { display: none; }
+    .endpoint-body { padding: 16px; }
+    .method {
+      min-width: 58px;
+      text-align: center;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 999px;
+      color: #08111a;
+      background: var(--ok);
+      font-size: 12px;
+    }
+    .method.post { background: var(--warn); }
+    .path { font-family: ui-monospace, monospace; font-size: 14px; }
+    .cols {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+    .small { font-size: 13px; }
+    .note-ok { color: var(--ok); }
+    .note-warn { color: var(--warn); }
+    .loading, .error { padding: 12px; border-radius: 10px; }
+    .loading { background: var(--panel-2); }
+    .error { background: #30151a; border: 1px solid #6f2834; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 style="margin:0 0 8px 0;">Expert Amp Server API Docs</h1>
+    <div class="muted">Local docs for the current <code>/api/v1</code> surface</div>
+  </header>
+  <main>
+    <section class="hero">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+        <span class="pill">Local-first</span>
+        <span class="pill">Phase 1 API</span>
+        <span class="pill">Honest status semantics</span>
+        <span class="pill">OpenAPI served by app</span>
+      </div>
+      <p class="muted" style="margin-top:0;">This page is intentionally boring. It documents what the server actually serves today, not what the roadmap might serve later.</p>
+      <ul>
+        <li><strong class="note-ok">Canonical status:</strong> <code>GET /api/v1/status</code> is the preferred machine-readable status route.</li>
+        <li><strong class="note-ok">Canonical REST surface:</strong> new clients should target the documented <code>/api/v1/...</code> routes; older non-v1 routes are compatibility aliases or legacy helpers.</li>
+        <li><strong class="note-warn">Fallbacks matter:</strong> some status fields are protocol-native, some are display-derived fallback, some are compatibility aliases, and some are omitted when unknown.</li>
+        <li><strong class="note-warn">Alarms endpoint:</strong> <code>/api/v1/alarms</code> is still an explicit stub in phase 1.</li>
+        <li><strong>Raw artifact:</strong> <a href="/api/v1/openapi.json">/api/v1/openapi.json</a></li>
+      </ul>
+    </section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>Status honesty notes</h2>
+        <ul class="small">
+          <li><code>recentContact</code> is a conservative recent-heard-from-the-amp indicator. It is not the same as TX or operate state.</li>
+          <li><code>bandCode</code>, <code>warningCode</code>, and <code>alarmCode</code> are protocol-backed raw fields when present.</li>
+          <li><code>bandText</code>, <code>warningsText</code>, and <code>alarmsText</code> are decoded companions, not stronger truth than the raw codes.</li>
+          <li><code>warnings</code> and <code>activeAlarms</code> are compatibility aliases retained for consumers already using them.</li>
+          <li><code>/api/v1/telemetry</code> is still useful, but it should not be treated as more authoritative than <code>/api/v1/status</code>.</li>
+          <li>Older routes like <code>/api/status</code> and <code>/api/telemetry</code> still exist for compatibility, but this docs UI describes the canonical <code>/api/v1/...</code> surface.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Useful local links</h2>
+        <ul class="small">
+          <li><a href="/">Watch UI</a></li>
+          <li><a href="/api/v1/status">GET /api/v1/status</a></li>
+          <li><a href="/api/v1/telemetry">GET /api/v1/telemetry</a></li>
+          <li><a href="/api/v1/runtime/snapshot">GET /api/v1/runtime/snapshot</a></li>
+          <li><a href="/api/v1/serial-ports">GET /api/v1/serial-ports</a></li>
+          <li><a href="/api/v1/display/render.png">GET /api/v1/display/render.png</a></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>OpenAPI summary</h2>
+      <div id="summary" class="loading">Loading OpenAPI document...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Endpoints</h2>
+      <div id="endpoints" class="loading">Loading endpoint list...</div>
+    </section>
+  </main>
+
+  <script>
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function schemaPreview(schema, depth = 0) {
+      if (!schema || depth > 3) return 'unknown';
+      if (schema.$ref) return schema.$ref.split('/').pop();
+      if (schema.allOf) return schema.allOf.map(s => schemaPreview(s, depth + 1)).join(' + ');
+      if (schema.type === 'array') return `Array<${schemaPreview(schema.items, depth + 1)}>`;
+      if (schema.type === 'object') {
+        const props = schema.properties || {};
+        const keys = Object.keys(props).slice(0, 8);
+        if (!keys.length) return 'object';
+        return '{ ' + keys.map(k => `${k}: ${schemaPreview(props[k], depth + 1)}`).join(', ') + (Object.keys(props).length > keys.length ? ', ...' : '') + ' }';
+      }
+      if (schema.enum) return schema.enum.join(' | ');
+      return schema.type || 'unknown';
+    }
+
+    function renderResponses(responses, spec) {
+      const rows = Object.entries(responses || {}).map(([code, resp]) => {
+        const media = Object.entries(resp.content || {}).map(([contentType, content]) => {
+          return `<div><code>${escapeHtml(contentType)}</code> <span class="muted">${escapeHtml(schemaPreview(content.schema, 0))}</span></div>`;
+        }).join('') || '<span class="muted">no content schema</span>';
+        return `<tr><td><code>${escapeHtml(code)}</code></td><td>${escapeHtml(resp.description || '')}</td><td>${media}</td></tr>`;
+      });
+      return rows.length ? `<table><thead><tr><th>Status</th><th>Description</th><th>Schema</th></tr></thead><tbody>${rows.join('')}</tbody></table>` : '<div class="muted">No documented responses.</div>';
+    }
+
+    function renderParameters(parameters) {
+      if (!parameters || !parameters.length) return '<div class="muted">No parameters.</div>';
+      const rows = parameters.map((param) => {
+        return `<tr>
+          <td><code>${escapeHtml(param.name || '')}</code></td>
+          <td>${escapeHtml(param.in || '')}</td>
+          <td>${escapeHtml(param.description || '')}</td>
+          <td><span class="muted">${escapeHtml(schemaPreview(param.schema || {}, 0))}</span></td>
+        </tr>`;
+      });
+      return `<table><thead><tr><th>Name</th><th>In</th><th>Description</th><th>Schema</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+    }
+
+    async function loadDocs() {
+      const summary = document.getElementById('summary');
+      const endpoints = document.getElementById('endpoints');
+      try {
+        const res = await fetch('/api/v1/openapi.json');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const spec = await res.json();
+
+        const pathCount = Object.keys(spec.paths || {}).length;
+        const tagCount = (spec.tags || []).length;
+        summary.innerHTML = `
+          <div class="grid">
+            <div>
+              <div class="muted small">Title</div>
+              <div><strong>${escapeHtml(spec.info?.title || 'Unknown')}</strong></div>
+            </div>
+            <div>
+              <div class="muted small">Version</div>
+              <div><strong>${escapeHtml(spec.info?.version || 'Unknown')}</strong></div>
+            </div>
+            <div>
+              <div class="muted small">Documented paths</div>
+              <div><strong>${pathCount}</strong></div>
+            </div>
+            <div>
+              <div class="muted small">Tags</div>
+              <div><strong>${tagCount}</strong></div>
+            </div>
+          </div>
+          <pre>${escapeHtml(spec.info?.description || '')}</pre>
+        `;
+
+        const resolvedParams = (parameters = []) => parameters.map((param) => {
+          if (param.$ref) {
+            const key = param.$ref.split('/').pop();
+            return spec.components?.parameters?.[key] || param;
+          }
+          return param;
+        });
+
+        const blocks = [];
+        for (const [path, ops] of Object.entries(spec.paths || {})) {
+          for (const [method, op] of Object.entries(ops)) {
+            const params = resolvedParams(op.parameters || []);
+            const methodClass = method.toLowerCase() === 'post' ? 'method post' : 'method';
+            const requestBody = op.requestBody?.content?.['application/json']?.schema;
+            blocks.push(`
+              <details class="endpoint">
+                <summary>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <span class="${methodClass}">${escapeHtml(method.toUpperCase())}</span>
+                    <span class="path">${escapeHtml(path)}</span>
+                  </div>
+                  <span class="muted small">${escapeHtml(op.summary || '')}</span>
+                </summary>
+                <div class="endpoint-body cols">
+                  <div>
+                    <h3>${escapeHtml(op.summary || '')}</h3>
+                    <p class="muted">${escapeHtml(op.description || 'No extra description.')}</p>
+                    <h3>Parameters</h3>
+                    ${renderParameters(params)}
+                    <h3>Responses</h3>
+                    ${renderResponses(op.responses, spec)}
+                  </div>
+                  <div>
+                    <h3>Request body</h3>
+                    ${requestBody ? `<pre>${escapeHtml(schemaPreview(requestBody, 0))}</pre>` : '<div class="muted">No JSON request body.</div>'}
+                    <h3>Tags</h3>
+                    <div>${(op.tags || []).map(tag => `<span class="pill">${escapeHtml(tag)}</span>`).join(' ') || '<span class="muted">none</span>'}</div>
+                  </div>
+                </div>
+              </details>
+            `);
+          }
+        }
+        endpoints.className = '';
+        endpoints.innerHTML = blocks.join('');
+      } catch (err) {
+        summary.className = 'error';
+        endpoints.className = 'error';
+        summary.textContent = `Failed to load /api/v1/openapi.json: ${err.message}`;
+        endpoints.textContent = 'Local docs UI could not render because the OpenAPI document was unavailable.';
+      }
+    }
+
+    loadDocs();
+  </script>
+</body>
+</html>

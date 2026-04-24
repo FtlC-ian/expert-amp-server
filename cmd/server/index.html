@@ -1,0 +1,2533 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expert Amp</title>
+  <style>
+    :root {
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f140f;
+      color: #dfe8df;
+    }
+    body {
+      margin: 0;
+      background: #0f140f;
+      color: #dfe8df;
+    }
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 16px 56px;
+    }
+
+    /* ── Header ── */
+    .page-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 600;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .header-sub {
+      color: #7a917a;
+      font-size: 0.8rem;
+    }
+
+    /* ── Tab navigation ── */
+    .tab-nav {
+      display: flex;
+      gap: 0;
+      margin-bottom: 18px;
+      border-bottom: 1px solid #283328;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #7a917a;
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 7px 16px 9px;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      margin-bottom: -1px;
+      border-radius: 4px 4px 0 0;
+      transition: color 0.1s;
+    }
+    .tab-btn:hover { color: #c0d8c0; }
+    .tab-btn.active {
+      color: #d6f5d6;
+      border-bottom-color: #4a8a4a;
+    }
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* ── Settings page layout ── */
+    .settings-card {
+      background: #171f17;
+      border: 1px solid #283328;
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    .settings-card-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #7a917a;
+      margin: 0 0 14px;
+    }
+    .settings-section {
+      display: grid;
+      gap: 12px;
+    }
+    .settings-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 14px;
+      align-items: center;
+    }
+    @media (max-width: 560px) {
+      .settings-row { grid-template-columns: 1fr; }
+    }
+    .settings-label {
+      font-size: 0.82rem;
+      color: #b9c5b9;
+      user-select: none;
+    }
+    .settings-hint {
+      font-size: 0.75rem;
+      color: #556855;
+      margin: 0;
+      grid-column: 1 / -1;
+      line-height: 1.5;
+    }
+    .settings-hint code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.72rem;
+      color: #6a8a6a;
+    }
+    .settings-input {
+      background: #0f140f;
+      color: #f3f8f3;
+      border: 1px solid #364436;
+      border-radius: 7px;
+      padding: 7px 10px;
+      font: inherit;
+      font-size: 0.85rem;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .settings-input:focus {
+      outline: none;
+      border-color: #4a8a4a;
+    }
+    .settings-checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .settings-checkbox-row input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: #4a8a4a;
+      cursor: pointer;
+    }
+    .settings-checkbox-label {
+      font-size: 0.82rem;
+      color: #b9c5b9;
+      cursor: pointer;
+      user-select: none;
+    }
+    .settings-divider {
+      border: none;
+      border-top: 1px solid #223022;
+      margin: 4px 0;
+    }
+    .settings-action-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .settings-save-btn {
+      background: #284a2c;
+      color: #f3f8f3;
+      border: 1px solid #364436;
+      border-radius: 7px;
+      padding: 8px 18px;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .settings-save-btn:hover { background: #326238; }
+    .settings-status {
+      font-size: 0.82rem;
+      color: #7a917a;
+      min-height: 1.2em;
+    }
+    .settings-status.ok  { color: #7ac97a; }
+    .settings-status.err { color: #c97a7a; }
+    .local-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #5a7a5a;
+      background: #1a2a1a;
+      border: 1px solid #2a4a2a;
+      border-radius: 4px;
+      padding: 1px 5px;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+    .needs-restart-note {
+      font-size: 0.75rem;
+      color: #5a7a5a;
+      margin: 0;
+      line-height: 1.5;
+    }
+    .serial-port-wrapper {
+      display: flex;
+      gap: 6px;
+    }
+    .serial-port-wrapper input { flex: 1; }
+    .serial-port-wrapper select {
+      background: #0f140f;
+      color: #f3f8f3;
+      border: 1px solid #364436;
+      border-radius: 7px;
+      padding: 7px 8px;
+      font: inherit;
+      font-size: 0.8rem;
+      max-width: 130px;
+    }
+    .advanced-toggle {
+      background: none;
+      border: none;
+      color: #5a7a5a;
+      font: inherit;
+      font-size: 0.78rem;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .advanced-toggle:hover { color: #8aaa8a; }
+    #advanced-serial-body { display: none; margin-top: 10px; }
+    #advanced-serial-body.open { display: block; }
+
+    /* ── Generic cards ── */
+    .card {
+      background: #171f17;
+      border: 1px solid #283328;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-top: 14px;
+    }
+    .card-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #7a917a;
+      margin: 0 0 10px;
+    }
+
+    /* ── Source / seq badges ── */
+    .source-tag {
+      font-size: 0.7rem;
+      padding: 2px 7px;
+      border-radius: 20px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .source-live    { background: #1c3a20; color: #7ac97a; }
+    .source-fixture { background: #2a2a18; color: #a0a050; }
+    .source-stub    { background: #1e1e28; color: #7070a0; }
+    .source-unknown { background: #1e1e1e; color: #606060; }
+    .seq-badge {
+      font-size: 0.72rem;
+      color: #4a604a;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Action feedback ── */
+    .action-feedback {
+      font-size: 0.8rem;
+      min-height: 1.2em;
+      margin-top: 10px;
+    }
+    .action-feedback.ok   { color: #7ac97a; }
+    .action-feedback.err  { color: #c97a7a; }
+    .action-feedback.info { color: #7a917a; }
+
+    /* ── Setup card ── */
+    .setup-card {
+      background: #171f17;
+      border: 1px solid #283328;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-top: 14px;
+    }
+    form {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    label { display: grid; gap: 5px; }
+    .label { font-size: 0.82rem; color: #7a917a; }
+    input, select {
+      background: #0f140f;
+      color: #f3f8f3;
+      border: 1px solid #364436;
+      border-radius: 7px;
+      padding: 8px 11px;
+      font: inherit;
+    }
+    button.submit {
+      background: #284a2c;
+      color: #f3f8f3;
+      border: 1px solid #364436;
+      border-radius: 7px;
+      padding: 8px 16px;
+      font: inherit;
+      cursor: pointer;
+      width: fit-content;
+    }
+    button.submit:hover { background: #326238; }
+    .hidden  { display: none; }
+    .success { border-color: #3b7a45; }
+    p  { line-height: 1.5; color: #b9c5b9; margin: 6px 0 0; }
+    small { color: #7a917a; font-size: 0.8rem; }
+
+    /* ── API reference ── */
+    details summary {
+      cursor: pointer;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #7a917a;
+      user-select: none;
+      list-style: none;
+      padding: 2px 0;
+    }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::before {
+      content: '▶ ';
+      font-size: 0.6rem;
+      vertical-align: middle;
+    }
+    details[open] summary::before { content: '▼ '; }
+    .api-list { display: grid; gap: 5px; margin-top: 10px; }
+    .api-row  {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .api-path {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+      color: #d6f5d6;
+      word-break: break-all;
+    }
+    .api-desc { font-size: 0.75rem; color: #7a917a; }
+
+    /* ═══════════════════════════════════════════════
+       OPERATOR MOCKUP LAYOUT
+    ═══════════════════════════════════════════════ */
+    .operator-layout {
+      display: grid;
+      gap: 10px;
+    }
+    .operator-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .operator-header-note {
+      margin: 0;
+      font-size: 0.78rem;
+      color: #8ba08b;
+    }
+    .operator-layout-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+    }
+    .operator-column {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+    .operator-card {
+      background: #141c14;
+      border: 1px solid #263226;
+      border-radius: 10px;
+      padding: 8px;
+    }
+    .operator-card-title {
+      font-size: 0.70rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #7f957f;
+      margin: 0 0 7px;
+    }
+    .operator-help-only,
+    .operator-help-inline,
+    .operator-help-button-label {
+      display: none;
+    }
+    .operator-layout.operator-help-mode .operator-help-only {
+      display: block;
+    }
+    .operator-layout.operator-help-mode .operator-help-inline {
+      display: inline;
+    }
+    .operator-layout.operator-help-mode .operator-help-button-label {
+      display: inline;
+    }
+    .operator-help-text {
+      display: none;
+      margin: 0 0 4px;
+      color: #7d927d;
+      font-size: 0.70rem;
+      line-height: 1.24;
+    }
+    .operator-layout.operator-help-mode .operator-help-text {
+      display: block;
+    }
+    .operator-display-tier {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 104px;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .operator-display-tier.menu-hidden {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .operator-nav-tier {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      min-width: 0;
+      width: 104px;
+      justify-self: end;
+    }
+    .operator-nav-card,
+    .operator-tune-card {
+      background: #101710;
+      border: 1px solid #2b392b;
+      border-radius: 9px;
+      padding: 5px;
+      display: grid;
+      gap: 4px;
+    }
+    .operator-nav-card.display-hidden,
+    .operator-tune-card.display-hidden,
+    .operator-nav-tier.display-hidden {
+      display: none;
+    }
+    .operator-nav-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .operator-nav-key {
+      min-height: 28px;
+      border-radius: 7px;
+      border: 1px solid #355235;
+      background: linear-gradient(180deg, #1d3320, #162617);
+      color: #e4f2e4;
+      font: inherit;
+      font-weight: 700;
+      padding: 3px 4px;
+      cursor: pointer;
+      width: 100%;
+    }
+    .operator-layout.operator-help-mode .operator-nav-key {
+      min-height: 34px;
+    }
+    .operator-nav-key:hover:not(:disabled) { background: linear-gradient(180deg, #244029, #1a2c1c); }
+    .operator-nav-key:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .operator-nav-symbol {
+      display: block;
+      font-size: 0.84rem;
+      line-height: 1;
+      letter-spacing: 0.02em;
+    }
+    .operator-controls-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .operator-control {
+      background: #101710;
+      border: 1px solid #2b392b;
+      border-radius: 9px;
+      padding: 8px;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      min-height: 0;
+    }
+    .operator-control-header {
+      display: grid;
+      gap: 4px;
+    }
+    .operator-control-label {
+      font-size: 0.63rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #627762;
+    }
+    .operator-control-state {
+      font-size: 1.06rem;
+      font-weight: 700;
+      color: #e2efe2;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.15;
+    }
+    .operator-control-button {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid #355235;
+      background: linear-gradient(180deg, #1d3320, #162617);
+      color: #e4f2e4;
+      font: inherit;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      padding: 9px 10px;
+      cursor: pointer;
+    }
+    .operator-control-button:hover:not(:disabled) { background: linear-gradient(180deg, #244029, #1a2c1c); }
+    .operator-control-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .operator-button-compact {
+      display: inline;
+    }
+    .operator-layout.operator-help-mode .operator-button-compact {
+      display: none;
+    }
+    .operator-control-button.operator-control-nav,
+    .operator-control-button.operator-control-nav:hover:not(:disabled) {
+      border-color: #355235;
+      background: linear-gradient(180deg, #1d3320, #162617);
+      color: #e4f2e4;
+    }
+    .operator-control-button--operate.operator-operate-standby {
+      border-color: #425342;
+      background: linear-gradient(180deg, #253025, #1b231b);
+    }
+    .operator-control-button--operate.operator-operate-active {
+      border-color: #2f7f4c;
+      background: linear-gradient(180deg, #16884c, #0f5b33);
+    }
+    .operator-control-button--operate.operator-operate-tx-live {
+      border-color: #7b3232;
+      background: linear-gradient(180deg, #6a2424, #471717);
+    }
+    .operator-control-button--operate.operator-operate-tx-standby {
+      border-color: #8d7120;
+      background: linear-gradient(180deg, #856514, #56410d);
+      color: #fff5cf;
+    }
+    .operator-control-hint {
+      font-size: 0.74rem;
+      color: #728472;
+      line-height: 1.35;
+    }
+    .operator-control-meta {
+      font-size: 0.72rem;
+      color: #94a894;
+      line-height: 1.35;
+    }
+    .operator-layout:not(.operator-help-mode) .operator-controls-grid .operator-control-state,
+    .operator-layout:not(.operator-help-mode) .operator-control-meta {
+      display: none;
+    }
+    .operator-meters-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .operator-meter {
+      background: #101710;
+      border: 1px solid #2b392b;
+      border-radius: 9px;
+      padding: 8px;
+    }
+    .operator-meter-label {
+      font-size: 0.63rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #627762;
+      margin-bottom: 6px;
+    }
+    .operator-meter-value {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #d8f3d8;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 6px;
+    }
+    .operator-meter-value.dim { color: #536553; }
+    .operator-meter-rail {
+      height: 7px;
+      border-radius: 999px;
+      background: #233123;
+      overflow: hidden;
+    }
+    .operator-meter-fill {
+      display: block;
+      height: 100%;
+      width: var(--meter-fill, 18%);
+      background: linear-gradient(90deg, #5ea45e, #d1ae57);
+    }
+    .operator-state-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+    }
+    .operator-lane {
+      background: #101710;
+      border: 1px solid #2b392b;
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-height: 0;
+    }
+    .operator-lane.display-hidden {
+      display: none;
+    }
+    .operator-lane.operator-warning-lane {
+      border-style: dashed;
+      border-color: #66572c;
+      background: #1a180f;
+    }
+    .operator-lane.operator-alarm-lane {
+      border-color: #5b2f2f;
+      background: #211414;
+    }
+    .operator-lane-header {
+      display: flex;
+      justify-content: flex-start;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .operator-lane-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #9aab9a;
+    }
+    .operator-lane-state {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #9aab9a;
+    }
+    .operator-warning-lane .operator-lane-title,
+    .operator-warning-lane .operator-lane-state { color: #d7bd73; }
+    .operator-alarm-lane .operator-lane-title,
+    .operator-alarm-lane .operator-lane-state { color: #e09c9c; }
+    .operator-lane-list {
+      margin: 0;
+      padding-left: 16px;
+      display: grid;
+      gap: 4px;
+      color: #cad7ca;
+      font-size: 0.82rem;
+    }
+    .operator-alarm-lane .operator-lane-list {
+      padding-left: 0;
+      list-style: none;
+      text-align: center;
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: #ffd8d8;
+    }
+    .operator-lane-placeholder {
+      color: #6d7f6d;
+      font-size: 0.78rem;
+      line-height: 1.35;
+    }
+    .operator-display-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .operator-display-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #b7c6b7;
+      font-size: 0.8rem;
+      user-select: none;
+    }
+    .operator-display-toggle input {
+      width: 15px;
+      height: 15px;
+      accent-color: #4a8a4a;
+    }
+    .operator-toolbar-toggles {
+      display: inline-grid;
+      grid-auto-flow: column;
+      align-items: start;
+      justify-content: end;
+      gap: 10px;
+      justify-self: end;
+    }
+    .operator-display-shell {
+      background: #080b08;
+      border: 1px solid #1f291f;
+      border-radius: 8px;
+      padding: 8px;
+      text-align: center;
+    }
+    #screen-operator {
+      display: block;
+      max-width: 100%;
+      margin: 0 auto;
+      image-rendering: pixelated;
+    }
+    .operator-display-caption {
+      margin-top: 8px;
+      font-size: 0.73rem;
+      color: #6f846f;
+    }
+    .operator-display-card.display-hidden {
+      display: none;
+    }
+    .operator-aux-details {
+      border-top: 1px solid #263226;
+      padding-top: 8px;
+    }
+    .operator-aux-details summary {
+      color: #9eb39e;
+      font-size: 0.82rem;
+    }
+    .operator-aux-body {
+      margin-top: 8px;
+      background: #101710;
+      border: 1px solid #2b392b;
+      border-radius: 9px;
+      padding: 8px;
+      display: grid;
+      gap: 8px;
+    }
+    .operator-aux-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #7a907a;
+    }
+    .operator-aux-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .operator-mock-btn {
+      background: #1a2a1a;
+      border: 1px solid #314531;
+      color: #d5e4d5;
+      border-radius: 7px;
+      padding: 6px 9px;
+      font: inherit;
+      font-size: 0.74rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .operator-mock-btn:hover:not(:disabled) { background: #213521; }
+    .operator-mock-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    @media (max-width: 650px) {
+      .operator-layout-grid,
+      .operator-display-tier,
+      .operator-state-grid,
+      .operator-controls-grid,
+      .operator-meters-grid,
+      .operator-nav-tier {
+        grid-template-columns: 1fr;
+      }
+      .operator-header {
+        grid-template-columns: 1fr;
+      }
+      .operator-toolbar-toggles {
+        grid-auto-flow: row;
+        justify-self: start;
+      }
+    }
+
+    /* ═══════════════════════════════════════════════
+       1.3K FRONT PANEL LAYOUT
+    ═══════════════════════════════════════════════ */
+
+    /* Outer chassis wrapper */
+    .panel-1k3 {
+      background: #1a1d20;
+      border: 2px solid #2e3338;
+      border-radius: 12px;
+      padding: 18px 14px 14px;
+      margin-top: 14px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    }
+
+    /* Chassis label row */
+    .panel-1k3-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .panel-1k3-brand {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: #8aaccc;
+    }
+    .panel-1k3-model {
+      font-size: 0.88rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.10em;
+      color: #aec8e8;
+    }
+
+    /* Three-column main layout: left cluster | display | right cluster */
+    .panel-1k3-body {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      justify-content: center;
+    }
+
+    /* Left and right clusters */
+    .panel-cluster-1k3 {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 110px;
+      flex-shrink: 0;
+    }
+
+    /* Cluster section title */
+    .cluster-section-title {
+      font-size: 0.60rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #566878;
+      margin-bottom: 1px;
+    }
+
+    /* 3×3 button grid */
+    .btn-grid-3x3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+    }
+
+    /* Generic panel button */
+    .pb {
+      background: #252b2e;
+      border: 1px solid #3a4248;
+      color: #c8d8e8;
+      border-radius: 5px;
+      padding: 7px 4px 6px;
+      font: inherit;
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-align: center;
+      cursor: pointer;
+      letter-spacing: 0.03em;
+      line-height: 1.2;
+      min-height: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      user-select: none;
+    }
+    .pb:hover:not(:disabled) {
+      background: #2e363a;
+      border-color: #50626e;
+    }
+    .pb:active:not(:disabled) {
+      background: #1e262a;
+    }
+    .pb:disabled {
+      background: #1c2224;
+      border-color: #28323a;
+      color: #3c4c58;
+      cursor: not-allowed;
+    }
+
+    /* Safe/interactive panel buttons get a subtle highlight */
+    .pb-safe {
+      background: #1c2e38;
+      border-color: #2e4e62;
+      color: #b8d8f0;
+    }
+    .pb-safe:hover:not(:disabled) {
+      background: #24394a;
+      border-color: #3a6080;
+    }
+    .pb-safe:active:not(:disabled) {
+      background: #162028;
+    }
+
+    .pb-sym {
+      font-size: 1rem;
+      line-height: 1;
+    }
+
+    /* LED indicator strip — horizontal (panel layout, below each cluster) */
+    .led-strip-h {
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      justify-content: flex-start;
+    }
+    .led-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .led {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+    }
+    /* off state */
+    .led-off  { background: #1e2428; box-shadow: 0 0 0 1px #2a3238; }
+    /* on states */
+    .led-green  { background: #20c040; box-shadow: 0 0 6px #20c040, 0 0 0 1px #16902e; }
+    .led-yellow { background: #d0b000; box-shadow: 0 0 6px #d0b000, 0 0 0 1px #a08000; }
+    .led-orange { background: #e07a18; box-shadow: 0 0 6px #e07a18, 0 0 0 1px #b55f10; }
+    .led-red    { background: #d03020; box-shadow: 0 0 6px #d03020, 0 0 0 1px #a02010; }
+    .led-label {
+      font-size: 0.62rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #5a7080;
+    }
+
+    /* Center display section */
+    .panel-1k3-center {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    /* LCD display bezel */
+    .display-bezel {
+      background: #0a0c0a;
+      border: 2px solid #1e2820;
+      border-radius: 6px;
+      padding: 8px;
+      width: 100%;
+      text-align: center;
+      box-sizing: border-box;
+    }
+    .display-bezel .display-toolbar {
+      margin-bottom: 6px;
+    }
+    #screen-panel {
+      display: block;
+      max-width: 100%;
+      margin: 0 auto;
+      image-rendering: pixelated;
+    }
+
+    /* Source badge row (panel) */
+    .panel-status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      justify-content: flex-end;
+    }
+
+    /* Responsive collapse */
+    @media (max-width: 600px) {
+      .panel-1k3-body { flex-direction: column; align-items: center; }
+      .panel-cluster-1k3 { min-width: 0; width: 100%; }
+      .btn-grid-3x3 { grid-template-columns: repeat(4, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- Page header -->
+    <div class="page-header">
+      <h1 id="page-title">Expert Amp</h1>
+      <div class="header-right">
+        <span class="header-sub" id="header-model">SPE Expert</span>
+        <span id="source-badge" class="source-tag source-unknown">–</span>
+        <span id="seq-badge" class="seq-badge"></span>
+      </div>
+    </div>
+
+    <!-- Tab navigation -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" id="tab-watch" onclick="switchTab('watch')">Watch</button>
+      <button class="tab-btn" id="tab-settings" onclick="switchTab('settings')">Settings</button>
+    </nav>
+
+    <!-- ==================================================
+         WATCH view
+    ================================================== -->
+    <div class="view active" id="view-watch">
+
+    <!-- First-run setup (shown when serial port not configured) -->
+    <div id="setup" class="setup-card hidden">
+      <strong>First-run setup needed.</strong>
+      <p>Serial port is not configured. <a href="#" onclick="switchTab('settings'); return false;" style="color:#7ac97a">Open Settings</a> to set the serial port and save the connection config.</p>
+      <small id="setup-status"></small>
+    </div>
+
+    <div class="watch-layouts">
+      <div id="layout-panel" data-layout-root="panel"></div>
+      <div id="layout-operator" class="hidden" data-layout-root="operator"></div>
+    </div>
+
+    <template id="watch-layout-panel-template">
+      <div class="panel-1k3">
+
+        <!-- Chassis header -->
+        <div class="panel-1k3-header">
+          <span class="panel-1k3-brand">SPE Expert</span>
+          <span class="panel-1k3-model" id="panel-model-label">1.3K</span>
+        </div>
+
+        <!-- Main body: left cluster | display | right cluster -->
+        <div class="panel-1k3-body">
+
+          <!-- ── LEFT cluster ── -->
+          <div class="panel-cluster-1k3">
+            <div class="cluster-section-title">Band / ATU</div>
+
+            <!-- 3×3 grid: INPUT ◄L L► / ANT ◄C C► / ◄BAND BAND► TUNE -->
+            <div class="btn-grid-3x3">
+              <!-- row 1 -->
+              <button class="pb pb-safe" onclick="sendButton('input')" title="INPUT — documented command 0x01, still needs hardware confirmation">INPUT</button>
+              <button class="pb pb-safe" onclick="sendButton('l-')" title="◄L — documented command 0x05, still needs hardware confirmation"><span class="pb-sym">◄</span>L</button>
+              <button class="pb pb-safe" onclick="sendButton('l+')" title="L► — documented command 0x06, still needs hardware confirmation">L<span class="pb-sym">►</span></button>
+              <!-- row 2 -->
+              <button class="pb pb-safe" onclick="sendButton('antenna')" title="ANT — documented command 0x04, still needs hardware confirmation">ANT</button>
+              <button class="pb pb-safe" onclick="sendButton('c-')" title="◄C — documented command 0x07, still needs hardware confirmation"><span class="pb-sym">◄</span>C</button>
+              <button class="pb pb-safe" onclick="sendButton('c+')" title="C► — documented command 0x08, still needs hardware confirmation">C<span class="pb-sym">►</span></button>
+              <!-- row 3 -->
+              <button class="pb pb-safe" onclick="sendButton('band-')" title="◄BAND — documented command 0x02, still needs hardware confirmation"><span class="pb-sym">◄</span>BND</button>
+              <button class="pb pb-safe" onclick="sendButton('band+')" title="BAND► — documented command 0x03, still needs hardware confirmation">BND<span class="pb-sym">►</span></button>
+              <button class="pb pb-safe" onclick="sendButton('tune')" title="TUNE — documented command 0x09, still needs hardware confirmation">TUNE</button>
+            </div>
+
+            <!-- Indicators: AL TUNE SET (horizontal row) -->
+            <div class="led-strip-h" style="margin-top:8px;">
+              <div class="led-row">
+                <div class="led led-off" id="led-al"></div>
+                <span class="led-label">AL</span>
+              </div>
+              <div class="led-row">
+                <div class="led led-off" id="led-tune"></div>
+                <span class="led-label">TUNE</span>
+              </div>
+              <div class="led-row">
+                <div class="led led-off" id="led-set"></div>
+                <span class="led-label">SET</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── CENTER: display + telemetry ── -->
+          <div class="panel-1k3-center">
+            <div class="display-bezel">
+              <img id="screen-panel" alt="SPE display">
+            </div>
+
+            <!-- Status row -->
+            <div class="panel-status-row">
+              <span id="source-badge-panel" class="source-tag source-unknown">–</span>
+              <span id="seq-badge-panel" class="seq-badge"></span>
+            </div>
+          </div>
+
+          <!-- ── RIGHT cluster ── -->
+          <div class="panel-cluster-1k3">
+            <div class="cluster-section-title">Controls</div>
+
+            <!-- 3×3 grid: ◄▲ ▼► ON / CAT DISP OFF / SET PWR OP -->
+            <!-- API nav aliases remain documented for the combined keys: sendButton('up') maps to ◄▲ and sendButton('down') maps to ▼►. -->
+            <div class="btn-grid-3x3">
+              <!-- row 1 -->
+              <button class="pb pb-safe" onclick="sendButton('left')" title="◄▲ left/up navigation key (code 0x0f)"><span class="pb-sym">◄▲</span></button>
+              <button class="pb pb-safe" onclick="sendButton('right')" title="▼► right/down navigation key (code 0x10)"><span class="pb-sym">▼►</span></button>
+              <button class="pb pb-safe" onclick="sendWake()" title="ON — experimental wake path using FTDI DTR/RTS control lines; not a normal front-panel button command">ON</button>
+              <!-- row 2 -->
+              <button class="pb pb-safe" onclick="sendButton('cat')" title="CAT — documented command 0x0e, still needs hardware confirmation">CAT</button>
+              <button class="pb pb-safe" onclick="sendButton('display')" title="DISPLAY — documented command 0x0c, still needs hardware confirmation">DISP</button>
+              <button class="pb pb-safe" onclick="sendButton('off')" title="OFF — documented switch-off command 0x0a, still needs hardware confirmation">OFF</button>
+              <!-- row 3 -->
+              <button class="pb pb-safe" onclick="sendButton('set')" title="SET — confirm / enter">SET</button>
+              <button class="pb pb-safe" onclick="sendButton('power')" title="PWR — documented command 0x0b, still needs hardware confirmation">PWR</button>
+              <button class="pb pb-safe" onclick="sendButton('operate')" title="OP — documented command 0x0d, still needs hardware confirmation">OP</button>
+            </div>
+
+            <!-- Indicators: ON OP TX (horizontal row) -->
+            <div class="led-strip-h" style="margin-top:8px;">
+              <div class="led-row">
+                <div class="led led-off" id="led-on"></div>
+                <span class="led-label">ON</span>
+              </div>
+              <div class="led-row">
+                <div class="led led-off" id="led-op"></div>
+                <span class="led-label">OP</span>
+              </div>
+              <div class="led-row">
+                <div class="led led-off" id="led-tx"></div>
+                <span class="led-label">TX</span>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /panel-1k3-body -->
+
+        <div id="panel-action-feedback" class="action-feedback info"></div>
+
+      </div><!-- /panel-1k3 -->
+    </template>
+
+    <template id="watch-layout-operator-template">
+      <div class="card operator-layout" id="operator-layout">
+        <div class="operator-header">
+          <div>
+            <div class="card-title">Operator</div>
+            <p class="operator-header-note operator-help-only">A self-documenting operator surface: turn help on when you want section labels and clearer control descriptions, then drop back to dense mode when you don't.</p>
+          </div>
+          <div class="operator-toolbar-toggles">
+            <label class="operator-display-toggle" for="operator-help-mode">
+              <input type="checkbox" id="operator-help-mode">
+              Help mode
+            </label>
+            <label class="operator-display-toggle" for="operator-show-menu-controls">
+              <input type="checkbox" id="operator-show-menu-controls" checked>
+              Menu Controls
+            </label>
+            <label class="operator-display-toggle" for="operator-show-display">
+              <input type="checkbox" id="operator-show-display" checked>
+              Show LCD
+            </label>
+          </div>
+        </div>
+
+        <div class="operator-layout-grid">
+          <div class="operator-column">
+            <div class="operator-display-tier" id="operator-display-tier">
+              <div class="operator-card operator-display-card" id="operator-display-card">
+                <div class="operator-display-toolbar">
+                  <div>
+                    <div class="operator-card-title operator-help-only" style="margin-bottom:4px;">LCD mirror</div>
+                  </div>
+                </div>
+                <div class="operator-display-shell">
+                  <img id="screen-operator" alt="SPE display">
+                </div>
+                <div class="operator-display-caption operator-help-only">Rendered from the existing display snapshot pipeline.</div>
+              </div>
+
+              <div class="operator-nav-tier" id="operator-nav-tier">
+                <div class="operator-nav-card" id="operator-nav-card">
+                  <div class="operator-card-title operator-help-only">Menu controls</div>
+                  <div class="operator-nav-grid">
+                    <button class="operator-nav-key" onclick="sendButton('left')" title="◄▲ navigation key; API alias: up">
+                      <span class="operator-nav-symbol">◄▲</span>
+                    </button>
+                    <button class="operator-nav-key" onclick="sendButton('right')" title="▼► navigation key; API alias: down">
+                      <span class="operator-nav-symbol">▼►</span>
+                    </button>
+                    <button class="operator-nav-key" onclick="sendButton('set')" title="SET">
+                      <span class="operator-nav-symbol">SET</span>
+                    </button>
+                    <button class="operator-nav-key" onclick="sendButton('display')" title="DSP">
+                      <span class="operator-nav-symbol">DSP</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="operator-tune-card" id="operator-tune-card">
+                  <div class="operator-card-title operator-help-only">Tune</div>
+                  <div class="operator-control-state operator-help-only" id="op-tune-state">Ready</div>
+                  <button class="operator-control-button operator-control-nav" onclick="sendButton('tune')"><span class="operator-button-compact">TUNE</span><span class="operator-help-button-label">Start tune cycle</span></button>
+                  <div class="operator-control-hint operator-help-only">Secondary active-operating control, promoted above aux/manual but kept out of the routine strip.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="operator-card display-hidden" id="operator-fault-region" hidden aria-hidden="true">
+              <div class="operator-card-title operator-help-only">Warnings and fault lane</div>
+              <div class="operator-display-toolbar operator-help-only" style="margin-bottom:8px;">
+                <button class="operator-mock-btn" id="operator-fault-preview-toggle" type="button">Preview warnings</button>
+              </div>
+              <div class="operator-state-grid">
+                <div class="operator-lane operator-warning-lane display-hidden" id="op-warning-lane" hidden aria-hidden="true">
+                  <div class="operator-lane-header">
+                    <span class="operator-lane-state" id="op-warning-state">Warning</span>
+                  </div>
+                  <ul class="operator-lane-list" id="op-warning-list"></ul>
+                </div>
+                <div class="operator-lane operator-alarm-lane display-hidden" id="op-alarm-lane" hidden aria-hidden="true">
+                  <div class="operator-lane-header">
+                    <span class="operator-lane-state" id="op-alarm-state">Alarm</span>
+                  </div>
+                  <ul class="operator-lane-list" id="op-alarm-list"></ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="operator-card">
+              <div class="operator-card-title operator-help-only">Operate and routine controls</div>
+              <div class="operator-controls-grid">
+                <div class="operator-control">
+                  <div class="operator-control-header">
+                    <span class="operator-control-label operator-help-only">Operate</span>
+                    <span class="operator-control-state" id="op-operate-state">Standby</span>
+                    <span class="operator-control-meta" id="op-tx">Receive / transmit state unavailable</span>
+                  </div>
+                  <button class="operator-control-button operator-control-button--operate operator-operate-standby" id="op-operate-button" onclick="sendButton('operate')"><span class="operator-button-compact" id="op-operate-action">Standby</span><span class="operator-help-button-label">Change operate / standby state</span></button>
+                  <div class="operator-control-hint operator-help-only">Primary day-to-day state control, with current state and next action kept together.</div>
+                </div>
+                <div class="operator-control">
+                  <div class="operator-control-header">
+                    <span class="operator-control-label operator-help-only">Power level</span>
+                    <span class="operator-control-state" id="op-power-state">LOW</span>
+                    <span class="operator-control-meta" id="op-power-note">Output reference unavailable</span>
+                  </div>
+                  <button class="operator-control-button" id="op-power-button" onclick="sendButton('power')"><span class="operator-button-compact" id="op-power-action">LOW</span><span class="operator-help-button-label">Cycle to next power level preset</span></button>
+                  <div class="operator-control-hint operator-help-only">Current level and the next action stay paired without adding a new workflow.</div>
+                </div>
+                <div class="operator-control">
+                  <div class="operator-control-header">
+                    <span class="operator-control-label operator-help-only">Antenna</span>
+                    <span class="operator-control-state" id="op-antenna-state">ANT –</span>
+                    <span class="operator-control-meta" id="op-antenna-bank">Bank – • ATU unknown</span>
+                  </div>
+                  <button class="operator-control-button" id="op-antenna-button" onclick="sendButton('antenna')"><span class="operator-button-compact" id="op-antenna-action">ANT –</span><span class="operator-help-button-label">Switch to next antenna path</span></button>
+                  <div class="operator-control-hint operator-help-only">Current antenna path and bank stay with the action instead of living in a separate overview block.</div>
+                </div>
+                <div class="operator-control">
+                  <div class="operator-control-header">
+                    <span class="operator-control-label operator-help-only">Input</span>
+                    <span class="operator-control-state" id="op-input-state">Input –</span>
+                    <span class="operator-control-meta" id="op-band">Band –</span>
+                  </div>
+                  <button class="operator-control-button" id="op-input-button" onclick="sendButton('input')"><span class="operator-button-compact" id="op-input-action">Input –</span><span class="operator-help-button-label">Switch to next station input</span></button>
+                  <div class="operator-control-hint operator-help-only">Normal station switching stays in the main operator strip.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="operator-card">
+              <div class="operator-card-title operator-help-only">Key telemetry</div>
+              <div class="operator-meters-grid">
+                <div class="operator-meter">
+                  <div class="operator-meter-label">Power out</div>
+                  <div class="operator-meter-value dim" id="op-power-out">–</div>
+                  <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-power-fill" style="--meter-fill: 12%;"></span></div>
+                </div>
+                <div class="operator-meter">
+                  <div class="operator-meter-label">SWR</div>
+                  <div class="operator-meter-value dim" id="op-swr">–</div>
+                  <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-swr-fill" style="--meter-fill: 8%;"></span></div>
+                </div>
+                <div class="operator-meter">
+                  <div class="operator-meter-label">PA volts</div>
+                  <div class="operator-meter-value dim" id="op-volts">–</div>
+                  <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-volts-fill" style="--meter-fill: 10%;"></span></div>
+                </div>
+                <div class="operator-meter">
+                  <div class="operator-meter-label">PA amps</div>
+                  <div class="operator-meter-value dim" id="op-amps">–</div>
+                  <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-amps-fill" style="--meter-fill: 10%;"></span></div>
+                </div>
+                <div class="operator-meter">
+                  <div class="operator-meter-label">ATU SWR</div>
+                  <div class="operator-meter-value dim" id="op-atu-swr">–</div>
+                  <div class="operator-meter-rail"></div>
+                </div>
+                <div class="operator-meter">
+                  <div class="operator-meter-label">Temp</div>
+                  <div class="operator-meter-value dim" id="op-temp-main">–</div>
+                  <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-temp-main-fill" style="--meter-fill: 10%;"></span></div>
+                </div>
+                <div class="operator-meter">
+                  <div class="operator-meter-label">Lower temp</div>
+                  <div class="operator-meter-value dim" id="op-temp-lower">–</div>
+                  <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-temp-lower-fill" style="--meter-fill: 10%;"></span></div>
+                </div>
+                <div class="operator-meter">
+                  <div class="operator-meter-label">Combiner temp</div>
+                  <div class="operator-meter-value dim" id="op-temp-combiner">–</div>
+                  <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-temp-combiner-fill" style="--meter-fill: 10%;"></span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="operator-card operator-help-only">
+              <div class="operator-card-title operator-help-only">Status summary</div>
+              <div class="operator-lane-placeholder" id="op-status-summary">Waiting for status telemetry.</div>
+            </div>
+
+            <div class="operator-card">
+              <details class="operator-aux-details">
+                <summary><span class="operator-button-compact">Aux / manual</span><span class="operator-help-inline">Aux / manual controls</span></summary>
+                <div class="operator-aux-body">
+                  <div class="operator-aux-title operator-help-only">Manual / front-panel controls</div>
+                  <div class="operator-aux-row">
+                    <button class="operator-mock-btn" onclick="sendWake()">Power on</button>
+                    <button class="operator-mock-btn" onclick="sendButton('off')">Power off</button>
+                    <button class="operator-mock-btn" onclick="sendButton('tune')">TUNE</button>
+                    <button class="operator-mock-btn" onclick="sendButton('band+')">Band +</button>
+                    <button class="operator-mock-btn" onclick="sendButton('band-')">Band -</button>
+                    <button class="operator-mock-btn" onclick="sendButton('l-')">L-</button>
+                    <button class="operator-mock-btn" onclick="sendButton('l+')">L+</button>
+                    <button class="operator-mock-btn" onclick="sendButton('c-')">C-</button>
+                    <button class="operator-mock-btn" onclick="sendButton('c+')">C+</button>
+                    <button class="operator-mock-btn" onclick="sendButton('display')">DSP</button>
+                    <button class="operator-mock-btn" onclick="sendButton('cat')">CAT</button>
+                  </div>
+                  <div class="operator-lane-placeholder operator-help-only" style="margin-top:8px;">
+                    These are document-backed transport mappings and still need physical confirmation on real hardware before we fully trust every mapped effect. On/wake is an experimental FTDI DTR/RTS wake path, not a normal front-panel action. Not available as normal front-panel actions: Back, Standby.
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <div id="action-feedback-operator" class="action-feedback info"></div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    </div><!-- /view-watch -->
+
+    <!-- ==================================================
+         SETTINGS view
+    ================================================== -->
+    <div class="view" id="view-settings">
+
+      <!-- Display Preferences (browser-local) -->
+      <div class="settings-card">
+        <div class="settings-card-title">Display Preferences</div>
+        <p class="needs-restart-note">These preferences are stored in your browser only. They do not affect the server.</p>
+
+        <div class="settings-section" style="margin-top:14px;">
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-layout">Watch layout <span class="local-badge">browser only</span></label>
+            <select id="s-layout" class="settings-input">
+              <option value="panel">Front Panel (default)</option>
+              <option value="operator">Operator</option>
+            </select>
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-scale">Display scale <span class="local-badge">browser only</span></label>
+            <select id="s-scale" class="settings-input">
+              <option value="1">1×</option>
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4" selected>4×</option>
+              <option value="5">5×</option>
+              <option value="6">6×</option>
+            </select>
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-lcd-polarity">LCD polarity <span class="local-badge">browser only</span></label>
+            <select id="s-lcd-polarity" class="settings-input">
+              <option value="normal">Inverted (white-on-black)</option>
+              <option value="inverted">LCD Native (black-on-white)</option>
+            </select>
+          </div>
+          <p class="settings-hint">The server renders white-on-black matching the real amp display. “Inverted” is the default. “LCD Native” flips the display image in your browser only via CSS filter. It does not affect the server or any API consumers.</p>
+
+        </div>
+
+        <div class="settings-action-row">
+          <button class="settings-save-btn" id="save-display-prefs">Save Display Preferences</button>
+          <span class="settings-status" id="display-prefs-status"></span>
+        </div>
+      </div>
+
+      <!-- Connection Settings (server config) -->
+      <div class="settings-card">
+        <div class="settings-card-title">Connection</div>
+        <p class="needs-restart-note">Saved to the server config file. Serial port, listen address, and display-frame refresh interval require a server restart to take effect. Display polling and status polling are live toggles.</p>
+
+        <div class="settings-section" style="margin-top:14px;">
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-serial-port">Serial port</label>
+            <div class="serial-port-wrapper">
+              <input id="s-serial-port" class="settings-input" type="text" placeholder="/dev/ttyUSB0 or COM3" autocomplete="off">
+              <select id="s-serial-port-picker" title="Pick from detected ports">
+                <option value="">detect…</option>
+              </select>
+            </div>
+          </div>
+          <p class="settings-hint">The picker enumerates ports the server can see. Select one to fill the field, then save.</p>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-listen-address">Listen address</label>
+            <input id="s-listen-address" class="settings-input" type="text" placeholder=":8088">
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-poll-interval">Display frame refresh interval (ms)</label>
+            <input id="s-poll-interval" class="settings-input" type="number" min="1" value="250">
+          </div>
+          <p class="settings-hint">Backend display-frame polling cadence. This affects how often the server asks the amp for display/frame data. The web UI mostly reads cached state, so refreshing the page faster will not outrun this cadence.</p>
+
+          <hr class="settings-divider">
+
+          <div class="settings-checkbox-row">
+            <input type="checkbox" id="s-display-polling" checked>
+            <label class="settings-checkbox-label" for="s-display-polling">Display polling enabled</label>
+          </div>
+          <p class="settings-hint">Live toggle — pauses or resumes backend display-frame polling immediately without a restart.</p>
+
+          <div class="settings-checkbox-row">
+            <input type="checkbox" id="s-status-polling" checked>
+            <label class="settings-checkbox-label" for="s-status-polling">Status polling enabled</label>
+          </div>
+          <p class="settings-hint">Live toggle — pauses or resumes backend protocol-status refresh immediately without a restart. /api/v1/status and the websocket status feed mostly serve cached in-memory state built from this path.</p>
+
+        </div>
+
+        <div class="settings-action-row">
+          <button class="settings-save-btn" id="save-connection">Save Connection Settings</button>
+          <button class="settings-save-btn" id="restart-server" type="button">Restart Server</button>
+          <span class="settings-status" id="connection-status"></span>
+        </div>
+        <p class="settings-hint">Restart asks this process to exit cleanly. It only comes back automatically when Expert Amp Server is being run under a supervisor such as systemd, launchd, Docker restart policy, or a similar service wrapper.</p>
+      </div>
+
+      <!-- Advanced Serial (server config) -->
+      <div class="settings-card">
+        <div class="settings-card-title">
+          Advanced Serial
+          <button class="advanced-toggle" id="advanced-serial-toggle" onclick="toggleAdvancedSerial()">show</button>
+        </div>
+        <p class="needs-restart-note">Advanced serial connection parameters. Saved to server config; take effect after restart except where noted. Display-frame refresh and protocol-status refresh are separate backend paths so you can run either path or both. Defaults match the SPE Expert serial interface.</p>
+
+        <div id="advanced-serial-body">
+          <div class="settings-section" style="margin-top:14px;">
+
+            <div class="settings-row">
+              <label class="settings-label" for="s-baud">Baud rate</label>
+              <input id="s-baud" class="settings-input" type="number" min="300" value="115200">
+            </div>
+
+            <div class="settings-row">
+              <label class="settings-label" for="s-read-timeout">Read timeout (ms)</label>
+              <input id="s-read-timeout" class="settings-input" type="number" min="1" value="250">
+            </div>
+
+            <hr class="settings-divider">
+
+            <div class="settings-checkbox-row">
+              <input type="checkbox" id="s-status-poll-command-enabled" checked>
+              <label class="settings-checkbox-label" for="s-status-poll-command-enabled">Protocol status refresh enabled</label>
+            </div>
+            <p class="settings-hint">When enabled, the server sends the documented status poll command from the Programmer's Guide to refresh protocol-native status in memory. The command itself is fixed in code so it cannot be accidentally broken in settings.</p>
+
+            <div class="settings-row">
+              <label class="settings-label" for="s-status-poll-interval">Status command refresh interval (ms)</label>
+              <input id="s-status-poll-interval" class="settings-input" type="number" min="1" value="500">
+            </div>
+            <p class="settings-hint">Backend protocol-status cadence. Websocket clients and most API consumers read cached state from this path, so polling the API faster than this mainly just reads the same snapshot more often.</p>
+
+            <hr class="settings-divider">
+
+            <div class="settings-checkbox-row">
+              <input type="checkbox" id="s-assert-dtr" checked>
+              <label class="settings-checkbox-label" for="s-assert-dtr">Assert DTR</label>
+            </div>
+
+            <div class="settings-checkbox-row">
+              <input type="checkbox" id="s-assert-rts" checked>
+              <label class="settings-checkbox-label" for="s-assert-rts">Assert RTS</label>
+            </div>
+
+          </div>
+
+          <div class="settings-action-row">
+            <button class="settings-save-btn" id="save-advanced">Save Advanced Settings</button>
+            <span class="settings-status" id="advanced-status"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- API quick-reference (in settings) -->
+      <div class="settings-card">
+        <details>
+          <summary style="font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#7a917a;cursor:pointer;user-select:none;list-style:none;padding:2px 0;">API reference</summary>
+          <div class="api-list">
+            <div class="api-row"><span class="api-path">/api/v1/display/render.png</span><span class="api-desc">current display render</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/display/ws</span><span class="api-desc">display refresh websocket for watch-UI image invalidation</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/display/state</span><span class="api-desc">display state JSON</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/display/frame</span><span class="api-desc">raw frame metadata</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/status</span><span class="api-desc">preferred automation status surface, backed by the documented status poll where available and conservative about unknowns</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/telemetry</span><span class="api-desc">phase-1 telemetry: model, state, band/input/antenna, CAT, output, SWR, temperature, and known unknowns</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/alarms</span><span class="api-desc">active alarms (stub in phase 1)</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/runtime/snapshot</span><span class="api-desc">full runtime snapshot</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/runtime/ingest</span><span class="api-desc">serial ingest diagnostics</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/runtime</span><span class="api-desc">runtime settings view</span></div>
+            <div class="api-row"><span class="api-path">POST /api/v1/runtime/restart</span><span class="api-desc">request a clean process exit for supervisor-managed restart</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/serial-ports</span><span class="api-desc">enumerate serial ports</span></div>
+            <div class="api-row"><span class="api-path">POST /api/v1/actions/button</span><span class="api-desc">send documented button action</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/settings</span><span class="api-desc">GET/POST runtime config</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/openapi.json</span><span class="api-desc">machine-readable OpenAPI artifact for the current API surface</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/docs</span><span class="api-desc">local human-facing docs page backed by the served OpenAPI document</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/display/render.png?source=protocol&amp;kind=home</span><span class="api-desc">fixture render override</span></div>
+          </div>
+        </details>
+      </div>
+
+    </div><!-- /view-settings -->
+
+  </div><!-- /wrap -->
+
+  <script>
+    // ─── Tab management ───────────────────────────────────────────────────────
+    function switchTab(tab) {
+      ['watch', 'settings'].forEach(t => {
+        document.getElementById('view-' + t).classList.toggle('active', t === tab);
+        document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+      });
+      // When switching to settings, refresh the fields from current config
+      if (tab === 'settings') {
+        loadSettingsPage();
+      }
+    }
+    window.switchTab = switchTab;
+
+    // ─── Layout management ────────────────────────────────────────────────────
+    const LAYOUT_KEY   = 'expertAmpLayout';
+    const SCALE_KEY    = 'expertAmpScale';
+    const POLARITY_KEY = 'expertAmpLcdPolarity';
+    const OPERATOR_DISPLAY_KEY = 'expertAmpOperatorShowDisplay';
+    const OPERATOR_HELP_KEY = 'expertAmpOperatorHelpMode';
+    const OPERATOR_MENU_CONTROLS_KEY = 'expertAmpOperatorShowMenuControls';
+    const OPERATOR_FAULT_PREVIEW_KEY = 'expertAmpOperatorFaultPreview';
+    const DEFAULT_LAYOUT = 'panel';
+    const DEFAULT_SCALE    = '4';
+    const DEFAULT_POLARITY = 'normal';
+    const DEFAULT_OPERATOR_SHOW_DISPLAY = true;
+    const DEFAULT_OPERATOR_HELP_MODE = false;
+    const DEFAULT_OPERATOR_SHOW_MENU_CONTROLS = true;
+    const DEFAULT_OPERATOR_FAULT_PREVIEW = 'off';
+    const WATCH_LAYOUTS = {
+      panel: {
+        rootId: 'layout-panel',
+        templateId: 'watch-layout-panel-template',
+        screenId: 'screen-panel',
+        feedbackId: 'panel-action-feedback',
+      },
+      operator: {
+        rootId: 'layout-operator',
+        templateId: 'watch-layout-operator-template',
+        screenId: 'screen-operator',
+        feedbackId: 'action-feedback-operator',
+      },
+    };
+
+    function normalizeLayout(layout) {
+      const requested = layout || DEFAULT_LAYOUT;
+      if (WATCH_LAYOUTS[requested] && !WATCH_LAYOUTS[requested].disabled) {
+        return requested;
+      }
+      return DEFAULT_LAYOUT;
+    }
+
+    function renderWatchLayouts() {
+      Object.values(WATCH_LAYOUTS).forEach(cfg => {
+        const root = document.getElementById(cfg.rootId);
+        const template = document.getElementById(cfg.templateId);
+        if (!root || !template) return;
+        root.innerHTML = template.innerHTML;
+      });
+    }
+
+    function currentLayout() {
+      return normalizeLayout(localStorage.getItem(LAYOUT_KEY));
+    }
+
+    function currentScale() {
+      return localStorage.getItem(SCALE_KEY) || DEFAULT_SCALE;
+    }
+
+    function currentPolarity() {
+      return localStorage.getItem(POLARITY_KEY) || DEFAULT_POLARITY;
+    }
+
+    function currentOperatorShowDisplay() {
+      const raw = localStorage.getItem(OPERATOR_DISPLAY_KEY);
+      if (raw === null) return DEFAULT_OPERATOR_SHOW_DISPLAY;
+      return raw !== 'false';
+    }
+
+    function currentOperatorHelpMode() {
+      const raw = localStorage.getItem(OPERATOR_HELP_KEY);
+      if (raw === null) return DEFAULT_OPERATOR_HELP_MODE;
+      return raw === 'true';
+    }
+
+    function currentOperatorShowMenuControls() {
+      const raw = localStorage.getItem(OPERATOR_MENU_CONTROLS_KEY);
+      if (raw === null) return DEFAULT_OPERATOR_SHOW_MENU_CONTROLS;
+      return raw !== 'false';
+    }
+
+    function currentOperatorFaultPreview() {
+      const raw = localStorage.getItem(OPERATOR_FAULT_PREVIEW_KEY);
+      if (raw === null) return DEFAULT_OPERATOR_FAULT_PREVIEW;
+      return raw;
+    }
+
+    function applyLayout(layout) {
+      const activeLayout = normalizeLayout(layout);
+      Object.entries(WATCH_LAYOUTS).forEach(([name, cfg]) => {
+        const root = document.getElementById(cfg.rootId);
+        if (!root) return;
+        root.classList.toggle('hidden', name !== activeLayout);
+      });
+    }
+
+    function applyPolarity(polarity) {
+      Object.values(WATCH_LAYOUTS).forEach(cfg => {
+        if (!cfg.screenId) return;
+        const el = document.getElementById(cfg.screenId);
+        if (!el) return;
+        el.style.filter = polarity === 'inverted' ? 'invert(1)' : '';
+      });
+    }
+
+    function applyOperatorDisplayVisibility(showDisplay) {
+      const card = document.getElementById('operator-display-card');
+      const menuToggleLabel = document.querySelector('label[for="operator-show-menu-controls"]');
+      const toggle = document.getElementById('operator-show-display');
+      if (card) card.classList.toggle('display-hidden', !showDisplay);
+      if (menuToggleLabel) menuToggleLabel.classList.toggle('display-hidden', !showDisplay);
+      applyOperatorMenuControlsVisibility(showDisplay && currentOperatorShowMenuControls());
+      if (toggle) toggle.checked = !!showDisplay;
+    }
+
+    function applyOperatorHelpMode(helpMode) {
+      const layout = document.getElementById('operator-layout');
+      const toggle = document.getElementById('operator-help-mode');
+      if (layout) layout.classList.toggle('operator-help-mode', !!helpMode);
+      if (toggle) toggle.checked = !!helpMode;
+    }
+
+    function applyOperatorMenuControlsVisibility(showMenuControls) {
+      const tier = document.getElementById('operator-nav-tier');
+      const displayTier = document.getElementById('operator-display-tier');
+      const toggle = document.getElementById('operator-show-menu-controls');
+      if (tier) {
+        tier.classList.toggle('display-hidden', !showMenuControls);
+        tier.hidden = !showMenuControls;
+        tier.setAttribute('aria-hidden', showMenuControls ? 'false' : 'true');
+      }
+      if (displayTier) {
+        displayTier.classList.toggle('menu-hidden', !showMenuControls);
+      }
+      if (toggle) toggle.checked = !!showMenuControls;
+    }
+
+    function nextOperatorFaultPreview(state) {
+      if (state === 'warning') return 'alarm';
+      if (state === 'alarm') return 'off';
+      return 'warning';
+    }
+
+    function previewOperatorStatus(status) {
+      const state = currentOperatorFaultPreview();
+      if (state === 'warning') {
+        return Object.assign({}, status || {}, {
+          warningsText: ['No valid band'],
+          warnings: ['B'],
+          activeAlarms: [],
+          alarmsText: [],
+        });
+      }
+      if (state === 'alarm') {
+        return Object.assign({}, status || {}, {
+          warningsText: ['Amplifier alarm active'],
+          warnings: ['M'],
+          alarmsText: ['Amplifier protection'],
+          activeAlarms: ['A'],
+        });
+      }
+      return status;
+    }
+
+    function updateOperatorFaultPreviewToggle() {
+      const btn = document.getElementById('operator-fault-preview-toggle');
+      if (!btn) return;
+      const state = currentOperatorFaultPreview();
+      btn.textContent = state === 'warning' ? 'Preview alarm' : state === 'alarm' ? 'Preview off' : 'Preview warnings';
+    }
+
+    function renderOperatorLane(rootId, listId, stateId, items, label) {
+      const root = document.getElementById(rootId);
+      const list = document.getElementById(listId);
+      const state = document.getElementById(stateId);
+      if (!root || !list || !state) return false;
+      const values = Array.isArray(items) ? items.filter(Boolean) : [];
+      const active = values.length > 0;
+      root.classList.toggle('display-hidden', !active);
+      root.hidden = !active;
+      root.setAttribute('aria-hidden', active ? 'false' : 'true');
+      state.textContent = label;
+      if (!active) {
+        list.innerHTML = '';
+        return false;
+      }
+      list.innerHTML = values.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+      return true;
+    }
+
+    function renderOperatorStatus(status) {
+      const data = previewOperatorStatus(status) || {};
+      const opState = typeof data.operatingState === 'string' && data.operatingState
+        ? data.operatingState
+        : (typeof data.mode === 'string' ? data.mode : null);
+      const opStateLower = typeof opState === 'string' ? opState.toLowerCase() : '';
+      const isOperate = opStateLower.includes('operat');
+      const hasTx = typeof data.tx === 'boolean';
+      const isTx = data.tx === true;
+      const txState = hasTx ? (isTx ? 'TX active' : 'RX / standby') : null;
+      const band = data.bandText || data.band;
+      const powerWatts = typeof data.powerWatts === 'number' ? data.powerWatts.toFixed(1) + ' W' : null;
+      const swrText = typeof data.swr === 'number' ? data.swr.toFixed(2) : data.swrDisplay;
+      const atuSwrText = typeof data.antennaSwr === 'number' ? data.antennaSwr.toFixed(2) : data.antennaSwrDisplay;
+      const paVoltsText = typeof data.paSupplyVoltage === 'number' ? data.paSupplyVoltage.toFixed(1) + ' V' : data.paSupplyVoltageDisplay;
+      const paCurrentText = typeof data.paCurrent === 'number' ? data.paCurrent.toFixed(1) + ' A' : data.paCurrentDisplay;
+      const lowerTempText = typeof data.temperatureLowerC === 'number' ? data.temperatureLowerC.toFixed(0) + ' °C' : data.temperatureLowerDisplay;
+      const combinerTempText = typeof data.temperatureCombinerC === 'number' ? data.temperatureCombinerC.toFixed(0) + ' °C' : data.temperatureCombinerDisplay;
+      const antennaRaw = typeof data.antenna === 'string' ? data.antenna.trim() : '';
+      const antennaText = antennaRaw ? 'ANT ' + antennaRaw : 'ANT –';
+      const inputText = data.input ? 'Input ' + data.input : 'Input –';
+      const outputLevel = typeof data.outputLevel === 'string' ? data.outputLevel.trim().toUpperCase() : '';
+      const powerText = outputLevel || '–';
+      const atuStatus = typeof data.atuStatusCode === 'string' ? data.atuStatusCode.trim() : '';
+      const atuBypass = /b$/i.test(antennaRaw) || atuStatus.toLowerCase() === 'b';
+      const antennaMeta = [];
+      if (atuBypass) antennaMeta.push('ATU Off');
+      else if (atuStatus) antennaMeta.push('ATU ' + atuStatus.toUpperCase());
+      else if (atuSwrText) antennaMeta.push('ATU SWR ' + atuSwrText);
+      if (data.antennaBank) antennaMeta.push('BANK ' + data.antennaBank);
+      const operateDisplay = isOperate ? 'Operate' : 'Standby';
+      const operateButtonText = operateDisplay;
+      const antennaButtonText = antennaText;
+      const inputButtonText = inputText;
+      const powerButtonText = powerText;
+
+      const mainTempText = typeof data.temperatureC === 'number' ? data.temperatureC.toFixed(0) + ' °C' : data.temperatureDisplay;
+      setTelemValue('op-temp-main', mainTempText);
+      setTelemValue('op-band', band ? 'Band ' + band : null);
+      setTelemValue('op-power-out', powerWatts || data.outputLevel);
+      setTelemValue('op-swr', swrText);
+      setTelemValue('op-atu-swr', atuSwrText);
+      setTelemValue('op-volts', paVoltsText);
+      setTelemValue('op-amps', paCurrentText);
+      setTelemValue('op-temp-lower', lowerTempText || data.temperatureDisplay);
+      setTelemValue('op-temp-combiner', combinerTempText || data.temperatureDisplay);
+      setTelemValue('op-tx', txState || opState ? (txState || opState) : 'Receive / transmit state unavailable');
+
+      const bank = document.getElementById('op-antenna-bank');
+      if (bank) {
+        bank.textContent = antennaMeta.length ? antennaMeta.join(' • ') : 'ATU unknown';
+      }
+      const powerNote = document.getElementById('op-power-note');
+      if (powerNote) powerNote.textContent = powerWatts || 'Output reference unavailable';
+      const operateState = document.getElementById('op-operate-state');
+      if (operateState) operateState.textContent = operateDisplay;
+      const operateButton = document.getElementById('op-operate-button');
+      if (operateButton) {
+        operateButton.classList.toggle('operator-operate-active', isOperate && !isTx);
+        operateButton.classList.toggle('operator-operate-standby', !isOperate && !isTx);
+        operateButton.classList.toggle('operator-operate-tx-live', isOperate && isTx);
+        operateButton.classList.toggle('operator-operate-tx-standby', !isOperate && isTx);
+      }
+      const operateActionLabel = document.getElementById('op-operate-action');
+      if (operateActionLabel) operateActionLabel.textContent = operateButtonText;
+      const tuneState = document.getElementById('op-tune-state');
+      if (tuneState) tuneState.textContent = atuSwrText ? 'ATU SWR ' + atuSwrText : (swrText ? 'SWR ' + swrText : 'Ready');
+      const powerState = document.getElementById('op-power-state');
+      if (powerState) powerState.textContent = powerText;
+      const powerActionLabel = document.getElementById('op-power-action');
+      if (powerActionLabel) powerActionLabel.textContent = powerButtonText;
+      const antennaState = document.getElementById('op-antenna-state');
+      if (antennaState) antennaState.textContent = antennaText;
+      const antennaActionLabel = document.getElementById('op-antenna-action');
+      if (antennaActionLabel) antennaActionLabel.textContent = antennaButtonText;
+      const inputState = document.getElementById('op-input-state');
+      if (inputState) inputState.textContent = inputText;
+      const inputActionLabel = document.getElementById('op-input-action');
+      if (inputActionLabel) inputActionLabel.textContent = inputButtonText;
+      const statusSummary = document.getElementById('op-status-summary');
+      if (statusSummary) {
+        const parts = [
+          operateDisplay,
+          txState || null,
+          band ? 'Band ' + band : null,
+          antennaMeta[0] || null,
+          data.recentContact === true ? 'Link recent' : (data.lastContactAt ? 'Link stale' : null),
+        ].filter(Boolean);
+        statusSummary.textContent = parts.length ? parts.join(' • ') : 'Waiting for status telemetry.';
+      }
+
+      const powerFill = document.getElementById('op-power-fill');
+      if (powerFill) {
+        const watts = typeof data.powerWatts === 'number' && Number.isFinite(data.powerWatts) ? data.powerWatts : 0;
+        const pct = Math.max(6, Math.min(100, (watts / 1500) * 100));
+        powerFill.style.setProperty('--meter-fill', pct.toFixed(0) + '%');
+      }
+      const swrFill = document.getElementById('op-swr-fill');
+      if (swrFill) {
+        const swr = typeof data.swr === 'number' && Number.isFinite(data.swr) ? data.swr : 1;
+        const pct = Math.max(8, Math.min(100, ((swr - 1) / 3) * 100));
+        swrFill.style.setProperty('--meter-fill', pct.toFixed(0) + '%');
+      }
+      const voltsFill = document.getElementById('op-volts-fill');
+      if (voltsFill) {
+        const volts = typeof data.paSupplyVoltage === 'number' && Number.isFinite(data.paSupplyVoltage) ? data.paSupplyVoltage : 0;
+        const pct = Math.max(8, Math.min(100, (volts / 60) * 100));
+        voltsFill.style.setProperty('--meter-fill', pct.toFixed(0) + '%');
+      }
+      const ampsFill = document.getElementById('op-amps-fill');
+      if (ampsFill) {
+        const amps = typeof data.paCurrent === 'number' && Number.isFinite(data.paCurrent) ? data.paCurrent : 0;
+        const pct = Math.max(8, Math.min(100, (amps / 55) * 100));
+        ampsFill.style.setProperty('--meter-fill', pct.toFixed(0) + '%');
+      }
+      const mainTempFill = document.getElementById('op-temp-main-fill');
+      if (mainTempFill) {
+        const temp = typeof data.temperatureC === 'number' && Number.isFinite(data.temperatureC) ? data.temperatureC : 0;
+        const pct = Math.max(8, Math.min(100, (temp / 100) * 100));
+        mainTempFill.style.setProperty('--meter-fill', pct.toFixed(0) + '%');
+      }
+      const lowerTempFill = document.getElementById('op-temp-lower-fill');
+      if (lowerTempFill) {
+        const temp = typeof data.temperatureLowerC === 'number' && Number.isFinite(data.temperatureLowerC) ? data.temperatureLowerC : 0;
+        const pct = Math.max(8, Math.min(100, (temp / 100) * 100));
+        lowerTempFill.style.setProperty('--meter-fill', pct.toFixed(0) + '%');
+      }
+      const combinerTempFill = document.getElementById('op-temp-combiner-fill');
+      if (combinerTempFill) {
+        const temp = typeof data.temperatureCombinerC === 'number' && Number.isFinite(data.temperatureCombinerC) ? data.temperatureCombinerC : 0;
+        const pct = Math.max(8, Math.min(100, (temp / 100) * 100));
+        combinerTempFill.style.setProperty('--meter-fill', pct.toFixed(0) + '%');
+      }
+
+      const hasWarning = renderOperatorLane(
+        'op-warning-lane',
+        'op-warning-list',
+        'op-warning-state',
+        Array.isArray(data.warningsText) && data.warningsText.length ? data.warningsText : data.warnings,
+        'Warning'
+      );
+      const hasAlarm = renderOperatorLane(
+        'op-alarm-lane',
+        'op-alarm-list',
+        'op-alarm-state',
+        Array.isArray(data.alarmsText) && data.alarmsText.length ? data.alarmsText : data.activeAlarms,
+        'Alarm'
+      );
+      const faultRegion = document.getElementById('operator-fault-region');
+      if (faultRegion) {
+        const active = hasWarning || hasAlarm;
+        faultRegion.classList.toggle('display-hidden', !active);
+        faultRegion.hidden = !active;
+        faultRegion.setAttribute('aria-hidden', active ? 'false' : 'true');
+      }
+    }
+
+    renderWatchLayouts();
+
+    // ─── Shared DOM refs ──────────────────────────────────────────────────────
+    const setupCard             = document.getElementById('setup');
+    const setupStatus           = document.getElementById('setup-status');
+    const screenPanel           = document.getElementById('screen-panel');
+    const feedbackPanel         = document.getElementById('panel-action-feedback');
+    const feedbackOperator      = document.getElementById('action-feedback-operator');
+    const operatorDisplayToggle = document.getElementById('operator-show-display');
+    const operatorHelpToggle    = document.getElementById('operator-help-mode');
+    const operatorMenuControlsToggle = document.getElementById('operator-show-menu-controls');
+    const operatorFaultPreviewToggle = document.getElementById('operator-fault-preview-toggle');
+    const layoutFeedbackEls = Object.fromEntries(
+      Object.entries(WATCH_LAYOUTS)
+        .filter(([, cfg]) => cfg.feedbackId)
+        .map(([name, cfg]) => [name, document.getElementById(cfg.feedbackId)])
+    );
+    const sourceBadge       = document.getElementById('source-badge');
+    const seqBadge          = document.getElementById('seq-badge');
+    const sourceBadgePanel  = document.getElementById('source-badge-panel');
+    const seqBadgePanel     = document.getElementById('seq-badge-panel');
+    const panelModelLabel   = document.getElementById('panel-model-label');
+
+    let tick = 0;
+    let statusSocket = null;
+    let statusSocketRetryTimer = null;
+    let displaySocket = null;
+    let displaySocketRetryTimer = null;
+    let displayPollingEnabled = true;
+    let lastDisplaySequence = 0;
+
+    // Apply persisted display prefs on load
+    applyLayout(currentLayout());
+    applyPolarity(currentPolarity());
+    applyOperatorDisplayVisibility(currentOperatorShowDisplay());
+    applyOperatorHelpMode(currentOperatorHelpMode());
+    applyOperatorMenuControlsVisibility(currentOperatorShowMenuControls());
+    updateOperatorFaultPreviewToggle();
+
+    if (operatorDisplayToggle) {
+      operatorDisplayToggle.addEventListener('change', () => {
+        localStorage.setItem(OPERATOR_DISPLAY_KEY, operatorDisplayToggle.checked ? 'true' : 'false');
+        applyOperatorDisplayVisibility(operatorDisplayToggle.checked);
+      });
+    }
+    if (operatorHelpToggle) {
+      operatorHelpToggle.addEventListener('change', () => {
+        localStorage.setItem(OPERATOR_HELP_KEY, operatorHelpToggle.checked ? 'true' : 'false');
+        applyOperatorHelpMode(operatorHelpToggle.checked);
+      });
+    }
+    if (operatorMenuControlsToggle) {
+      operatorMenuControlsToggle.addEventListener('change', () => {
+        localStorage.setItem(OPERATOR_MENU_CONTROLS_KEY, operatorMenuControlsToggle.checked ? 'true' : 'false');
+        applyOperatorMenuControlsVisibility(operatorMenuControlsToggle.checked);
+      });
+    }
+    if (operatorFaultPreviewToggle) {
+      operatorFaultPreviewToggle.addEventListener('click', () => {
+        localStorage.setItem(OPERATOR_FAULT_PREVIEW_KEY, nextOperatorFaultPreview(currentOperatorFaultPreview()));
+        updateOperatorFaultPreviewToggle();
+        pollStatus();
+      });
+    }
+
+    // ─── Advanced serial toggle ────────────────────────────────────────────────
+    function toggleAdvancedSerial() {
+      const body   = document.getElementById('advanced-serial-body');
+      const toggle = document.getElementById('advanced-serial-toggle');
+      const open   = body.classList.toggle('open');
+      toggle.textContent = open ? 'hide' : 'show';
+    }
+    window.toggleAdvancedSerial = toggleAdvancedSerial;
+
+    // ─── Shared status helpers ───────────────────────────────────────────────
+    function setTelemValue(id, value) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (value !== null && value !== undefined && value !== '') {
+        el.textContent = value;
+        el.classList.remove('dim');
+      } else {
+        el.textContent = '–';
+        el.classList.add('dim');
+      }
+    }
+
+    function setLed(id, cssClass) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.className = 'led ' + cssClass;
+    }
+
+    function refreshDisplayRender(force = false) {
+      if (!force && !displayPollingEnabled) {
+        return;
+      }
+      tick += 1;
+      const scale = currentScale();
+      const src = `/api/v1/display/render.png?scale=${scale}&tick=${tick}`;
+      const layout = currentLayout();
+      const activeScreenId = (WATCH_LAYOUTS[layout] && WATCH_LAYOUTS[layout].screenId) || WATCH_LAYOUTS[DEFAULT_LAYOUT].screenId;
+      const activeScreen = document.getElementById(activeScreenId);
+      if (activeScreen) {
+        activeScreen.src = src;
+      }
+    }
+
+    function applyDisplaySnapshotMeta(snap) {
+      if (!snap) return;
+
+      const cls = sourceClass(snap.source);
+      const lbl = sourceLabel(snap.source);
+      sourceBadge.className = 'source-tag ' + cls;
+      sourceBadge.textContent = lbl;
+      sourceBadgePanel.className = 'source-tag ' + cls;
+      sourceBadgePanel.textContent = lbl;
+
+      const seq = Number(snap.sequence || 0);
+      lastDisplaySequence = seq;
+      const seqText = seq > 0 ? '#' + seq : '';
+      seqBadge.textContent = seqText;
+      seqBadgePanel.textContent = seqText;
+    }
+
+    function handleDisplayRefreshEvent(event, force = false) {
+      if (!event) return;
+      const previousSequence = lastDisplaySequence;
+      applyDisplaySnapshotMeta(event);
+      if (force || Number(event.sequence || 0) !== previousSequence) {
+        refreshDisplayRender(force);
+      }
+    }
+
+    function resetStatusIndicators() {
+      setLed('led-tx', 'led-off');
+      setLed('led-op', 'led-off');
+      setLed('led-al', 'led-off');
+      setLed('led-on', 'led-off');
+      setLed('led-tune', 'led-off');
+      setLed('led-set', 'led-off');
+      if (panelModelLabel) panelModelLabel.textContent = '1.3K';
+    }
+
+    function updateStatusIndicators(status) {
+      if (!status) {
+        resetStatusIndicators();
+        renderOperatorStatus(null);
+        return;
+      }
+
+      if (panelModelLabel) {
+        panelModelLabel.textContent = status.modelName || '1.3K';
+      }
+
+      const headerModel = document.getElementById('header-model');
+      if (headerModel) {
+        headerModel.textContent = status.modelName || 'SPE Expert';
+      }
+
+      if (typeof status.tx === 'boolean') {
+        setLed('led-tx', status.tx ? 'led-red' : 'led-off');
+      } else {
+        setLed('led-tx', 'led-off');
+      }
+
+      const opState = typeof status.operatingState === 'string' && status.operatingState
+        ? status.operatingState.toLowerCase()
+        : (typeof status.mode === 'string' ? status.mode.toLowerCase() : '');
+      setLed('led-op', opState.includes('operat') ? 'led-orange' : 'led-off');
+      setLed('led-al', Array.isArray(status.activeAlarms) && status.activeAlarms.length > 0 ? 'led-red' : 'led-off');
+
+      setLed('led-on', status.recentContact === true ? 'led-green' : 'led-off');
+      setLed('led-tune', 'led-off');
+      setLed('led-set', 'led-off');
+      renderOperatorStatus(status);
+    }
+
+    function sourceClass(src) {
+      if (!src) return 'source-unknown';
+      if (src.startsWith('fixture') || src.startsWith('demo')) return 'source-fixture';
+      if (src === 'stub') return 'source-stub';
+      return 'source-live';
+    }
+
+    function sourceLabel(src) {
+      if (!src) return '–';
+      if (src.startsWith('fixture')) return 'fixture';
+      if (src === 'stub') return 'stub';
+      return 'live';
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    async function pollSnapshot() {
+      try {
+        const res = await fetch('/api/v1/runtime/snapshot');
+        if (!res.ok) return;
+        const body = await res.json();
+        const snap = body.data;
+        if (!snap) return;
+
+        const nextSequence = Number(snap.sequence || 0);
+        const changed = nextSequence > 0 && nextSequence !== lastDisplaySequence;
+        applyDisplaySnapshotMeta(snap);
+        if (changed) {
+          refreshDisplayRender();
+        }
+      } catch (_) {
+        // network error during snapshot poll — ignore
+      }
+    }
+
+    // ─── Button dispatch ──────────────────────────────────────────────────────
+    async function sendButton(name) {
+      const layout = currentLayout();
+      const feedback = layoutFeedbackEls[layout] || layoutFeedbackEls[DEFAULT_LAYOUT] || feedbackPanel;
+      feedback.textContent = 'Sending ' + name + '…';
+      feedback.className = 'action-feedback info';
+      try {
+        const res = await fetch('/api/v1/actions/button', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const body = await res.json();
+        if (body.success) {
+          feedback.textContent = '✓ ' + name + ' sent';
+          feedback.className = 'action-feedback ok';
+        } else {
+          feedback.textContent = '✗ ' + (body.error || 'send failed');
+          feedback.className = 'action-feedback err';
+        }
+      } catch (err) {
+        feedback.textContent = '✗ ' + err.message;
+        feedback.className = 'action-feedback err';
+      } finally {
+        setTimeout(() => {
+          feedback.textContent = '';
+          feedback.className = 'action-feedback info';
+        }, 4000);
+      }
+    }
+    window.sendButton = sendButton;
+
+    async function sendWake() {
+      const layout = currentLayout();
+      const feedback = layoutFeedbackEls[layout] || layoutFeedbackEls[DEFAULT_LAYOUT] || feedbackPanel;
+      feedback.textContent = 'Sending wake…';
+      feedback.className = 'action-feedback info';
+      try {
+        const res = await fetch('/api/v1/actions/wake', { method: 'POST' });
+        const body = await res.json();
+        if (body.success) {
+          feedback.textContent = '✓ wake sent';
+          feedback.className = 'action-feedback ok';
+        } else {
+          feedback.textContent = '✗ ' + (body.error || 'wake failed');
+          feedback.className = 'action-feedback err';
+        }
+      } catch (err) {
+        feedback.textContent = '✗ ' + err.message;
+        feedback.className = 'action-feedback err';
+      } finally {
+        setTimeout(() => {
+          feedback.textContent = '';
+          feedback.className = 'action-feedback info';
+        }, 4000);
+      }
+    }
+    window.sendWake = sendWake;
+
+    // ─── Settings page ────────────────────────────────────────────────────────
+    //
+    // Sections:
+    //   1. Display Preferences — browser-local only (layout, scale, LCD polarity)
+    //   2. Connection Settings — server config (serial port, listen addr, polling)
+    //   3. Advanced Serial     — server config (baud, timeout, poll frame, DTR/RTS)
+    //
+
+    function setStatus(id, msg, cls) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = msg;
+      el.className = 'settings-status' + (cls ? ' ' + cls : '');
+      if (msg && cls !== 'err') {
+        setTimeout(() => { el.textContent = ''; el.className = 'settings-status'; }, 4000);
+      }
+    }
+
+    // Populate serial port picker from /api/v1/serial-ports
+    async function loadSerialPorts() {
+      const picker = document.getElementById('s-serial-port-picker');
+      if (!picker) return;
+      try {
+        const res = await fetch('/api/v1/serial-ports');
+        if (!res.ok) return;
+        const body = await res.json();
+        const ports = (body.data && body.data.ports) ? body.data.ports : [];
+        // Clear existing options except the placeholder
+        while (picker.options.length > 1) picker.remove(1);
+        ports.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.name || p;
+          opt.textContent = p.name || p;
+          if (p.description) opt.textContent += ' — ' + p.description;
+          picker.appendChild(opt);
+        });
+      } catch (_) {}
+    }
+
+    const serialPicker = document.getElementById('s-serial-port-picker');
+    if (serialPicker) {
+      serialPicker.addEventListener('change', (e) => {
+        if (e.target.value) {
+          document.getElementById('s-serial-port').value = e.target.value;
+          e.target.value = '';
+        }
+      });
+    }
+
+    // Load settings from server and populate all settings fields
+    async function loadSettingsPage() {
+      try {
+        const res = await fetch('/api/v1/settings');
+        const payload = await res.json();
+        const snap = payload.data;
+        if (!snap) return;
+        const s = snap.settings;
+
+        // Connection fields
+        document.getElementById('s-serial-port').value    = s.serialPort    || '';
+        document.getElementById('s-listen-address').value = s.listenAddress || '';
+        document.getElementById('s-poll-interval').value  = s.pollIntervalMs || 250;
+        document.getElementById('s-display-polling').checked = !!s.displayPollingEnabled;
+        document.getElementById('s-status-polling').checked  = !!s.statusPollingEnabled;
+        displayPollingEnabled = !!s.displayPollingEnabled;
+
+        // Advanced serial fields
+        document.getElementById('s-baud').value                = s.serialBaudRate      || 115200;
+        document.getElementById('s-read-timeout').value        = s.serialReadTimeoutMs || 250;
+        document.getElementById('s-status-poll-command-enabled').checked = !!s.statusPollCommandEnabled;
+        document.getElementById('s-status-poll-interval').value = s.statusPollIntervalMs || 500;
+        document.getElementById('s-assert-dtr').checked = !!s.serialAssertDTR;
+        document.getElementById('s-assert-rts').checked = !!s.serialAssertRTS;
+
+        // First-run banner in Watch tab
+        setupCard.classList.toggle('hidden', !snap.needsSetup);
+
+      } catch (err) {
+        setStatus('connection-status', 'Failed to load: ' + err.message, 'err');
+      }
+
+      // Also populate display prefs from localStorage
+      const sLayout   = document.getElementById('s-layout');
+      const sScale    = document.getElementById('s-scale');
+      const sPolarity = document.getElementById('s-lcd-polarity');
+      if (sLayout)   sLayout.value   = currentLayout();
+      if (sScale)    sScale.value    = currentScale();
+      if (sPolarity) sPolarity.value = currentPolarity();
+
+      // Refresh serial port picker
+      loadSerialPorts();
+    }
+
+    // Save display preferences (browser-local)
+    document.getElementById('save-display-prefs').addEventListener('click', () => {
+      const layout   = document.getElementById('s-layout').value;
+      const scale    = document.getElementById('s-scale').value;
+      const polarity = document.getElementById('s-lcd-polarity').value;
+
+      localStorage.setItem(LAYOUT_KEY,   layout);
+      localStorage.setItem(SCALE_KEY,    scale);
+      localStorage.setItem(POLARITY_KEY, polarity);
+
+      applyLayout(layout);
+      applyPolarity(polarity);
+
+      setStatus('display-prefs-status', 'Saved', 'ok');
+    });
+
+    // Save connection settings (server config)
+    document.getElementById('save-connection').addEventListener('click', async () => {
+      setStatus('connection-status', 'Saving…');
+      const payload = {
+        serialPort:            document.getElementById('s-serial-port').value.trim(),
+        listenAddress:         document.getElementById('s-listen-address').value.trim(),
+        pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '250'),
+        displayPollingEnabled: document.getElementById('s-display-polling').checked,
+        statusPollingEnabled:  document.getElementById('s-status-polling').checked,
+      };
+      try {
+        const res  = await fetch('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.success) {
+          setStatus('connection-status', body.error || 'Save failed', 'err');
+          return;
+        }
+        setStatus('connection-status', body.message || 'Saved', 'ok');
+        if (body.data) {
+          setupCard.classList.toggle('hidden', !body.data.needsSetup);
+          displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
+        }
+      } catch (err) {
+        setStatus('connection-status', err.message, 'err');
+      }
+    });
+
+    document.getElementById('restart-server').addEventListener('click', async () => {
+      setStatus('connection-status', 'Requesting restart…');
+      try {
+        const res = await fetch('/api/v1/runtime/restart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const body = await res.json();
+        if (!body.success) {
+          setStatus('connection-status', body.error || 'Restart failed', 'err');
+          return;
+        }
+        setStatus('connection-status', body.message || 'Restart requested', 'ok');
+      } catch (err) {
+        setStatus('connection-status', err.message, 'err');
+      }
+    });
+
+    // Save advanced serial settings (server config)
+    document.getElementById('save-advanced').addEventListener('click', async () => {
+      setStatus('advanced-status', 'Saving…');
+      // Read all current connection fields too so we do a complete merge
+      const payload = {
+        serialPort:            document.getElementById('s-serial-port').value.trim(),
+        listenAddress:         document.getElementById('s-listen-address').value.trim(),
+        pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '250'),
+        displayPollingEnabled: document.getElementById('s-display-polling').checked,
+        statusPollingEnabled:  document.getElementById('s-status-polling').checked,
+        serialBaudRate:        Number(document.getElementById('s-baud').value || '115200'),
+        serialReadTimeoutMs:   Number(document.getElementById('s-read-timeout').value || '250'),
+        statusPollCommandEnabled:  document.getElementById('s-status-poll-command-enabled').checked,
+        statusPollIntervalMs:      Number(document.getElementById('s-status-poll-interval').value || '500'),
+        serialAssertDTR:       document.getElementById('s-assert-dtr').checked,
+        serialAssertRTS:       document.getElementById('s-assert-rts').checked,
+      };
+      try {
+        const res = await fetch('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.success) {
+          setStatus('advanced-status', body.error || 'Save failed', 'err');
+          return;
+        }
+        setStatus('advanced-status', body.message || 'Saved', 'ok');
+        if (body.data) {
+          displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
+        }
+      } catch (err) {
+        setStatus('advanced-status', err.message, 'err');
+      }
+    });
+
+    async function pollStatus() {
+      try {
+        const res = await fetch('/api/v1/status');
+        if (!res.ok) return;
+        const body = await res.json();
+        if (body && body.data) {
+          updateStatusIndicators(body.data);
+          updateOperatorStatus(body.data);
+        }
+      } catch (_) {
+        // network error during status poll, keep last indicators
+      }
+    }
+
+    function scheduleStatusSocketRetry(delayMs) {
+      if (statusSocketRetryTimer) return;
+      statusSocketRetryTimer = setTimeout(() => {
+        statusSocketRetryTimer = null;
+        connectStatusWebsocket();
+      }, delayMs);
+    }
+
+    function scheduleDisplaySocketRetry(delayMs) {
+      if (displaySocketRetryTimer) return;
+      displaySocketRetryTimer = setTimeout(() => {
+        displaySocketRetryTimer = null;
+        connectDisplayWebsocket();
+      }, delayMs);
+    }
+
+    function connectStatusWebsocket() {
+      if (statusSocket && (statusSocket.readyState === WebSocket.OPEN || statusSocket.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${window.location.host}/api/v1/status/ws`;
+
+      try {
+        const ws = new WebSocket(url);
+        statusSocket = ws;
+
+        ws.onmessage = (event) => {
+          try {
+            const status = JSON.parse(event.data);
+            updateStatusIndicators(status);
+            updateOperatorStatus(status);
+          } catch (_) {
+            // ignore malformed payloads, fallback polling still exists
+          }
+        };
+
+        ws.onopen = () => {
+          pollStatus();
+        };
+
+        ws.onerror = () => {
+          pollStatus();
+        };
+
+        ws.onclose = () => {
+          if (statusSocket === ws) {
+            statusSocket = null;
+          }
+          pollStatus();
+          scheduleStatusSocketRetry(3000);
+        };
+      } catch (_) {
+        pollStatus();
+        scheduleStatusSocketRetry(3000);
+      }
+    }
+
+    function connectDisplayWebsocket() {
+      if (displaySocket && (displaySocket.readyState === WebSocket.OPEN || displaySocket.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${window.location.host}/api/v1/display/ws`;
+
+      try {
+        const ws = new WebSocket(url);
+        displaySocket = ws;
+
+        ws.onmessage = (event) => {
+          try {
+            const refresh = JSON.parse(event.data);
+            handleDisplayRefreshEvent(refresh);
+          } catch (_) {
+            // ignore malformed payloads, snapshot fallback still exists
+          }
+        };
+
+        ws.onopen = () => {
+          pollSnapshot();
+        };
+
+        ws.onerror = () => {
+          pollSnapshot();
+        };
+
+        ws.onclose = () => {
+          if (displaySocket === ws) {
+            displaySocket = null;
+          }
+          pollSnapshot();
+          scheduleDisplaySocketRetry(3000);
+        };
+      } catch (_) {
+        pollSnapshot();
+        scheduleDisplaySocketRetry(3000);
+      }
+    }
+
+    // ─── Display refresh ──────────────────────────────────────────────────────
+    // Preferred path: display websocket emits when the authoritative runtime
+    // snapshot advances. Fallback path: poll the snapshot and refresh only when
+    // the sequence changes.
+    setInterval(() => {
+      if (displayPollingEnabled && (!displaySocket || displaySocket.readyState !== WebSocket.OPEN)) {
+        pollSnapshot();
+      }
+    }, 2000);
+
+    // Honest status fallback when websocket is unavailable.
+    setInterval(() => {
+      if (!statusSocket || statusSocket.readyState !== WebSocket.OPEN) {
+        pollStatus();
+      }
+    }, 2000);
+
+    // ─── Initial load ─────────────────────────────────────────────────────────
+    // Load settings to check first-run state and populate watch badge
+    (async () => {
+      try {
+        const res     = await fetch('/api/v1/settings');
+        const payload = await res.json();
+        const snap    = payload.data;
+        if (!snap) return;
+        setupCard.classList.toggle('hidden', !snap.needsSetup);
+        displayPollingEnabled = !!(snap.settings && snap.settings.displayPollingEnabled);
+        // Apply persisted layout in case it changed since page load
+        applyLayout(currentLayout());
+        if (displayPollingEnabled) {
+          refreshDisplayRender(true);
+          pollSnapshot();
+        }
+      } catch (_) {
+        setupCard.classList.remove('hidden');
+      }
+    })();
+    resetStatusIndicators();
+    pollStatus();
+    connectStatusWebsocket();
+    connectDisplayWebsocket();
+  </script>
+</body>
+</html>

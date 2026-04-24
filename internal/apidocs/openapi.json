@@ -1,0 +1,1577 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Expert Amp Server API",
+    "version": "0.1.0",
+    "description": "Trusted-LAN HTTP API for Expert Amp Server. The service is intended for local station networks and should not be exposed directly to the public internet. The canonical phase 1 surface lives under /api/v1. This spec intentionally documents current implementation reality, including conservative or fallback-derived fields. It does not treat legacy compatibility routes as canonical, and it does not list older non-v1 aliases except where needed for explanatory context.\n\nStatus honesty rules:\n- GET /api/v1/status is the preferred machine-readable amp status surface.\n- Status fields may be protocol-native, display-derived fallback, compatibility aliases, or current conservative placeholders depending on what the runtime actually knows.\n- GET /api/v1/telemetry remains useful for UI and fallback inspection, but it is not the authoritative automation contract when protocol-native status poll data is available.\n- GET /api/v1/alarms is still a phase 1 stub with an explicit stub flag.\n- The websocket status feed shares the same canonical status model but is described separately because OpenAPI does not model websocket message flow well."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8088",
+      "description": "Typical local development or LAN deployment"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Basic liveness checks"
+    },
+    {
+      "name": "Display",
+      "description": "Display state, frame metadata, and rendered images"
+    },
+    {
+      "name": "Status",
+      "description": "Canonical machine-readable status and related phase 1 telemetry"
+    },
+    {
+      "name": "Runtime",
+      "description": "Runtime snapshot, ingest diagnostics, restart control, and serial discovery"
+    },
+    {
+      "name": "Settings",
+      "description": "Local config read and write endpoints"
+    },
+    {
+      "name": "Actions",
+      "description": "Document-backed front-panel command transport"
+    },
+    {
+      "name": "Docs",
+      "description": "OpenAPI and local documentation endpoints"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Liveness probe",
+        "responses": {
+          "200": {
+            "description": "Plain-text liveness response",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "ok\n"
+                }
+              }
+            },
+            "headers": {
+              "X-Expert-Amp-Version": {
+                "description": "Build version string for the running binary.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/version": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Get build version metadata",
+        "description": "Returns build metadata for the running binary. Values are injected at build time when release scripts use -ldflags; development builds report version/channel as dev.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/VersionResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "Docs"
+        ],
+        "summary": "Fetch the OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/docs": {
+      "get": {
+        "tags": [
+          "Docs"
+        ],
+        "summary": "Local API docs UI",
+        "description": "Human-facing local docs page served by the app. It reads /api/v1/openapi.json and renders a simple local reference UI.",
+        "responses": {
+          "200": {
+            "description": "HTML docs page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/display/state": {
+      "get": {
+        "tags": [
+          "Display"
+        ],
+        "summary": "Get display state",
+        "description": "Returns the current 8x40 runtime display state by default. Optional fixture selection is for protocol inspection and does not mutate runtime state.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KindQuery"
+          },
+          {
+            "$ref": "#/components/parameters/SourceQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DisplayStateResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/display/frame": {
+      "get": {
+        "tags": [
+          "Display"
+        ],
+        "summary": "Get frame metadata",
+        "description": "Returns runtime frame metadata by default. Optional fixture selection returns fixture frame metadata instead.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KindQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/FrameInfoResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/display/render.png": {
+      "get": {
+        "tags": [
+          "Display"
+        ],
+        "summary": "Render display as PNG",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KindQuery"
+          },
+          {
+            "$ref": "#/components/parameters/SourceQuery"
+          },
+          {
+            "$ref": "#/components/parameters/ScaleQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PNG render of the selected display state",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/display/render.svg": {
+      "get": {
+        "tags": [
+          "Display"
+        ],
+        "summary": "Render display as SVG",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KindQuery"
+          },
+          {
+            "$ref": "#/components/parameters/SourceQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG render of the selected display state",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/display/ws": {
+      "get": {
+        "tags": [
+          "Display"
+        ],
+        "summary": "Display refresh websocket feed",
+        "description": "WebSocket endpoint that emits a lightweight event each time the authoritative runtime display snapshot changes. The watch UI uses this to refresh /api/v1/display/render.png when a new frame is available instead of blind browser polling. Legacy HTTP render endpoints remain available for polling consumers.",
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade accepted. Text messages carry display refresh events with sequence, updatedAt, source, and frameKind."
+          },
+          "503": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get canonical amp status",
+        "description": "Preferred automation surface. Protocol-native status poll data wins when present. Display-derived telemetry fills gaps conservatively. Some fields remain omitted rather than guessed.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/StatusResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/status/ws": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Status websocket feed",
+        "description": "WebSocket endpoint for the same canonical status model returned by GET /api/v1/status. After connect, the server sends one status snapshot immediately and then pushes changed snapshots only. Delivery is event-driven from the authoritative status path. The canonical endpoint does not support pace query strings. OpenAPI does not model websocket frames cleanly, so this operation is documented descriptively rather than with a full message schema exchange.",
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade accepted. Text messages carry Status objects without the standard envelope."
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/telemetry": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get runtime telemetry snapshot",
+        "description": "UI-friendly runtime telemetry and fallback inspection surface. Useful, but not the canonical machine status contract when protocol-native status exists.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/TelemetryResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/alarms": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get phase 1 alarms view",
+        "description": "Current implementation returns an honest stub with active: [] and stub: true.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AlarmsResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/runtime": {
+      "get": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get effective runtime polling view",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/RuntimeStatusResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/runtime/snapshot": {
+      "get": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get full runtime snapshot",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/RuntimeSnapshotResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/runtime/ingest": {
+      "get": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get serial ingest diagnostics",
+        "description": "In fixture mode this returns connected=false and a fixture-mode explanation instead of pretending a live serial path exists.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/IngestDiagnosticsResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/runtime/restart": {
+      "post": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Request a clean process restart",
+        "description": "Requests a clean process exit. A host supervisor such as systemd, launchd, or a Docker restart policy must bring the process back. If no supervisor is present, the process stops and stays stopped.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/BasicSuccessResponse"
+          },
+          "503": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "500": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Get current config snapshot",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SettingsResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Update settings",
+        "description": "Writes local config. displayPollingEnabled and statusPollingEnabled are live toggles. Listen address and pollIntervalMs (the backend display-frame refresh cadence) still require restart to take effect. statusPollIntervalMs controls backend protocol-status refresh. Legacy serialPoll* fields remain accepted only as backward-compatible aliases; the documented status poll frame itself is fixed in code rather than user-editable.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdateRequest"
+              },
+              "examples": {
+                "basic": {
+                  "value": {
+                    "serialPort": "/dev/ttyUSB0",
+                    "listenAddress": ":8088",
+                    "pollIntervalMs": 250,
+                    "displayPollingEnabled": true,
+                    "statusPollingEnabled": true,
+                    "serialBaudRate": 115200,
+                    "serialReadTimeoutMs": 250,
+                    "statusPollCommandEnabled": true,
+                    "statusPollIntervalMs": 500,
+                    "serialAssertDTR": true,
+                    "serialAssertRTS": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SettingsResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/serial-ports": {
+      "get": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Enumerate visible serial ports",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SerialPortsResponse"
+          },
+          "500": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/actions/button": {
+      "post": {
+        "tags": [
+          "Actions"
+        ],
+        "summary": "Send a documented front-panel action",
+        "description": "Sends a real document-backed one-button command through the held live serial port when live ingest is active, or through a short-lived configured serial connection when live ingest is not active. Exposed command names are transport-real, but several still need hardware confirmation before their on-device semantics should be treated as fully trusted. back, on, and standby remain intentionally blocked on this endpoint; use /api/v1/actions/wake for the experimental wake/power-on path.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ButtonAction"
+              },
+              "examples": {
+                "set": {
+                  "value": {
+                    "name": "set"
+                  }
+                },
+                "bandPlus": {
+                  "value": {
+                    "name": "band+"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ActionResultResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/ActionErrorResponse"
+          },
+          "503": {
+            "$ref": "#/components/responses/ActionErrorResponse"
+          },
+          "500": {
+            "$ref": "#/components/responses/ActionErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/actions/wake": {
+      "post": {
+        "tags": [
+          "Actions"
+        ],
+        "summary": "Wake the amp via serial control-line jiggle",
+        "description": "Sends the experimental amp wake/power-on path by toggling DTR/RTS on the configured FTDI serial transport. This is intentionally separate from the documented front-panel button endpoint and still needs hardware validation across amps/cabling.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ActionResultResponse"
+          },
+          "503": {
+            "$ref": "#/components/responses/ActionErrorResponse"
+          },
+          "500": {
+            "$ref": "#/components/responses/ActionErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "KindQuery": {
+        "name": "kind",
+        "in": "query",
+        "description": "Optional fixture kind for protocol inspection. Supported values depend on built-in fixtures, typically home, menu, or panel.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "SourceQuery": {
+        "name": "source",
+        "in": "query",
+        "description": "Optional fixture source selector. source=protocol with no explicit kind currently defaults to the home fixture.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "protocol"
+          ]
+        }
+      },
+      "ScaleQuery": {
+        "name": "scale",
+        "in": "query",
+        "description": "Render scale multiplier, clamped to 1 through 8.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 4
+        }
+      }
+    },
+    "responses": {
+      "BasicSuccessResponse": {
+        "description": "Standard success envelope without a structured data payload",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseBasic"
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "description": "Standard error envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseError"
+            }
+          }
+        }
+      },
+      "DisplayStateResponse": {
+        "description": "Display state envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseDisplayState"
+            }
+          }
+        }
+      },
+      "FrameInfoResponse": {
+        "description": "Frame metadata envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseFrameInfo"
+            }
+          }
+        }
+      },
+      "TelemetryResponse": {
+        "description": "Telemetry envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseTelemetry"
+            }
+          }
+        }
+      },
+      "StatusResponse": {
+        "description": "Canonical status envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseStatus"
+            }
+          }
+        }
+      },
+      "AlarmsResponse": {
+        "description": "Alarms envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseAlarms"
+            }
+          }
+        }
+      },
+      "RuntimeStatusResponse": {
+        "description": "Runtime polling view envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseRuntimeStatus"
+            }
+          }
+        }
+      },
+      "RuntimeSnapshotResponse": {
+        "description": "Full runtime snapshot envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseRuntimeSnapshot"
+            }
+          }
+        }
+      },
+      "IngestDiagnosticsResponse": {
+        "description": "Serial ingest diagnostics envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseIngestDiagnostics"
+            }
+          }
+        }
+      },
+      "SettingsResponse": {
+        "description": "Settings envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseSettings"
+            }
+          }
+        }
+      },
+      "SerialPortsResponse": {
+        "description": "Serial port enumeration envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseSerialPorts"
+            }
+          }
+        }
+      },
+      "ActionResultResponse": {
+        "description": "Action success envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseActionResult"
+            }
+          }
+        }
+      },
+      "ActionErrorResponse": {
+        "description": "Action error envelope that may still include transport details in data",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseActionError"
+            }
+          }
+        }
+      },
+      "VersionResponse": {
+        "description": "Build version metadata response",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/APIResponse"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/VersionInfo"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ResponseBasic": {
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ResponseError": {
+        "type": "object",
+        "required": [
+          "success",
+          "error"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "error": {
+            "type": "string"
+          },
+          "data": {}
+        }
+      },
+      "ResponseDisplayState": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/DisplayStateEnvelopeData"
+          }
+        }
+      },
+      "ResponseFrameInfo": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/FrameInfo"
+          }
+        }
+      },
+      "ResponseTelemetry": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/Telemetry"
+          }
+        }
+      },
+      "ResponseStatus": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/Status"
+          }
+        }
+      },
+      "ResponseAlarms": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/Alarms"
+          }
+        }
+      },
+      "ResponseRuntimeStatus": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/RuntimeStatus"
+          }
+        }
+      },
+      "ResponseRuntimeSnapshot": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/RuntimeSnapshot"
+          }
+        }
+      },
+      "ResponseIngestDiagnostics": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/IngestDiagnostics"
+          }
+        }
+      },
+      "ResponseSettings": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConfigSnapshot"
+          }
+        }
+      },
+      "ResponseSerialPorts": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortInfo"
+            }
+          }
+        }
+      },
+      "ResponseActionResult": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": "button sent"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ActionResult"
+          }
+        }
+      },
+      "ResponseActionError": {
+        "type": "object",
+        "required": [
+          "success",
+          "error"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "error": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ActionResult"
+          }
+        }
+      },
+      "DisplayStateEnvelopeData": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/DisplayState"
+          },
+          "frameKind": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DisplayState": {
+        "type": "object",
+        "required": [
+          "chars",
+          "attrs"
+        ],
+        "properties": {
+          "chars": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "array",
+              "minItems": 40,
+              "maxItems": 40,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            }
+          },
+          "attrs": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "array",
+              "minItems": 40,
+              "maxItems": 40,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            }
+          }
+        }
+      },
+      "FrameInfo": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "length": {
+            "type": "integer"
+          },
+          "startOffset": {
+            "type": "integer"
+          },
+          "screenText": {
+            "type": "string"
+          }
+        }
+      },
+      "Telemetry": {
+        "type": "object",
+        "description": "Current runtime telemetry snapshot. Many fields are omitted when unknown. source, confidence, provenance, and notes matter and should not be ignored.",
+        "properties": {
+          "modelName": {
+            "type": "string"
+          },
+          "operatingState": {
+            "type": "string",
+            "description": "Usually standby or operate when known."
+          },
+          "mode": {
+            "type": "string",
+            "description": "Current compatibility alias for operating state when present."
+          },
+          "tx": {
+            "type": "boolean"
+          },
+          "band": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string"
+          },
+          "antenna": {
+            "type": "string"
+          },
+          "antennaBank": {
+            "type": "string"
+          },
+          "catInterface": {
+            "type": "string"
+          },
+          "catMode": {
+            "type": "string"
+          },
+          "outputLevel": {
+            "type": "string"
+          },
+          "swr": {
+            "type": "number",
+            "format": "double"
+          },
+          "swrDisplay": {
+            "type": "string"
+          },
+          "antennaSwr": {
+            "type": "number",
+            "format": "double",
+            "description": "SWR at the antenna side of the ATU when the documented status poll provides it."
+          },
+          "antennaSwrDisplay": {
+            "type": "string",
+            "description": "Display/raw companion for antennaSwr when available."
+          },
+          "paSupplyVoltage": {
+            "type": "number",
+            "format": "double",
+            "description": "PA supply voltage when the documented status poll provides it."
+          },
+          "paSupplyVoltageDisplay": {
+            "type": "string",
+            "description": "Display/raw companion for paSupplyVoltage when available."
+          },
+          "paCurrent": {
+            "type": "number",
+            "format": "double",
+            "description": "PA current when the documented status poll provides it."
+          },
+          "paCurrentDisplay": {
+            "type": "string",
+            "description": "Display/raw companion for paCurrent when available."
+          },
+          "temperatureC": {
+            "type": "number",
+            "format": "double"
+          },
+          "temperatureDisplay": {
+            "type": "string"
+          },
+          "temperatureLowerC": {
+            "type": "number",
+            "format": "double",
+            "description": "Lower heatsink temperature when reported by the amp model."
+          },
+          "temperatureLowerDisplay": {
+            "type": "string",
+            "description": "Display/raw companion for temperatureLowerC when available."
+          },
+          "temperatureCombinerC": {
+            "type": "number",
+            "format": "double",
+            "description": "Combiner temperature when reported by the amp model."
+          },
+          "temperatureCombinerDisplay": {
+            "type": "string",
+            "description": "Display/raw companion for temperatureCombinerC when available."
+          },
+          "frequency": {
+            "type": "string",
+            "description": "Omitted when current captures do not justify a value."
+          },
+          "powerWatts": {
+            "type": "number",
+            "format": "double"
+          },
+          "source": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string",
+            "description": "Examples include display-derived, fixture-derived, or protocol-native."
+          },
+          "provenance": {
+            "type": "string",
+            "description": "Examples include display-frame or status-poll."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Status": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Telemetry"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "recentContact": {
+                "type": "boolean",
+                "description": "Conservative recent-contact indicator, not the same as operate or TX state."
+              },
+              "lastContactAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "bandCode": {
+                "type": "string",
+                "description": "Raw protocol status code when available."
+              },
+              "bandText": {
+                "type": "string",
+                "description": "Decoded text companion for bandCode when available."
+              },
+              "rxAntenna": {
+                "type": "string"
+              },
+              "warningCode": {
+                "type": "string",
+                "description": "Raw protocol status warning code when available."
+              },
+              "alarmCode": {
+                "type": "string",
+                "description": "Raw protocol status alarm code when available."
+              },
+              "atuStatusCode": {
+                "type": "string",
+                "description": "Raw ATU status code from the documented status poll antenna/status field."
+              },
+              "warningsText": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "alarmsText": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Compatibility alias of warningsText when available."
+              },
+              "activeAlarms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Compatibility alias of alarmsText when available."
+              }
+            }
+          }
+        ]
+      },
+      "Alarms": {
+        "type": "object",
+        "required": [
+          "active",
+          "stub"
+        ],
+        "properties": {
+          "active": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string"
+          },
+          "stub": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "RuntimeStatus": {
+        "type": "object",
+        "properties": {
+          "pollIntervalMs": {
+            "type": "integer"
+          },
+          "displayPollingEnabled": {
+            "type": "boolean"
+          },
+          "statusPollingEnabled": {
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RuntimeSnapshot": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/DisplayState"
+          },
+          "telemetry": {
+            "$ref": "#/components/schemas/Telemetry"
+          },
+          "frame": {
+            "$ref": "#/components/schemas/FrameInfo"
+          },
+          "frameKind": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IngestDiagnostics": {
+        "type": "object",
+        "properties": {
+          "framesSeen": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "decodeErrors": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lastFrameLength": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lastFrameAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "serialPort": {
+            "type": "string"
+          },
+          "connected": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ConfigSnapshot": {
+        "type": "object",
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          },
+          "needsSetup": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "serialPort": {
+            "type": "string"
+          },
+          "listenAddress": {
+            "type": "string"
+          },
+          "pollIntervalMs": {
+            "type": "integer"
+          },
+          "displayPollingEnabled": {
+            "type": "boolean"
+          },
+          "statusPollingEnabled": {
+            "type": "boolean"
+          },
+          "serialBaudRate": {
+            "type": "integer"
+          },
+          "serialReadTimeoutMs": {
+            "type": "integer"
+          },
+          "statusPollCommandEnabled": {
+            "type": "boolean"
+          },
+          "statusPollIntervalMs": {
+            "type": "integer"
+          },
+          "serialAssertDTR": {
+            "type": "boolean"
+          },
+          "serialAssertRTS": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SettingsUpdateRequest": {
+        "type": "object",
+        "description": "Accepted settings write shape. Legacy serialPoll* aliases remain accepted by the server for backward compatibility. The documented status poll frame itself is fixed in code rather than user-editable.",
+        "properties": {
+          "serialPort": {
+            "type": "string"
+          },
+          "listenAddress": {
+            "type": "string"
+          },
+          "pollIntervalMs": {
+            "type": "integer"
+          },
+          "displayPollingEnabled": {
+            "type": "boolean"
+          },
+          "statusPollingEnabled": {
+            "type": "boolean"
+          },
+          "serialBaudRate": {
+            "type": "integer"
+          },
+          "serialReadTimeoutMs": {
+            "type": "integer"
+          },
+          "statusPollCommandEnabled": {
+            "type": "boolean"
+          },
+          "statusPollIntervalMs": {
+            "type": "integer"
+          },
+          "serialPollEnabled": {
+            "type": "boolean",
+            "deprecated": true
+          },
+          "serialPollIntervalMs": {
+            "type": "integer",
+            "deprecated": true
+          },
+          "serialAssertDTR": {
+            "type": "boolean"
+          },
+          "serialAssertRTS": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PortInfo": {
+        "type": "object",
+        "properties": {
+          "Name": {
+            "type": "string"
+          },
+          "ByIDPath": {
+            "type": "string"
+          },
+          "SerialNumber": {
+            "type": "string"
+          },
+          "Manufacturer": {
+            "type": "string"
+          },
+          "Product": {
+            "type": "string"
+          },
+          "IsFTDI": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ButtonAction": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Document-backed action name. Current supported names include input, band-, band+, antenna, l-, l+, c-, c+, tune, off, power, display, operate, cat, left, right, up, down, and set. back, on, and standby remain blocked on this endpoint; use POST /api/v1/actions/wake for the experimental wake path."
+          }
+        }
+      },
+      "ActionResult": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "queued": {
+            "type": "boolean"
+          },
+          "sent": {
+            "type": "boolean"
+          },
+          "transport": {
+            "type": "string"
+          },
+          "frameHex": {
+            "type": "string"
+          }
+        }
+      },
+      "APIResponse": {
+        "type": "object",
+        "required": ["success"],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {},
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "VersionInfo": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Release version or dev for local builds."
+          },
+          "commit": {
+            "type": "string",
+            "description": "Git commit used for the build when injected."
+          },
+          "buildDate": {
+            "type": "string",
+            "description": "Build timestamp when injected."
+          },
+          "channel": {
+            "type": "string",
+            "description": "Update/release channel such as dev, stable, or nightly."
+          }
+        },
+        "required": [
+          "version"
+        ]
+      }
+    }
+  }
+}
