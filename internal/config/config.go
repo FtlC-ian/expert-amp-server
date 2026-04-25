@@ -19,6 +19,7 @@ type Settings struct {
 	PollIntervalMs        int    `json:"pollIntervalMs"`
 	DisplayPollingEnabled bool   `json:"displayPollingEnabled"`
 	StatusPollingEnabled  bool   `json:"statusPollingEnabled"`
+	PanelModelLabel       string `json:"panelModelLabel,omitempty"`
 
 	// Serial connection parameters for live ingest.
 	SerialBaudRate           int  `json:"serialBaudRate,omitempty"`
@@ -47,6 +48,7 @@ type rawSettings struct {
 	PollIntervalMs        *int    `json:"pollIntervalMs"`
 	DisplayPollingEnabled *bool   `json:"displayPollingEnabled"`
 	StatusPollingEnabled  *bool   `json:"statusPollingEnabled"`
+	PanelModelLabel       *string `json:"panelModelLabel,omitempty"`
 
 	SerialBaudRate           *int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      *int  `json:"serialReadTimeoutMs,omitempty"`
@@ -153,6 +155,9 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.StatusPollingEnabled != nil {
 		out.StatusPollingEnabled = *r.StatusPollingEnabled
 	}
+	if r.PanelModelLabel != nil {
+		out.PanelModelLabel = strings.TrimSpace(*r.PanelModelLabel)
+	}
 	if r.SerialBaudRate != nil && *r.SerialBaudRate > 0 {
 		out.SerialBaudRate = *r.SerialBaudRate
 	}
@@ -189,6 +194,7 @@ func normalizeSettings(in, defaults Settings) Settings {
 	}
 	out.DisplayPollingEnabled = in.DisplayPollingEnabled
 	out.StatusPollingEnabled = in.StatusPollingEnabled
+	out.PanelModelLabel = strings.TrimSpace(in.PanelModelLabel)
 	if in.SerialBaudRate > 0 {
 		out.SerialBaudRate = in.SerialBaudRate
 	}

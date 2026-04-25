@@ -716,6 +716,7 @@ func TestSettingsPageHasAllConfigFields(t *testing.T) {
 		"s-poll-interval",
 		"s-display-polling",
 		"s-status-polling",
+		"s-panel-model-label",
 		"s-baud",
 		"s-read-timeout",
 		"s-status-poll-command-enabled",

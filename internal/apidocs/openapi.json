@@ -1427,6 +1427,10 @@
           },
           "serialAssertRTS": {
             "type": "boolean"
+          },
+          "panelModelLabel": {
+            "type": "string",
+            "description": "Optional cosmetic override for the amp-shaped Front Panel model label. Blank means auto-detect from status.modelName. Does not change API model identity."
           }
         }
       },
@@ -1474,6 +1478,10 @@
           },
           "serialAssertRTS": {
             "type": "boolean"
+          },
+          "panelModelLabel": {
+            "type": "string",
+            "description": "Optional cosmetic override for the amp-shaped Front Panel model label. Blank means auto-detect from status.modelName. Does not change API model identity."
           }
         }
       },
@@ -1534,7 +1542,9 @@
       },
       "APIResponse": {
         "type": "object",
-        "required": ["success"],
+        "required": [
+          "success"
+        ],
         "properties": {
           "success": {
             "type": "boolean"

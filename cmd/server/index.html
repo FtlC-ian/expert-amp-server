@@ -1445,6 +1445,12 @@
           </div>
           <p class="settings-hint">Live toggle — pauses or resumes backend protocol-status refresh immediately without a restart. /api/v1/status and the websocket status feed mostly serve cached in-memory state built from this path.</p>
 
+          <div class="settings-row">
+            <label class="settings-label" for="s-panel-model-label">Panel model label override</label>
+            <input id="s-panel-model-label" class="settings-input" type="text" maxlength="16" placeholder="auto">
+          </div>
+          <p class="settings-hint">Optional cosmetic label for the amp-shaped Front Panel corner. Leave blank to use the model detected from status, for example 1.3K-FA or 1.5K-FA. This does not change API model identity.</p>
+
         </div>
 
         <div class="settings-action-row">
@@ -1928,6 +1934,7 @@
     let displaySocketRetryTimer = null;
     let displayPollingEnabled = true;
     let lastDisplaySequence = 0;
+    let panelModelLabelOverride = '';
 
     // Apply persisted display prefs on load
     applyLayout(currentLayout());
@@ -2032,6 +2039,22 @@
       }
     }
 
+    function shortModelLabel(modelName) {
+      const raw = typeof modelName === 'string' ? modelName.trim() : '';
+      if (!raw) return '';
+      return raw
+        .replace(/^EXPERT\s+/i, '')
+        .replace(/\s+/g, ' ')
+        .replace(/^1\.3K-FA$/i, '1.3K-FA')
+        .replace(/^1\.5K-FA$/i, '1.5K-FA')
+        .replace(/^2K-FA$/i, '2K-FA')
+        .replace(/^2\.0K-FA$/i, '2K-FA');
+    }
+
+    function panelModelDisplay(status) {
+      return panelModelLabelOverride || shortModelLabel(status && status.modelName) || 'SPE';
+    }
+
     function resetStatusIndicators() {
       setLed('led-tx', 'led-off');
       setLed('led-op', 'led-off');
@@ -2039,7 +2062,7 @@
       setLed('led-on', 'led-off');
       setLed('led-tune', 'led-off');
       setLed('led-set', 'led-off');
-      if (panelModelLabel) panelModelLabel.textContent = 'SPE';
+      if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
     }
 
     function updateStatusIndicators(status) {
@@ -2050,7 +2073,7 @@
       }
 
       if (panelModelLabel) {
-        panelModelLabel.textContent = shortModelLabel(status.modelName) || 'SPE';
+        panelModelLabel.textContent = panelModelDisplay(status);
       }
 
       const headerModel = document.getElementById('header-model');
@@ -2241,7 +2264,10 @@
         document.getElementById('s-poll-interval').value  = s.pollIntervalMs || 250;
         document.getElementById('s-display-polling').checked = !!s.displayPollingEnabled;
         document.getElementById('s-status-polling').checked  = !!s.statusPollingEnabled;
+        document.getElementById('s-panel-model-label').value = s.panelModelLabel || '';
         displayPollingEnabled = !!s.displayPollingEnabled;
+        panelModelLabelOverride = (s.panelModelLabel || '').trim();
+        if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
 
         // Advanced serial fields
         document.getElementById('s-baud').value                = s.serialBaudRate      || 115200;
@@ -2295,6 +2321,7 @@
         pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '250'),
         displayPollingEnabled: document.getElementById('s-display-polling').checked,
         statusPollingEnabled:  document.getElementById('s-status-polling').checked,
+        panelModelLabel:       document.getElementById('s-panel-model-label').value.trim(),
       };
       try {
         const res  = await fetch('/api/v1/settings', {
@@ -2311,6 +2338,7 @@
         if (body.data) {
           setupCard.classList.toggle('hidden', !body.data.needsSetup);
           displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
+          panelModelLabelOverride = ((body.data.settings && body.data.settings.panelModelLabel) || '').trim();
         }
       } catch (err) {
         setStatus('connection-status', err.message, 'err');
@@ -2345,6 +2373,7 @@
         pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '250'),
         displayPollingEnabled: document.getElementById('s-display-polling').checked,
         statusPollingEnabled:  document.getElementById('s-status-polling').checked,
+        panelModelLabel:       document.getElementById('s-panel-model-label').value.trim(),
         serialBaudRate:        Number(document.getElementById('s-baud').value || '115200'),
         serialReadTimeoutMs:   Number(document.getElementById('s-read-timeout').value || '250'),
         statusPollCommandEnabled:  document.getElementById('s-status-poll-command-enabled').checked,
@@ -2366,6 +2395,7 @@
         setStatus('advanced-status', body.message || 'Saved', 'ok');
         if (body.data) {
           displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
+          panelModelLabelOverride = ((body.data.settings && body.data.settings.panelModelLabel) || '').trim();
         }
       } catch (err) {
         setStatus('advanced-status', err.message, 'err');
@@ -2514,6 +2544,8 @@
         if (!snap) return;
         setupCard.classList.toggle('hidden', !snap.needsSetup);
         displayPollingEnabled = !!(snap.settings && snap.settings.displayPollingEnabled);
+        panelModelLabelOverride = ((snap.settings && snap.settings.panelModelLabel) || '').trim();
+        if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
         // Apply persisted layout in case it changed since page load
         applyLayout(currentLayout());
         if (displayPollingEnabled) {

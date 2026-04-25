@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/png"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
@@ -71,6 +72,7 @@ type settingsRequest struct {
 	PollIntervalMs        int    `json:"pollIntervalMs"`
 	DisplayPollingEnabled *bool  `json:"displayPollingEnabled"`
 	StatusPollingEnabled  *bool  `json:"statusPollingEnabled"`
+	PanelModelLabel       string `json:"panelModelLabel,omitempty"`
 
 	SerialBaudRate           *int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      *int  `json:"serialReadTimeoutMs,omitempty"`
@@ -553,6 +555,7 @@ func mergeSettingsRequest(current config.Settings, req settingsRequest) config.S
 		PollIntervalMs:           req.PollIntervalMs,
 		DisplayPollingEnabled:    pickBool(current.DisplayPollingEnabled, req.DisplayPollingEnabled),
 		StatusPollingEnabled:     pickBool(current.StatusPollingEnabled, req.StatusPollingEnabled),
+		PanelModelLabel:          strings.TrimSpace(req.PanelModelLabel),
 		SerialBaudRate:           pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
 		SerialReadTimeoutMs:      pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
 		StatusPollCommandEnabled: pickBool(current.StatusPollCommandEnabled, firstBool(req.StatusPollCommandEnabled, req.SerialPollEnabled)),

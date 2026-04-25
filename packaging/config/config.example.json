@@ -9,5 +9,6 @@
   "statusPollCommandEnabled": true,
   "statusPollIntervalMs": 125,
   "serialAssertDTR": true,
-  "serialAssertRTS": true
+  "serialAssertRTS": true,
+  "panelModelLabel": ""
 }
