@@ -236,11 +236,11 @@ These are things we do not yet know. Do not paper over them with assumptions.
 
 3. **Button command format.** What byte sequence does the amp expect for a button press? What framing wraps it?
 
-4. **Glyph mapping accuracy.** The custom glyphs in `internal/font/custom.go` are project-authored approximations. Their visual accuracy compared to what the real hardware LCD shows has not been verified.
+4. **Glyph mapping accuracy.** The bundled SPE-style LCD font table and any project-authored glyph handling should continue to be checked against real hardware captures.
 
-5. **Multiple display families.** `ROADMAP.md` mentions display family detection. Different Expert models or firmware revisions may have different frame structures. We have only one hardware source of captures so far.
+5. **Multiple display families.** Different Expert models or firmware revisions may have different frame structures. We have only a small number of hardware sources so far.
 
-6. **Frame boundary detection.** The current stream decoder uses repeated display prefixes as boundaries, so a live display frame can include trailing bytes from an intervening status-poll response. The display parser tolerates this for the GetLCD layout, but the 371-byte length/checksum shape gives us a stronger future extraction boundary if we want cleaner raw-frame diagnostics.
+6. **Frame boundary detection.** The stream decoder now recognizes the 371-byte GetLCD response boundary before falling back to prefix-based splitting, so trailing status-poll bytes should not be swallowed by display frames. Keep regression captures for mixed display/status streams.
 
 7. **Upper-byte character codes.** Byte values above `0x5F` that are not in the known special-glyph set decode to `·`. Some of these likely correspond to real LCD symbols we have not mapped yet.
 

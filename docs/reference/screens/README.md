@@ -16,10 +16,10 @@ These images support docs and issue discussions. They are evidence/reference cap
 - [`node-red/node-red-dashboard-650-display-open-operate.png`](node-red/node-red-dashboard-650-display-open-operate.png) — Human-captured Node-RED dashboard connected to the live radio, Display section open with the amp in operate mode.
 - [`node-red/node-red-dashboard-650-display-collapsed.png`](node-red/node-red-dashboard-650-display-collapsed.png) — Human-captured Node-RED dashboard with the Display section collapsed for an extra-compact view.
 
-## Still needed
+## Future useful captures
 
 - Live amp `/api/v1/status` or UI screenshot showing serial/protocol-native recent-contact health.
-- Thetis/gauge integration screenshots.
+- Thetis/gauge integration screenshots if/when that integration guide is added.
 - Real amp LCD vs rendered display comparison, if useful and non-private.
 
 Before committing new screenshots, crop or retake anything that includes unrelated browser tabs, chats, credentials, private hostnames, or serial details that should not become public.

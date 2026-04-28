@@ -1,7 +1,6 @@
 package font
 
-// spe1300ROMFont is the complete 256-glyph 8x8 character ROM extracted from
-// SPE-style LCD font table at VA 0x46b568 (file offset 0x6a968, section .data).
+// spe1300ROMFont is the complete 256-glyph 8x8 SPE-style LCD font table.
 //
 // Format: 256 entries, 8 bytes each. Each byte is one scanline, MSB=leftmost pixel.
 // This is the exact bit order the renderer uses: no normalization required.

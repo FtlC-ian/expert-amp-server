@@ -4,9 +4,9 @@ import (
 	"testing"
 )
 
-// TestBuiltinROMLoadsSPEGlyphs verifies that Builtin() returns the extracted
-// SPE 1.3K ROM, not a public-domain substitute. We spot-check a few glyphs
-// that differ between the two sources and are known-correct from the manifest.
+// TestBuiltinROMLoadsSPEGlyphs verifies that Builtin() returns the bundled
+// SPE-style LCD font table. We spot-check a few glyphs that differ from the
+// old placeholder font and are known-correct from hardware captures.
 func TestBuiltinROMLoadsSPEGlyphs(t *testing.T) {
 	rom := Builtin()
 

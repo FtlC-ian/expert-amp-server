@@ -33,7 +33,6 @@ internal/
   font/         — SPE-style LCD font table used by the renderer
   render/       — pixel (PNG) and SVG renderers
   api/          — shared JSON types (telemetry, button action, frame info)
-  web/          — alternate embedded UI (not currently used by the server binary)
 
 fixtures/
   real_home_status_frame.bin  — captured home/status screen
@@ -42,9 +41,10 @@ fixtures/
   sample_display_frame.bin    — another captured frame (same header as home)
 
 docs/
-  ROADMAP.md
   ARCHITECTURE.md  ← this file
   PROTOCOL.md
+  INSTALL_PI.md
+  integrations/
 ```
 
 ---
@@ -87,7 +87,7 @@ Manages the font ROM used for pixel rendering.
   - `attr & 0x80` nonzero → alternate glyph bank (subtracts 0x20 from the char code index)
   - `attr & 0x7f` nonzero → invert all pixel bits (highlight / reverse video)
 
-The current font table is derived from the SPE Expert 1.3K display tooling and is kept in source form so rendered LCD screenshots match the real amp closely. This is useful for validation, but it is also a provenance item to review before a broader public release. Do not add vendor executables or raw binary blobs to the repo.
+The current font table is a bundled SPE-style LCD font table kept in source form so rendered LCD screenshots match the real amp closely. Do not add vendor executables or raw binary blobs to the repo.
 
 ### `internal/render`
 
@@ -105,7 +105,7 @@ Shared JSON types:
 - `ButtonAction{Name string}` — payload for `POST /api/actions/button`
 - `Telemetry{...}` — the current runtime telemetry snapshot shape, still used for UI and fallback data
 - `Status{Telemetry + BandCode/BandText, RXAntenna, WarningCode/AlarmCode, WarningsText/AlarmsText}` — the canonical automation status surface, preferring protocol-native status poll data and filling gaps from telemetry fallback when needed
-- `FrameInfo{Source, Length, StartOffset, ScreenText}` — frame decode metadata returned by `/api/frame`
+- `FrameInfo{Source, Length, StartOffset, ScreenText, LCDFlags}` — frame decode metadata returned by `/api/frame`
 
 These types are defined centrally so the server handlers, runtime, and transports share one schema.
 

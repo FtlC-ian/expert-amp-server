@@ -253,7 +253,7 @@ func TestStateFromFrameLoadsPackedAttrBitplaneWhenPresent(t *testing.T) {
 }
 
 // TestDecodeDisplayCharROMMapping verifies DecodeDisplayChar against the
-// extracted font ROM from SPE-style LCD font table.
+// bundled SPE-style LCD font table.
 //
 // The protocol byte IS the ROM index. No +0x20 shift is applied.
 // An earlier version applied v+0x20 to the 0x01–0x5F range, which caused every
@@ -373,7 +373,7 @@ func TestScreenTextContainsExpectedLabels(t *testing.T) {
 // TestStateCharsHoldProtocolBytes is a regression test for the +0x20 decode
 // mapping bug. An earlier version of DecodeDisplayChar applied v+0x20 to the
 // 0x01–0x5F range, storing ASCII values instead of ROM indices. This caused
-// every glyph lookup to index the wrong row in the extracted font ROM —
+// every glyph lookup to index the wrong row in the bundled LCD font table —
 // e.g. protocol 0x25 ('E') was stored as 0x45, and ROM[0x45] is a lowercase
 // 'e' shape, not uppercase 'E'.
 //
