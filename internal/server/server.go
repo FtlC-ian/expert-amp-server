@@ -53,6 +53,7 @@ type displayStateResponse struct {
 }
 
 type runtimeStatusResponse struct {
+	PollingMode           string `json:"pollingMode"`
 	PollIntervalMs        int    `json:"pollIntervalMs"`
 	DisplayPollingEnabled bool   `json:"displayPollingEnabled"`
 	StatusPollingEnabled  bool   `json:"statusPollingEnabled"`
@@ -68,6 +69,7 @@ type alarmsResponse struct {
 type settingsRequest struct {
 	SerialPort            string            `json:"serialPort"`
 	ListenAddress         string            `json:"listenAddress"`
+	PollingMode           string            `json:"pollingMode"`
 	PollIntervalMs        int               `json:"pollIntervalMs"`
 	DisplayPollingEnabled *bool             `json:"displayPollingEnabled"`
 	StatusPollingEnabled  *bool             `json:"statusPollingEnabled"`
@@ -550,22 +552,52 @@ func decodeSettingsRequest(r *http.Request) (settingsRequest, error) {
 }
 
 func mergeSettingsRequest(current config.Settings, req settingsRequest) config.Settings {
+	displayPollingEnabled := pickBool(current.DisplayPollingEnabled, req.DisplayPollingEnabled)
+	statusPollingEnabled := pickBool(current.StatusPollingEnabled, req.StatusPollingEnabled)
+	statusPollCommandEnabled := pickBool(current.StatusPollCommandEnabled, firstBool(req.StatusPollCommandEnabled, req.SerialPollEnabled))
 	return config.Settings{
 		SerialPort:               req.SerialPort,
 		ListenAddress:            req.ListenAddress,
+		PollingMode:              mergedPollingMode(current.PollingMode, req, displayPollingEnabled, statusPollingEnabled, statusPollCommandEnabled),
 		PollIntervalMs:           req.PollIntervalMs,
-		DisplayPollingEnabled:    pickBool(current.DisplayPollingEnabled, req.DisplayPollingEnabled),
-		StatusPollingEnabled:     pickBool(current.StatusPollingEnabled, req.StatusPollingEnabled),
+		DisplayPollingEnabled:    displayPollingEnabled,
+		StatusPollingEnabled:     statusPollingEnabled,
 		PanelModelLabel:          req.PanelModelLabel,
 		InputLabels:              req.InputLabels,
 		AntennaLabels:            req.AntennaLabels,
 		SerialBaudRate:           pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
 		SerialReadTimeoutMs:      pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
-		StatusPollCommandEnabled: pickBool(current.StatusPollCommandEnabled, firstBool(req.StatusPollCommandEnabled, req.SerialPollEnabled)),
+		StatusPollCommandEnabled: statusPollCommandEnabled,
 		StatusPollIntervalMs:     pickPositiveInt(current.StatusPollIntervalMs, firstInt(req.StatusPollIntervalMs, req.SerialPollIntervalMs)),
 		SerialAssertDTR:          pickBool(current.SerialAssertDTR, req.SerialAssertDTR),
 		SerialAssertRTS:          pickBool(current.SerialAssertRTS, req.SerialAssertRTS),
 	}
+}
+
+func mergedPollingMode(current string, req settingsRequest, display, status, statusCommand bool) string {
+	if req.PollingMode != "" {
+		return req.PollingMode
+	}
+	if req.DisplayPollingEnabled != nil || req.StatusPollingEnabled != nil || req.StatusPollCommandEnabled != nil || req.SerialPollEnabled != nil {
+		switch {
+		case display && status && statusCommand:
+			return string(config.PollingModeBoth)
+		case display && !status:
+			return string(config.PollingModeDisplay)
+		case !display && status && statusCommand:
+			return string(config.PollingModeStatus)
+		default:
+			return string(config.PollingModeOff)
+		}
+	}
+	return current
+}
+
+func pickString(current, next string) string {
+	if next != "" {
+		return next
+	}
+	return current
 }
 
 func pickBool(current bool, next *bool) bool {
@@ -606,11 +638,19 @@ func currentSnapshot(store *runtime.Store) runtime.Snapshot {
 func currentRuntimeStatus(cfg *config.Manager, store *runtime.Store) runtimeStatusResponse {
 	snapshot := currentSnapshot(store)
 	return runtimeStatusResponse{
+		PollingMode:           currentPollingMode(cfg),
 		PollIntervalMs:        currentPollInterval(cfg),
 		DisplayPollingEnabled: currentDisplayPollingEnabled(cfg),
 		StatusPollingEnabled:  currentStatusPollingEnabled(cfg),
 		UpdatedAt:             snapshot.UpdatedAt.Format(time.RFC3339),
 	}
+}
+
+func currentPollingMode(cfg *config.Manager) string {
+	if cfg == nil {
+		return string(config.PollingModeBoth)
+	}
+	return cfg.Get().Settings.PollingMode
 }
 
 func currentPollInterval(cfg *config.Manager) int {
@@ -635,12 +675,11 @@ func currentStatusPollingEnabled(cfg *config.Manager) bool {
 }
 
 func settingsMessage(current, next config.Settings) string {
-	// Listen address and backend display-frame refresh cadence changes require a
+	// Listen address and unified serial polling cadence/mode changes require a
 	// restart to take effect because they shape serial-source creation.
-	// statusPollingEnabled remains a live toggle.
 	restartNeeded := current.ListenAddress != next.ListenAddress ||
 		current.PollIntervalMs != next.PollIntervalMs ||
-		current.DisplayPollingEnabled != next.DisplayPollingEnabled
+		current.PollingMode != next.PollingMode
 	if current.ListenAddress != next.ListenAddress {
 		return "settings saved, restart the server for the new listen address and runtime changes to take effect"
 	}

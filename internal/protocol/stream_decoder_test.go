@@ -139,10 +139,9 @@ func TestStreamDecoderCapsBufferOnPartialPrefix(t *testing.T) {
 		t.Fatalf("frames = %d, want 1 after closing boundary", len(got))
 	}
 }
-
 func TestStreamDecoderSplitsGetLCDBeforeTrailingStatusFrame(t *testing.T) {
 	lcd := loadFixture(t, "real_home_status_frame.bin")
-	status := []byte("\xaa\xaa\xaaC" + strings.Repeat("S", 72))
+	status := []byte("ªªªC" + strings.Repeat("S", 72))
 	stream := append(append([]byte{}, lcd...), status...)
 	stream = append(stream, lcd...)
 

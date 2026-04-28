@@ -6,16 +6,6 @@ This guide covers the example flow included at
 
 ---
 
-## Screenshots
-
-### Compact dashboard with display open
-
-![Node-RED dashboard with display open](../reference/screens/node-red/node-red-dashboard-650-display-open-operate.png)
-
-### Compact dashboard with display collapsed
-
-![Node-RED dashboard with display collapsed](../reference/screens/node-red/node-red-dashboard-650-display-collapsed.png)
-
 ## Overview
 
 The example flow is a **dashboard-fidelity port** of the WB2WGH SPE Linear flow (V1.3).

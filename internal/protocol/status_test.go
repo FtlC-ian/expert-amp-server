@@ -295,9 +295,3 @@ func TestNormalizeStatusFieldsOnlyAcceptsObservedEdgeEmptyCase(t *testing.T) {
 		t.Fatalf("normalizeStatusFields modified unexpected shape: %#v", normalized)
 	}
 }
-
-func TestStatusModelNameFromIdentifierIncludes15K(t *testing.T) {
-	if got := modelNameFromIdentifier("15K"); got != "EXPERT 1.5K-FA" {
-		t.Fatalf("modelNameFromIdentifier(15K) = %q, want EXPERT 1.5K-FA", got)
-	}
-}

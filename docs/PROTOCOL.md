@@ -27,7 +27,7 @@ Protocol work touches four separate things that are easy to conflate. Keep them 
 
 **What it is:** The 8×40 grid of character and attribute bytes that describes what the amp's LCD is currently showing.
 
-**How we get it:** A binary frame arrives over USB control-port serial. We decode it into `display.State{Chars[8][40], Attrs[40]}`. The state is purely presentational — it is what the screen looks like, not what the amp "is" in an operational sense.
+**How we get it:** A binary frame arrives over USB/serial. We decode it into `display.State{Chars[8][40], Attrs[40]}`. The state is purely presentational — it is what the screen looks like, not what the amp "is" in an operational sense.
 
 **Where it lives:** `internal/display` (model), `internal/protocol` (decoder).
 
@@ -83,11 +83,11 @@ STANDBY
 
 ### 4. Action transport
 
-**What it is:** The mechanism for sending button presses or other commands to the amp over the USB control-port serial connection.
+**What it is:** The mechanism for sending button presses or other commands to the amp over the serial/USB connection.
 
 **Current status:** `POST /api/v1/actions/button` is the canonical route for documented front-panel button commands, with `POST /api/actions/button` retained as a compatibility alias. Separately, `POST /api/v1/actions/wake` is the canonical route for the experimental amp wake/power-on path that toggles DTR/RTS on the FTDI serial control lines. More broadly, the canonical REST surface for machine-readable clients now lives under `/api/v1/...`; older non-v1 routes are compatibility aliases or legacy debug helpers. Supported document-backed button names are encoded and written to the live serial transport when one is configured. If no live button transport is available, the server returns `503` with `button transport unavailable`. Actions that remain intentionally blocked on the button endpoint (such as `back`, `on`, and `standby`) return `400`; `on` stays blocked there because wake is not honest to model as a normal front-panel button.
 
-**What we know (hypothesis):** The amp almost certainly accepts button commands over the same USB control-port serial connection that display frames arrive on. The framing format for outbound commands has not been reverse-engineered yet.
+**What we know (hypothesis):** The amp almost certainly accepts button commands over the same USB/serial connection that display frames arrive on. The framing format for outbound commands has not been reverse-engineered yet.
 
 **Where it lives:** `internal/api/types.go`, `internal/transport/buttons.go`, `internal/runtime/serial_source.go`, `internal/server/server.go`, `cmd/server/main.go`.
 
@@ -99,23 +99,59 @@ STANDBY
 
 ### Header
 
-Every display frame we have captured starts with the same 8-byte prefix:
+Every display frame we have captured starts with the same historical 8-byte stream prefix:
 
 ```
 AA AA AA 6A 01 95 FE 01
 ```
 
-`IsRadioDisplayFrame` checks for this prefix. Frames that do not match are rejected as non-display frames.
+For 371-byte GetLCD responses, the first seven bytes are the real fixed header (`AA AA AA 6A 01 95 FE`) and byte 7 is also the first byte of the inverted flag word. Current checked-in 371-byte captures both have that low flag byte as `0x01`, so they still match the historical 8-byte prefix used by the stream decoder.
 
-**Status: confirmed from real captures.** This check is reliable.
+`IsRadioDisplayFrame` accepts both the fully recognized GetLCD response shape and the older 8-byte-prefix display captures.
 
-### Body offset
+**Status: confirmed from current real captures, but stream boundary detection should eventually move from the historical 8-byte prefix to the stronger length/checksum shape if other flag values change byte 7.**
 
-After the 8-byte header, there is additional framing or metadata before the character grid begins. We do not know the exact layout of those intermediate bytes.
+### GetLCD response layout and body offset
 
-`GuessDisplayStart` heuristically scores a set of candidate offsets (8, 16, 24, ... 80) by looking for spans of bytes that decode to plausible display characters (spaces, alphanumerics). It picks the highest-scoring offset.
+The 371-byte captures (`real_home_status_frame.bin` and `sample_display_frame.bin`) match the reported response to the `0x80` GetLCD request:
 
-**Status: heuristic, not confirmed.** This approach works on the three fixtures we have but has not been validated on a wider corpus. The real frame structure may have a fixed offset that we can hardcode once understood.
+```
+[0..2]     sync preamble: AA AA AA
+[3..4]     little-endian payload length: 0x016A = 362 bytes
+[5..6]     unknown/status bytes: 95 FE
+[7..8]     2-byte flag word, inverted little-endian
+[9..328]   320-byte display body: 8 rows × 40 cols, one byte per cell
+[329..368] 40-byte packed attribute/highlight bitplane
+[369..370] 16-bit little-endian checksum over bytes [7..368] (flags + LCD payload)
+```
+
+The display body starts at byte 9 for those frames. `LCDDataOffset` recognizes this length/checksum shape and returns 9. Live stream frames may be longer than 371 bytes when a status-poll response arrives before the next display prefix; the display parser still treats the leading 371 bytes as the GetLCD response and ignores the trailing bytes for LCD payload and checksum purposes. Older 299-byte menu/panel captures also decode correctly at byte 9 but do not include the full GetLCD length/checksum tail, so they do not expose parsed flags.
+
+`GuessDisplayStart` remains as a diagnostic text-scoring heuristic only; it is not used for decoding.
+
+**Status: layout confirmed for the 371-byte home capture and structurally matched by `sample_display_frame.bin`; `real_home_status_frame.bin` checksum validates. `sample_display_frame.bin` carries the same length/offset shape but its checksum does not match the same sum rule, so treat its trailing checksum/flag truth as suspect.**
+
+### LCD flags
+
+`LCDFlagsFromFrame` preserves the raw inverted little-endian flag word and the decoded value (`raw ^ 0xffff`) for 371-byte GetLCD responses. Current fixture values:
+
+| File | Raw inverted flags | Decoded flags | Checksum | Screen evidence |
+|---|---:|---:|---|---|
+| `real_home_status_frame.bin` | `0xf801` | `0x07fe` | valid | Standby screen |
+| `sample_display_frame.bin` | `0x3301` | `0xccfe` | invalid under the confirmed sum rule | sample/proto text says Standby |
+
+Andrew G0RVM reported that the flag word includes front-panel LED state. Live captures on an Expert 1.3K-FA validated several decoded high bits. The API exposes these under `lcdFlags.leds` only when the GetLCD checksum is valid; canonical machine-readable status still comes from the protocol status poll first.
+
+| LED/state | decoded bit | validation |
+| --- | ---: | --- |
+| OP / operate | `0x1000` | Captured standby → operate; only this bit changed. |
+| SET / setup menu | `0x2000` | Captured standby → setup menu; only this bit changed. |
+| TUNE | `0x4000` | Captured burst during tune timeout; only this bit changed. |
+| TX | `0x0800` | Adjacent reported flag bit; still needs a safe live TX capture. |
+
+These LED bits are intended for the amp-shaped Front Panel template because they mirror the physical panel indicators more directly than status fields. They are not a replacement for the richer `/api/v1/status` data.
+
+For protocol work, start the server with `-lcd-flag-debug` to log checksum-valid changes in unknown decoded flag bits. The log includes the unknown mask, full decoded/raw words, known LED states, and the first display line. This is opt-in so normal installs do not spam logs.
 
 ### Character encoding
 
@@ -133,14 +169,9 @@ Each character cell is a single byte. `DecodeDisplayChar` maps byte values:
 
 ### Attribute bytes
 
-`display.State.Attrs[col]` holds one byte per column (40 columns). Attribute semantics:
+The 40 bytes after the 320 display cells are decoded as a column-major highlight bitplane: one byte per column, with bit `r` (LSB = row 0) marking row `r` in that column as highlighted/reverse-video.
 
-- `attr & 0x80` nonzero → use alternate glyph bank (shift char code by subtracting 0x20)
-- `attr & 0x7f` nonzero → invert glyph pixels (highlight / reverse video)
-
-**Status: hypothesis.** The attribute byte semantics are inferred from the rendering code and demo state construction. They have not been confirmed against a real hardware render. The attribute bytes' positions in the raw frame are also not precisely mapped — the current decoder loads only character bytes and does not yet extract attribute bytes from real frames.
-
-**Open question:** Where in the binary frame are the attribute bytes? Are they interleaved with character bytes, in a separate block, or conveyed by a different mechanism entirely?
+**Status: supported by the current fixture/rendering work and regression tests for menu-style highlights, but broader model/firmware validation is still useful.**
 
 ---
 
@@ -199,21 +230,19 @@ Each is decoded via `protocol.LoadFixtureState`. If decoding fails, the fixture 
 
 These are things we do not yet know. Do not paper over them with assumptions.
 
-1. **Fixed vs. heuristic start offset.** Is the character grid body always at the same offset, or does it vary by frame type or firmware version? The heuristic works for current fixtures but may fail on other frame types.
+1. **LCD TX flag validation.** The LCD flag word now exposes validated OP, SET, and TUNE LED states. TX is mapped to the adjacent reported bit but still needs a safe live TX capture before treating it as fully confirmed across documentation and UI screenshots.
 
-2. **Attribute byte location.** Where in the frame are the per-column attribute bytes? The current decoder does not extract them from real frames; only demo state and fixture state constructed in code has meaningful attrs.
+2. **Additional structured frames beyond the documented status poll.** We know the vendor-documented status poll exists. What we do not yet know is whether the amp also sends other structured non-display frames over the same serial connection that are worth decoding separately.
 
-3. **Additional structured frames beyond the documented status poll.** We know the vendor-documented status poll exists. What we do not yet know is whether the amp also sends other structured non-display frames over the same serial connection that are worth decoding separately.
+3. **Button command format.** What byte sequence does the amp expect for a button press? What framing wraps it?
 
-4. **Button command format.** What byte sequence does the amp expect for a button press? What framing wraps it?
+4. **Glyph mapping accuracy.** The custom glyphs in `internal/font/custom.go` are project-authored approximations. Their visual accuracy compared to what the real hardware LCD shows has not been verified.
 
-5. **Glyph mapping accuracy.** The display font table in `internal/font/spe1300_rom.go` are project-authored approximations. Their visual accuracy compared to what the real hardware LCD shows has not been verified.
+5. **Multiple display families.** `ROADMAP.md` mentions display family detection. Different Expert models or firmware revisions may have different frame structures. We have only one hardware source of captures so far.
 
-6. **Multiple display families.** Different Expert models or firmware revisions may have different frame structures. We have only one hardware source of captures so far.
+6. **Frame boundary detection.** The current stream decoder uses repeated display prefixes as boundaries, so a live display frame can include trailing bytes from an intervening status-poll response. The display parser tolerates this for the GetLCD layout, but the 371-byte length/checksum shape gives us a stronger future extraction boundary if we want cleaner raw-frame diagnostics.
 
-7. **Frame boundary detection.** The current code assumes we receive complete frames. In a live serial stream, frames need to be delimited. The framing approach (fixed length? length field? delimiter bytes?) is not yet reverse-engineered.
-
-8. **Upper-byte character codes.** Byte values above `0x5F` that are not in the known special-glyph set decode to `·`. Some of these likely correspond to real LCD symbols we have not mapped yet.
+7. **Upper-byte character codes.** Byte values above `0x5F` that are not in the known special-glyph set decode to `·`. Some of these likely correspond to real LCD symbols we have not mapped yet.
 
 ---
 

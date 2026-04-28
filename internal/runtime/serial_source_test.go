@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 // mockSerialPort implements serial.Port for testing.
 type mockSerialPort struct {
+	mu            sync.Mutex
 	chunks        [][]byte
 	chunkIdx      int
 	closed        bool
@@ -46,8 +48,19 @@ func (m *mockSerialPort) Write(buf []byte) (int, error) {
 	if m.blockWrite != nil {
 		<-m.blockWrite
 	}
+	m.mu.Lock()
 	m.written = append(m.written, append([]byte(nil), buf...))
+	m.mu.Unlock()
 	return len(buf), nil
+}
+func (m *mockSerialPort) writtenSnapshot() [][]byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([][]byte, len(m.written))
+	for i := range m.written {
+		out[i] = append([]byte(nil), m.written[i]...)
+	}
+	return out
 }
 func (m *mockSerialPort) Close() error {
 	m.closed = true
@@ -328,10 +341,11 @@ func TestSerialSourceSendButtonUsesHeldLivePort(t *testing.T) {
 			if !result.Sent || result.Transport != "serial-live" {
 				t.Fatalf("unexpected result: %+v", result)
 			}
-			if len(mockPort.written) == 0 {
+			written := mockPort.writtenSnapshot()
+			if len(written) == 0 {
 				t.Fatal("expected write through held live port")
 			}
-			got := mockPort.written[len(mockPort.written)-1]
+			got := written[len(written)-1]
 			for i := range tc.want {
 				if got[i] != tc.want[i] {
 					t.Fatalf("frame[%d] = 0x%02x, want 0x%02x", i, got[i], tc.want[i])
@@ -442,7 +456,7 @@ func TestSerialSourceUsesSeparateDisplayAndStatusPollFrames(t *testing.T) {
 
 	seenDisplay := false
 	seenStatus := false
-	for _, frame := range mockPort.written {
+	for _, frame := range mockPort.writtenSnapshot() {
 		hexFrame := hex.EncodeToString(frame)
 		if hexFrame == "555555018080" {
 			seenDisplay = true
@@ -452,7 +466,7 @@ func TestSerialSourceUsesSeparateDisplayAndStatusPollFrames(t *testing.T) {
 		}
 	}
 	if !seenDisplay || !seenStatus {
-		t.Fatalf("separate poll frames not both observed, display=%v status=%v writes=%v", seenDisplay, seenStatus, mockPort.written)
+		t.Fatalf("separate poll frames not both observed, display=%v status=%v writes=%v", seenDisplay, seenStatus, mockPort.writtenSnapshot())
 	}
 }
 
@@ -512,3 +526,141 @@ func TestSerialSourceWriteFrameTimeoutRestoresReadTimeout(t *testing.T) {
 }
 
 func contains(s, substr string) bool { return strings.Contains(s, substr) }
+
+func TestSerialPollSchedulerModes(t *testing.T) {
+	start := time.Unix(100, 0)
+	tests := []struct {
+		name  string
+		mode  string
+		steps []struct {
+			at   time.Duration
+			want string
+		}
+	}{
+		{name: "status", mode: "status", steps: []struct {
+			at   time.Duration
+			want string
+		}{{0, "status"}, {50 * time.Millisecond, ""}, {100 * time.Millisecond, "status"}}},
+		{name: "display", mode: "display", steps: []struct {
+			at   time.Duration
+			want string
+		}{{0, "display"}, {50 * time.Millisecond, ""}, {100 * time.Millisecond, "display"}}},
+		{name: "off", mode: "off", steps: []struct {
+			at   time.Duration
+			want string
+		}{{0, ""}, {100 * time.Millisecond, ""}}},
+		{name: "both", mode: "both", steps: []struct {
+			at   time.Duration
+			want string
+		}{{0, "status"}, {49 * time.Millisecond, ""}, {50 * time.Millisecond, "display"}, {100 * time.Millisecond, "status"}, {150 * time.Millisecond, "display"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSerialPollScheduler(start, tc.mode, 100*time.Millisecond, true, true)
+			for _, step := range tc.steps {
+				if got := s.nextDue(start.Add(step.at), tc.mode); got != step.want {
+					t.Fatalf("nextDue(%s) = %q, want %q", step.at, got, step.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSerialPollSchedulerGracefullyDegradesWhenPollFrameUnavailable(t *testing.T) {
+	start := time.Unix(100, 0)
+	tests := []struct {
+		name       string
+		hasDisplay bool
+		hasStatus  bool
+		want       string
+	}{
+		{name: "status only available", hasDisplay: false, hasStatus: true, want: "status"},
+		{name: "display only available", hasDisplay: true, hasStatus: false, want: "display"},
+		{name: "neither available", hasDisplay: false, hasStatus: false, want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSerialPollScheduler(start, "both", 100*time.Millisecond, tc.hasDisplay, tc.hasStatus)
+			if got := s.nextDue(start, "both"); got != tc.want {
+				t.Fatalf("nextDue() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSerialPollSchedulerResetsWhenModeChanges(t *testing.T) {
+	start := time.Unix(100, 0)
+	s := newSerialPollScheduler(start, "both", 100*time.Millisecond, true, true)
+	if got := s.nextDue(start, "both"); got != "status" {
+		t.Fatalf("initial due = %q, want status", got)
+	}
+	if got := s.nextDue(start.Add(10*time.Millisecond), "off"); got != "" {
+		t.Fatalf("off mode due = %q, want none", got)
+	}
+	if got := s.nextDue(start.Add(20*time.Millisecond), "display"); got != "display" {
+		t.Fatalf("display mode due = %q, want display", got)
+	}
+	if got := s.nextDue(start.Add(30*time.Millisecond), "status"); got != "status" {
+		t.Fatalf("status mode due = %q, want status", got)
+	}
+}
+
+func TestSerialSourceUnifiedBothModeAlternatesPollWrites(t *testing.T) {
+	mockPort := &mockSerialPort{}
+	src := NewSerialSource(SerialSourceConfig{
+		Port:                      "/dev/ttyTEST0",
+		ReadTimeout:               5 * time.Millisecond,
+		ReadSize:                  512,
+		MinFrameLen:               64,
+		MaxBuffer:                 8192,
+		PollingMode:               "both",
+		PollInterval:              40 * time.Millisecond,
+		DisplayPollEnabled:        true,
+		DisplayPollFrameHex:       "555555018080",
+		StatusPollCommandEnabled:  true,
+		StatusPollCommandFrameHex: "555555019090",
+	}, &mockSerialOpener{port: mockPort}, Update{Telemetry: api.Telemetry{Band: "20m"}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	src.Start(ctx)
+	time.Sleep(130 * time.Millisecond)
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+
+	var got []string
+	written := mockPort.writtenSnapshot()
+	for _, frame := range written {
+		switch hex.EncodeToString(frame) {
+		case "555555019090":
+			got = append(got, "status")
+		case "555555018080":
+			got = append(got, "display")
+		}
+		if len(got) >= 4 {
+			break
+		}
+	}
+	want := []string{"status", "display", "status", "display"}
+	if len(got) < len(want) {
+		t.Fatalf("writes = %v, want at least %v; raw=%v", got, want, written)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("writes = %v, want prefix %v", got, want)
+		}
+	}
+}
+
+func TestSerialPollSchedulerSkipsMissedSlotsWithoutDoubleFire(t *testing.T) {
+	start := time.Unix(100, 0)
+	s := newSerialPollScheduler(start, "both", 100*time.Millisecond, true, true)
+	if got := s.nextDue(start, "both"); got != "status" {
+		t.Fatalf("first due = %q, want status", got)
+	}
+	if got := s.nextDue(start.Add(275*time.Millisecond), "both"); got != "display" {
+		t.Fatalf("late due = %q, want single display write", got)
+	}
+	if got := s.nextDue(start.Add(276*time.Millisecond), "both"); got != "" {
+		t.Fatalf("immediate second due = %q, want no double-fire", got)
+	}
+}

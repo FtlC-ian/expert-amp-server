@@ -39,8 +39,8 @@ func IsRadioDisplayFrame(frame []byte) bool {
 // font.ROM.Glyph as the ROM index.
 //
 // The SPE Expert 1.3K protocol byte IS the ROM index — no translation needed
-// for the printable text range. The bundled SPE-style LCD font table stores
-// glyphs at the same indices the protocol uses:
+// for the printable text range. The extracted font ROM at VA 0x46b568 in
+// SPE-style LCD font table stores glyphs at the same indices the protocol uses:
 //
 //   - 0x00       → 0x60 (blank; protocol blank maps to ROM blank slot)
 //   - 0x01–0x5f  → direct pass-through (ROM index = protocol byte)
@@ -63,7 +63,7 @@ func DecodeDisplayChar(v byte) byte {
 		// Direct pass-through: protocol byte = ROM index.
 		return v
 	case v >= 0x80 && v <= 0xdf:
-		// Full custom-glyph range confirmed present in the bundled LCD font table.
+		// Full custom-glyph range confirmed present in extracted font ROM.
 		// 0xE0–0xFF are blank in the ROM and decode to 0x60 below.
 		return v
 	default:

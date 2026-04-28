@@ -253,7 +253,7 @@ func TestStateFromFrameLoadsPackedAttrBitplaneWhenPresent(t *testing.T) {
 }
 
 // TestDecodeDisplayCharROMMapping verifies DecodeDisplayChar against the
-// bundled SPE-style LCD font table.
+// extracted font ROM from SPE-style LCD font table.
 //
 // The protocol byte IS the ROM index. No +0x20 shift is applied.
 // An earlier version applied v+0x20 to the 0x01–0x5F range, which caused every

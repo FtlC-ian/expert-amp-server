@@ -23,6 +23,8 @@ type SerialSourceConfig struct {
 	BaudRate                  int
 	ReadTimeout               time.Duration
 	ReadSize                  int
+	PollingMode               string
+	PollInterval              time.Duration
 	DisplayPollEnabled        bool
 	DisplayPollInterval       time.Duration
 	DisplayPollFrameHex       string
@@ -33,6 +35,7 @@ type SerialSourceConfig struct {
 	AssertRTS                 bool
 	MinFrameLen               int
 	MaxBuffer                 int
+	PollingModeFn             func() string
 	DisplayPollEnabledFn      func() bool
 	StatusPollEnabledFn       func() bool
 	LCDFlagDebug              bool
@@ -45,8 +48,10 @@ func DefaultSerialSourceConfig(port string) SerialSourceConfig {
 		BaudRate:                  115200,
 		ReadTimeout:               250 * time.Millisecond,
 		ReadSize:                  512,
+		PollingMode:               "both",
+		PollInterval:              125 * time.Millisecond,
 		DisplayPollEnabled:        true,
-		DisplayPollInterval:       1 * time.Second,
+		DisplayPollInterval:       125 * time.Millisecond,
 		DisplayPollFrameHex:       hex.EncodeToString(protocol.DisplayPollCommand),
 		StatusPollCommandEnabled:  true,
 		StatusPollCommandInterval: 125 * time.Millisecond,
@@ -289,14 +294,7 @@ func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg s
 		}
 	}
 
-	var nextDisplayPoll time.Time
-	if len(displayPollFrame) > 0 {
-		nextDisplayPoll = time.Now()
-	}
-	var nextStatusPoll time.Time
-	if len(statusPollFrame) > 0 {
-		nextStatusPoll = time.Now()
-	}
+	scheduler := newSerialPollScheduler(time.Now(), s.pollingMode(), s.pollInterval(), len(displayPollFrame) > 0, len(statusPollFrame) > 0)
 
 	buf := make([]byte, cfg.ReadSize)
 	for {
@@ -307,30 +305,16 @@ func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg s
 		}
 
 		now := time.Now()
-		wrotePoll := false
-		if !nextStatusPoll.IsZero() && !s.statusPollEnabled() {
-			nextStatusPoll = now.Add(s.statusPollInterval())
-		}
-		if !nextDisplayPoll.IsZero() && !s.displayPollEnabled() {
-			nextDisplayPoll = now.Add(s.displayPollInterval())
-		}
-		if !nextStatusPoll.IsZero() && !now.Before(nextStatusPoll) && s.statusPollEnabled() {
-			if err := s.writeFrame(ctx, statusPollFrame); err != nil {
-				return fmt.Errorf("serial write status poll: %w", err)
+		if kind := scheduler.nextDue(now, s.pollingMode()); kind != "" {
+			var frame []byte
+			if kind == "status" {
+				frame = statusPollFrame
+			} else {
+				frame = displayPollFrame
 			}
-			nextStatusPoll = now.Add(s.statusPollInterval())
-			wrotePoll = true
-		} else if !nextDisplayPoll.IsZero() && !now.Before(nextDisplayPoll) && s.displayPollEnabled() {
-			if err := s.writeFrame(ctx, displayPollFrame); err != nil {
-				return fmt.Errorf("serial write display poll: %w", err)
+			if err := s.writeFrame(ctx, frame); err != nil {
+				return fmt.Errorf("serial write %s poll: %w", kind, err)
 			}
-			nextDisplayPoll = now.Add(s.displayPollInterval())
-			wrotePoll = true
-		}
-		if wrotePoll {
-			// Avoid issuing display and status requests back-to-back. The amp's serial
-			// response path is much more reliable if we write one request, then give the
-			// reader a chance to drain its response before sending the next poll.
 		}
 
 		n, err := port.Read(buf)
@@ -535,6 +519,29 @@ func (s *SerialSource) decodePollFrame(kind string, enabled bool, frameHex strin
 	return frame, nil
 }
 
+func (s *SerialSource) pollingMode() string {
+	if s.cfg.PollingModeFn != nil {
+		return s.cfg.PollingModeFn()
+	}
+	if s.cfg.PollingMode != "" {
+		return s.cfg.PollingMode
+	}
+	return legacySerialPollingMode(s.displayPollEnabled(), s.statusPollEnabled())
+}
+
+func (s *SerialSource) pollInterval() time.Duration {
+	if s.cfg.PollInterval > 0 {
+		return s.cfg.PollInterval
+	}
+	if s.cfg.StatusPollCommandInterval > 0 {
+		return s.cfg.StatusPollCommandInterval
+	}
+	if s.cfg.DisplayPollInterval > 0 {
+		return s.cfg.DisplayPollInterval
+	}
+	return 125 * time.Millisecond
+}
+
 func (s *SerialSource) displayPollEnabled() bool {
 	if s.cfg.DisplayPollEnabledFn != nil {
 		return s.cfg.DisplayPollEnabledFn()
@@ -549,18 +556,142 @@ func (s *SerialSource) statusPollEnabled() bool {
 	return s.cfg.StatusPollCommandEnabled
 }
 
-func (s *SerialSource) displayPollInterval() time.Duration {
-	if s.cfg.DisplayPollInterval > 0 {
-		return s.cfg.DisplayPollInterval
+func legacySerialPollingMode(display, status bool) string {
+	switch {
+	case display && status:
+		return "both"
+	case status:
+		return "status"
+	case display:
+		return "display"
+	default:
+		return "off"
 	}
-	return 1 * time.Second
 }
 
-func (s *SerialSource) statusPollInterval() time.Duration {
-	if s.cfg.StatusPollCommandInterval > 0 {
-		return s.cfg.StatusPollCommandInterval
+type serialPollScheduler struct {
+	interval     time.Duration
+	halfInterval time.Duration
+	hasDisplay   bool
+	hasStatus    bool
+	next         time.Time
+	phase        string
+	mode         string
+}
+
+func newSerialPollScheduler(now time.Time, mode string, interval time.Duration, hasDisplay, hasStatus bool) *serialPollScheduler {
+	if interval <= 0 {
+		interval = 125 * time.Millisecond
 	}
-	return 125 * time.Millisecond
+	half := interval / 2
+	if half <= 0 {
+		half = interval
+	}
+	s := &serialPollScheduler{interval: interval, halfInterval: half, hasDisplay: hasDisplay, hasStatus: hasStatus}
+	s.reset(now, mode)
+	return s
+}
+
+func (s *serialPollScheduler) reset(now time.Time, mode string) {
+	s.mode = normalizeSerialPollingMode(mode)
+	s.next = time.Time{}
+	s.phase = ""
+	s.prime(now)
+}
+
+func (s *serialPollScheduler) prime(now time.Time) {
+	s.next = time.Time{}
+	s.phase = ""
+	s.mode = s.effectiveMode(s.mode)
+	switch s.mode {
+	case "status":
+		s.phase = "status"
+		s.next = now
+	case "display":
+		s.phase = "display"
+		s.next = now
+	case "both":
+		s.phase = "status"
+		s.next = now
+	}
+}
+
+func (s *serialPollScheduler) nextDue(now time.Time, mode string) string {
+	mode = normalizeSerialPollingMode(mode)
+	if mode != s.mode {
+		s.reset(now, mode)
+	}
+	if s.next.IsZero() || now.Before(s.next) {
+		return ""
+	}
+	kind := s.phase
+	s.advance(now)
+	return kind
+}
+
+func (s *serialPollScheduler) advance(now time.Time) {
+	s.mode = s.effectiveMode(s.mode)
+	if s.mode == "off" {
+		s.next = time.Time{}
+		s.phase = ""
+		return
+	}
+	if s.mode == "both" {
+		if s.phase == "status" {
+			s.phase = "display"
+		} else {
+			s.phase = "status"
+		}
+		s.next = s.next.Add(s.halfInterval)
+	} else {
+		s.phase = s.mode
+		s.next = s.next.Add(s.interval)
+	}
+	for !s.next.After(now) {
+		if s.mode == "both" {
+			s.next = s.next.Add(s.halfInterval)
+			if s.phase == "status" {
+				s.phase = "display"
+			} else {
+				s.phase = "status"
+			}
+		} else {
+			s.next = s.next.Add(s.interval)
+		}
+	}
+}
+
+func (s *serialPollScheduler) effectiveMode(mode string) string {
+	switch mode {
+	case "both":
+		if s.hasStatus && s.hasDisplay {
+			return "both"
+		}
+		if s.hasStatus {
+			return "status"
+		}
+		if s.hasDisplay {
+			return "display"
+		}
+	case "status":
+		if s.hasStatus {
+			return "status"
+		}
+	case "display":
+		if s.hasDisplay {
+			return "display"
+		}
+	}
+	return "off"
+}
+
+func normalizeSerialPollingMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "off", "status", "display", "both":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "both"
+	}
 }
 
 func (s *SerialSource) setErr(msg string) {

@@ -277,6 +277,33 @@ func TestStatusStatePrefersFresherDisplayStateForLaggyDisplayOnlyOperatorFields(
 	}
 }
 
+func TestStatusStateIgnoresNonCanonicalFresherDisplayOperatingText(t *testing.T) {
+	state := NewStatusState(api.Status{})
+	state.UpdateProtocolNative(api.Status{Telemetry: api.Telemetry{
+		OperatingState: "standby",
+		Mode:           "standby",
+		OutputLevel:    "LOW",
+		Source:         "serial",
+		Confidence:     "protocol-native",
+		Provenance:     "status-poll",
+	}})
+
+	time.Sleep(10 * time.Millisecond)
+	status := state.Resolve(Snapshot{
+		Telemetry: api.Telemetry{
+			OperatingState: "SET ANTENNA ON BANK A",
+			Mode:           "DISPLAY ALARMS LOG EXIT",
+			Source:         "serial",
+			Confidence:     "display-derived",
+			Provenance:     "display-frame",
+		},
+		UpdatedAt: time.Now().UTC(),
+	})
+	if status.OperatingState != "standby" || status.Mode != "standby" {
+		t.Fatalf("non-canonical display text overrode protocol state: %+v", status)
+	}
+}
+
 func TestStatusStateUsesDisplayOutputLevelOnlyWhenStatusPollDoesNotReportIt(t *testing.T) {
 	state := NewStatusState(api.Status{})
 	state.UpdateProtocolNative(api.Status{Telemetry: api.Telemetry{

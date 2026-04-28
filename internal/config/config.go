@@ -11,11 +11,21 @@ import (
 	"unicode"
 )
 
-const DefaultPollIntervalMs = 200
+const DefaultPollIntervalMs = 125
+
+type PollingMode string
+
+const (
+	PollingModeOff     PollingMode = "off"
+	PollingModeBoth    PollingMode = "both"
+	PollingModeStatus  PollingMode = "status"
+	PollingModeDisplay PollingMode = "display"
+)
 
 type Settings struct {
 	SerialPort            string `json:"serialPort"`
 	ListenAddress         string `json:"listenAddress"`
+	PollingMode           string `json:"pollingMode"`
 	PollIntervalMs        int    `json:"pollIntervalMs"`
 	DisplayPollingEnabled bool   `json:"displayPollingEnabled"`
 	StatusPollingEnabled  bool   `json:"statusPollingEnabled"`
@@ -50,6 +60,7 @@ type Manager struct {
 type rawSettings struct {
 	SerialPort            *string           `json:"serialPort"`
 	ListenAddress         *string           `json:"listenAddress"`
+	PollingMode           *string           `json:"pollingMode"`
 	PollIntervalMs        *int              `json:"pollIntervalMs"`
 	DisplayPollingEnabled *bool             `json:"displayPollingEnabled"`
 	StatusPollingEnabled  *bool             `json:"statusPollingEnabled"`
@@ -73,6 +84,7 @@ func DefaultSettings(listenAddress string) Settings {
 	}
 	return Settings{
 		ListenAddress:         listenAddress,
+		PollingMode:           string(PollingModeBoth),
 		PollIntervalMs:        DefaultPollIntervalMs,
 		DisplayPollingEnabled: true,
 		StatusPollingEnabled:  true,
@@ -81,7 +93,7 @@ func DefaultSettings(listenAddress string) Settings {
 		SerialBaudRate:           115200,
 		SerialReadTimeoutMs:      250,
 		StatusPollCommandEnabled: true,
-		StatusPollIntervalMs:     125,
+		StatusPollIntervalMs:     DefaultPollIntervalMs,
 		SerialAssertDTR:          true,
 		SerialAssertRTS:          true,
 	}
@@ -153,6 +165,10 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.ListenAddress != nil && *r.ListenAddress != "" {
 		out.ListenAddress = *r.ListenAddress
 	}
+	modeProvided := r.PollingMode != nil && strings.TrimSpace(*r.PollingMode) != ""
+	if modeProvided {
+		out.PollingMode = normalizePollingMode(*r.PollingMode)
+	}
 	if r.PollIntervalMs != nil && *r.PollIntervalMs > 0 {
 		out.PollIntervalMs = *r.PollIntervalMs
 	}
@@ -183,13 +199,24 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	} else if r.SerialPollIntervalMs != nil && *r.SerialPollIntervalMs > 0 {
 		out.StatusPollIntervalMs = *r.SerialPollIntervalMs
 	}
+	if !modeProvided {
+		out.PollingMode = string(derivePollingMode(out.DisplayPollingEnabled, out.StatusPollingEnabled, out.StatusPollCommandEnabled))
+		if (out.PollingMode == string(PollingModeBoth) || out.PollingMode == string(PollingModeStatus)) && r.PollIntervalMs == nil {
+			if r.StatusPollIntervalMs != nil && *r.StatusPollIntervalMs > 0 {
+				out.PollIntervalMs = *r.StatusPollIntervalMs
+			} else if r.SerialPollIntervalMs != nil && *r.SerialPollIntervalMs > 0 {
+				out.PollIntervalMs = *r.SerialPollIntervalMs
+			}
+		}
+	}
+	out = syncLegacyPollingFields(out)
 	if r.SerialAssertDTR != nil {
 		out.SerialAssertDTR = *r.SerialAssertDTR
 	}
 	if r.SerialAssertRTS != nil {
 		out.SerialAssertRTS = *r.SerialAssertRTS
 	}
-	return out
+	return syncLegacyPollingFields(out)
 }
 
 func normalizeSettings(in, defaults Settings) Settings {
@@ -198,11 +225,14 @@ func normalizeSettings(in, defaults Settings) Settings {
 	if in.ListenAddress != "" {
 		out.ListenAddress = strings.TrimSpace(in.ListenAddress)
 	}
+	if strings.TrimSpace(in.PollingMode) != "" {
+		out.PollingMode = normalizePollingMode(in.PollingMode)
+	} else {
+		out.PollingMode = string(derivePollingMode(in.DisplayPollingEnabled, in.StatusPollingEnabled, in.StatusPollCommandEnabled))
+	}
 	if in.PollIntervalMs > 0 {
 		out.PollIntervalMs = in.PollIntervalMs
 	}
-	out.DisplayPollingEnabled = in.DisplayPollingEnabled
-	out.StatusPollingEnabled = in.StatusPollingEnabled
 	out.PanelModelLabel = normalizeLabel(in.PanelModelLabel)
 	out.InputLabels = normalizeLabelMap(in.InputLabels)
 	out.AntennaLabels = normalizeLabelMap(in.AntennaLabels)
@@ -218,7 +248,65 @@ func normalizeSettings(in, defaults Settings) Settings {
 	}
 	out.SerialAssertDTR = in.SerialAssertDTR
 	out.SerialAssertRTS = in.SerialAssertRTS
-	return out
+	return syncLegacyPollingFields(out)
+}
+
+func normalizePollingMode(mode string) string {
+	switch PollingMode(strings.ToLower(strings.TrimSpace(mode))) {
+	case PollingModeOff:
+		return string(PollingModeOff)
+	case PollingModeStatus:
+		return string(PollingModeStatus)
+	case PollingModeDisplay:
+		return string(PollingModeDisplay)
+	default:
+		return string(PollingModeBoth)
+	}
+}
+
+func derivePollingMode(display, status, statusCommand bool) PollingMode {
+	if display && status && statusCommand {
+		return PollingModeBoth
+	}
+	if display && !status {
+		return PollingModeDisplay
+	}
+	if !display && status && statusCommand {
+		return PollingModeStatus
+	}
+	return PollingModeOff
+}
+
+func syncLegacyPollingFields(in Settings) Settings {
+	switch PollingMode(normalizePollingMode(in.PollingMode)) {
+	case PollingModeBoth:
+		in.PollingMode = string(PollingModeBoth)
+		in.DisplayPollingEnabled = true
+		in.StatusPollingEnabled = true
+		in.StatusPollCommandEnabled = true
+	case PollingModeStatus:
+		in.PollingMode = string(PollingModeStatus)
+		in.DisplayPollingEnabled = false
+		in.StatusPollingEnabled = true
+		in.StatusPollCommandEnabled = true
+	case PollingModeDisplay:
+		in.PollingMode = string(PollingModeDisplay)
+		in.DisplayPollingEnabled = true
+		in.StatusPollingEnabled = false
+		in.StatusPollCommandEnabled = false
+	default:
+		in.PollingMode = string(PollingModeOff)
+		in.DisplayPollingEnabled = false
+		in.StatusPollingEnabled = false
+		in.StatusPollCommandEnabled = false
+	}
+	if in.PollIntervalMs <= 0 {
+		in.PollIntervalMs = DefaultPollIntervalMs
+	}
+	if in.StatusPollIntervalMs <= 0 {
+		in.StatusPollIntervalMs = in.PollIntervalMs
+	}
+	return in
 }
 
 func validatedSettings(in, defaults Settings) (Settings, error) {

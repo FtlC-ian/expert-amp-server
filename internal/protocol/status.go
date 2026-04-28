@@ -436,27 +436,35 @@ func (d *StatusStreamDecoder) Push(chunk []byte) [][]byte {
 			}
 			break
 		}
-		if start > 0 {
-			d.buf = d.buf[start:]
-			start = 0
-		}
-
-		end := bytes.Index(d.buf, []byte("\r\n"))
-		if end < 0 {
+		if len(d.buf[start:]) < statusMinFrameLen {
+			if start > 0 {
+				d.buf = append([]byte(nil), d.buf[start:]...)
+			}
 			break
 		}
-		end += len("\r\n")
-		if end < statusMinFrameLen {
-			d.buf = d.buf[1:]
+		consumed := 0
+		for _, frameLen := range []int{statusMaxFrameLen, statusMinFrameLen} {
+			if len(d.buf[start:]) < frameLen {
+				continue
+			}
+			frame := append([]byte(nil), d.buf[start:start+frameLen]...)
+			if _, err := ParseStatusFrame(frame); err == nil {
+				frames = append(frames, frame)
+				consumed = frameLen
+				break
+			}
+		}
+		if consumed > 0 {
+			d.buf = d.buf[start+consumed:]
 			continue
 		}
-		frame := append([]byte(nil), d.buf[:end]...)
-		if _, err := ParseStatusFrame(frame); err == nil {
-			frames = append(frames, frame)
-			d.buf = d.buf[end:]
-			continue
+		if len(d.buf[start:]) == statusMinFrameLen {
+			if start > 0 {
+				d.buf = append([]byte(nil), d.buf[start:]...)
+			}
+			break
 		}
-		d.buf = d.buf[1:]
+		d.buf = d.buf[start+1:]
 	}
 	return frames
 }

@@ -489,9 +489,9 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 		StatusPollIntervalMs:     500,
 		SerialAssertDTR:          true,
 		SerialAssertRTS:          true,
-		PanelModelLabel:          "AF5SH",
-		InputLabels:              map[string]string{"1": "IC-7300"},
-		AntennaLabels:            map[string]string{"4": "Hexbeam"},
+		PanelModelLabel:          "OLD",
+		InputLabels:              map[string]string{"1": "Old input"},
+		AntennaLabels:            map[string]string{"4": "Old ant"},
 	}
 	falseVal := false
 	interval := 900
@@ -516,7 +516,7 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 		t.Fatalf("unrelated current fields were not preserved: %+v", merged)
 	}
 	if merged.PanelModelLabel != "" || len(merged.InputLabels) != 0 || len(merged.AntennaLabels) != 0 {
-		t.Fatalf("station labels should be replaced by request payload, got: %+v", merged)
+		t.Fatalf("omitted station labels should clear overrides, got panel=%q inputs=%+v antennas=%+v", merged.PanelModelLabel, merged.InputLabels, merged.AntennaLabels)
 	}
 
 	merged = mergeSettingsRequest(current, settingsRequest{
@@ -525,7 +525,7 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 		AntennaLabels:   map[string]string{"4": "Hexbeam"},
 	})
 	if merged.PanelModelLabel != "AF5SH" || merged.InputLabels["2"] != "ANAN G2" || merged.AntennaLabels["4"] != "Hexbeam" {
-		t.Fatalf("station label merge mismatch: %+v", merged)
+		t.Fatalf("station labels not merged as replacement: %+v", merged)
 	}
 }
 

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,15 +163,16 @@ func boolPtr(v bool) *bool { return &v }
 func TestPollerSkipsTickWhenDisabled(t *testing.T) {
 	store := NewStore(Snapshot{})
 
-	pollCount := 0
-	source := &countingSource{onPoll: func() { pollCount++ }}
+	var pollCount atomic.Int64
+	source := &countingSource{onPoll: func() { pollCount.Add(1) }}
 
-	enabled := false
+	var enabled atomic.Bool
+	enabled.Store(false)
 	poller := &Poller{
 		Source:   source,
 		Store:    store,
 		Interval: 5 * time.Millisecond,
-		Enabled:  func() bool { return enabled },
+		Enabled:  enabled.Load,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -179,18 +181,18 @@ func TestPollerSkipsTickWhenDisabled(t *testing.T) {
 
 	// Let a few ticks pass while disabled.
 	time.Sleep(30 * time.Millisecond)
-	if pollCount != 0 {
+	if got := pollCount.Load(); got != 0 {
 		cancel()
-		t.Fatalf("expected 0 polls while disabled, got %d", pollCount)
+		t.Fatalf("expected 0 polls while disabled, got %d", got)
 	}
 
 	// Enable and let ticks run.
-	enabled = true
+	enabled.Store(true)
 	time.Sleep(30 * time.Millisecond)
 	cancel()
 	<-done
 
-	if pollCount == 0 {
+	if got := pollCount.Load(); got == 0 {
 		t.Fatal("expected at least one poll after enabling, got 0")
 	}
 }

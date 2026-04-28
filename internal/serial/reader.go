@@ -63,18 +63,18 @@ type PortInfo struct {
 	Name string
 	// ByIDPath is the stable /dev/serial/by-id/ path if available.
 	ByIDPath string
-	// SerialNumber is the USB device serial number, when the OS exposes one.
+	// SerialNumber is the USB serial number (e.g. "XXXXXXXX").
 	SerialNumber string
 	// Manufacturer is the USB manufacturer string.
 	Manufacturer string
 	// Product is the USB product string.
 	Product string
-	// IsFTDI is true when the USB control-port device presents an FTDI serial interface.
+	// IsFTDI is true when the port is an FTDI USB serial adapter.
 	IsFTDI bool
 }
 
 // EnumeratePorts lists available serial ports with metadata including
-// USB serial-device numbers, manufacturer, and product strings. This uses
+// USB serial numbers, manufacturer, and product strings. This uses
 // go.bug.st/serial/enumerator for rich discovery.
 //
 // On Linux, this reads /sys/bus/usb-serial/devices/ and udev attributes

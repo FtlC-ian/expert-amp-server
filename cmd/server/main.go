@@ -170,22 +170,27 @@ func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.Can
 	statusState := runtime.NewStatusState(api.Status{})
 	var serialSource *runtime.SerialSource
 
-	if snapshot.Settings.SerialPort != "" && (snapshot.Settings.DisplayPollingEnabled || snapshot.Settings.StatusPollingEnabled) {
+	if snapshot.Settings.SerialPort != "" && snapshot.Settings.PollingMode != string(config.PollingModeOff) {
 		defaults := runtime.DefaultSerialSourceConfig(snapshot.Settings.SerialPort)
 		serialCfg := runtime.SerialSourceConfig{
 			Port:                      snapshot.Settings.SerialPort,
 			BaudRate:                  snapshot.Settings.SerialBaudRate,
 			ReadTimeout:               time.Duration(snapshot.Settings.SerialReadTimeoutMs) * time.Millisecond,
 			ReadSize:                  512,
+			PollingMode:               snapshot.Settings.PollingMode,
+			PollInterval:              time.Duration(snapshot.Settings.PollIntervalMs) * time.Millisecond,
 			DisplayPollEnabled:        snapshot.Settings.DisplayPollingEnabled,
 			DisplayPollInterval:       time.Duration(snapshot.Settings.PollIntervalMs) * time.Millisecond,
 			DisplayPollFrameHex:       defaults.DisplayPollFrameHex,
 			StatusPollCommandEnabled:  snapshot.Settings.StatusPollCommandEnabled,
-			StatusPollCommandInterval: time.Duration(snapshot.Settings.StatusPollIntervalMs) * time.Millisecond,
+			StatusPollCommandInterval: time.Duration(snapshot.Settings.PollIntervalMs) * time.Millisecond,
 			StatusPollCommandFrameHex: defaults.StatusPollCommandFrameHex,
 			AssertDTR:                 snapshot.Settings.SerialAssertDTR,
 			AssertRTS:                 snapshot.Settings.SerialAssertRTS,
 			LCDFlagDebug:              lcdFlagDebug,
+			PollingModeFn: func() string {
+				return cfg.Get().Settings.PollingMode
+			},
 			DisplayPollEnabledFn: func() bool {
 				return cfg.Get().Settings.DisplayPollingEnabled
 			},

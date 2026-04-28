@@ -4,7 +4,7 @@ These notes describe the current known-good shape for running `expert-amp-server
 
 ## Assumptions
 
-- The amp is connected to the Pi with a USB cable to the amp's built-in USB Type-B control port. Do not use the separate CAT radio ports; those are for radio CAT connections, not this server.
+- The amp is connected to the Pi with a USB serial adapter.
 - The Pi is on the same trusted LAN as the browser, Node-RED, or other clients.
 - The service is reachable only from the trusted station LAN, VPN, firewall, or reverse proxy you control. It is not exposed directly to the public internet.
 - You have a built Linux binary named `expert-amp-server` for the Pi architecture.
@@ -49,21 +49,19 @@ scp /tmp/expert-amp-server-linux-arm64 pi-user@radio-host:/home/pi-user/expert-a
 ssh pi-user@radio-host 'mv /home/pi-user/expert-amp-server.upload /home/pi-user/expert-amp-server && chmod +x /home/pi-user/expert-amp-server'
 ```
 
-## Configure USB control-port access
+## Configure serial access
 
-Plug the Pi/Linux host into the amp's built-in USB Type-B control port. Linux exposes that USB connection as a serial device, so the app still calls it `serialPort` in config and API fields. Do not plug this server into the amp's separate CAT radio ports; those are distinct radio-control serial ports.
+Set the serial port in the JSON config or in the Settings tab after first launch. Prefer stable `/dev/serial/by-id/...` paths rather than `/dev/ttyUSB0` because USB device order can change.
 
-Set the exposed serial device path in the JSON config or in the Settings tab after first launch. Prefer stable `/dev/serial/by-id/...` paths rather than `/dev/ttyUSB0` because USB device order can change.
-
-Example Linux device path for the amp USB control port:
+Example serial path from the development station:
 
 ```text
 /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXXXXXX-if00-port0
 ```
 
-The service user must be able to open the USB control-port serial device. On many Linux systems that means adding the user to the `dialout` group or running under a service account that already has serial permissions.
+The service user must be able to open the serial device. On many Linux systems that means adding the user to the `dialout` group or running under a service account that already has serial permissions.
 
-Key config fields for a live amp setup are represented in [`packaging/config/config.example.json`](../packaging/config/config.example.json). Copy it, then edit `serialPort` for the target host's amp USB control-port device.
+Key config fields for a live amp setup are represented in [`packaging/config/config.example.json`](../packaging/config/config.example.json). Copy it, then edit `serialPort` for the target host.
 
 ## Run manually
 
@@ -156,9 +154,9 @@ POST /api/v1/actions/button
 
 Do not treat `on` as a normal button command. The current implementation keeps `back`, `on`, and `standby` blocked on the normal button endpoint. Hardware wake behavior still needs broader confirmation across real amps and cabling setups.
 
-## Install handoff checklist
+## Public testing checklist
 
-Before handing this install path to another user, verify:
+Before handing this to another user, verify:
 
 - binary starts under the intended service manager
 - `/api/v1/version` shows the expected release/build metadata

@@ -33,6 +33,7 @@ internal/
   font/         — SPE-style LCD font table used by the renderer
   render/       — pixel (PNG) and SVG renderers
   api/          — shared JSON types (telemetry, button action, frame info)
+  web/          — alternate embedded UI (not currently used by the server binary)
 
 fixtures/
   real_home_status_frame.bin  — captured home/status screen
@@ -41,6 +42,7 @@ fixtures/
   sample_display_frame.bin    — another captured frame (same header as home)
 
 docs/
+  ROADMAP.md
   ARCHITECTURE.md  ← this file
   PROTOCOL.md
 ```
@@ -85,7 +87,7 @@ Manages the font ROM used for pixel rendering.
   - `attr & 0x80` nonzero → alternate glyph bank (subtracts 0x20 from the char code index)
   - `attr & 0x7f` nonzero → invert all pixel bits (highlight / reverse video)
 
-The current font table is kept in source form so rendered LCD screenshots match the real amp closely. Do not add vendor executables or raw binary blobs to the repo.
+The current font table is derived from the SPE Expert 1.3K display tooling and is kept in source form so rendered LCD screenshots match the real amp closely. This is useful for validation, but it is also a provenance item to review before a broader public release. Do not add vendor executables or raw binary blobs to the repo.
 
 ### `internal/render`
 
@@ -132,7 +134,7 @@ The HTTP server wires everything together. It:
 | `/api/v1/status` | GET | Canonical amp status JSON | Live, prefers protocol-native status poll data |
 | `/api/v1/status/ws` | GET | Canonical amp status websocket | Live |
 | `/api/v1/telemetry` | GET | Canonical telemetry snapshot route | Live runtime snapshot, mainly UI/fallback |
-| `/api/v1/alarms` | GET | Canonical alarms route | Live conservative stub |
+| `/api/v1/alarms` | GET | Canonical alarms route | Live phase-1 stub |
 | `/api/v1/runtime` | GET | Canonical runtime settings/status view | Live |
 | `/api/v1/runtime/snapshot` | GET | Canonical runtime snapshot route | Live |
 | `/api/v1/runtime/ingest` | GET | Canonical ingest diagnostics route | Live |
@@ -187,12 +189,12 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 | Runtime telemetry snapshot | Working |
 | Canonical status surface (`/api/v1/status`) | Working, prefers protocol-native status poll data with telemetry fallback |
 | Live serial ingest | Working when a serial port is configured; fixture mode remains available for development |
-| Display-derived telemetry extraction | Working in a conservative form |
+| Display-derived telemetry extraction | Working in a conservative phase-1 form |
 | Button transport to hardware | Working when a live serial/button transport is configured; otherwise returns unavailable cleanly |
 | WebSocket status feed (`/api/v1/status/ws`) | Working, event-driven fanout from the authoritative shared status state used by `GET /api/v1/status` |
 | Display refresh websocket (`/api/v1/display/ws`) | Working, pushes lightweight snapshot-sequence events from the shared runtime store so image clients can refresh only on real display changes |
 | General WebSocket / SSE for other live updates | Status and display websocket paths are working; no broad event bus beyond those |
-| OpenAPI spec (`/api/v1/openapi.json`) | Working, served by the app as the machine-readable API artifact |
+| OpenAPI spec (`/api/v1/openapi.json`) | Working, served by the app as a conservative phase 1 artifact |
 | Local docs UI (`/api/v1/docs`) | Working, renders the served OpenAPI document into a built-in local reference page |
 
 ---
@@ -201,6 +203,6 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 
 - **Trusted-LAN station appliance.** This service is meant to run near the amp and be reached from operator machines on the same station LAN. It is not an internet-facing web app and should sit behind the user's LAN, VPN, firewall, or reverse proxy for any remote use.
 - **Captured data beats theory.** If real frames disagree with assumptions, update the code and document the difference.
-- **No vendor binaries.** The repo must not include vendor executables. Protocol/font/rendering provenance should stay documented honestly and low-key.
+- **No vendor binaries.** The repo must not include vendor executables. Protocol/font provenance needs to be documented honestly before public release.
 - **API must be boring and stable.** Prefer explicit JSON over cleverness. The canonical REST surface is the current `/api/v1/...` API; older non-v1 routes are compatibility holdovers, not the preferred contract.
 - **Every feature needs tests.** Decoder changes need regression tests against fixture files.

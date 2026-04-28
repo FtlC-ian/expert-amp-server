@@ -1,15 +1,14 @@
 {
   "serialPort": "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXXXXXX-if00-port0",
   "listenAddress": ":8088",
-  "pollIntervalMs": 200,
+  "pollingMode": "both",
+  "pollIntervalMs": 125,
   "displayPollingEnabled": true,
   "statusPollingEnabled": true,
   "serialBaudRate": 115200,
   "serialReadTimeoutMs": 250,
   "statusPollCommandEnabled": true,
   "statusPollIntervalMs": 125,
-  "serialAssertDTR": true,
-  "serialAssertRTS": true,
   "panelModelLabel": "",
   "inputLabels": {
     "1": "",
@@ -22,5 +21,7 @@
     "4": "",
     "5": "",
     "6": ""
-  }
+  },
+  "serialAssertDTR": true,
+  "serialAssertRTS": true
 }

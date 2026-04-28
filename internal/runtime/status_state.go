@@ -163,10 +163,10 @@ func applyFreshDisplayOverrides(resolved api.Status, fallback api.Status, protoc
 	// protocol-native status poll immediately after a front-panel/button action.
 	// Only override when the display snapshot is strictly newer, and only when
 	// the display-derived fallback actually has a meaningful value.
-	if fallback.OperatingState != "" {
+	if isCanonicalOperatingState(fallback.OperatingState) {
 		resolved.OperatingState = fallback.OperatingState
 	}
-	if fallback.Mode != "" {
+	if isCanonicalOperatingState(fallback.Mode) {
 		resolved.Mode = fallback.Mode
 	}
 	// Keep protocol-native outputLevel authoritative when the status poll reports
@@ -177,6 +177,15 @@ func applyFreshDisplayOverrides(resolved api.Status, fallback api.Status, protoc
 		resolved.OutputLevel = fallback.OutputLevel
 	}
 	return resolved
+}
+
+func isCanonicalOperatingState(value string) bool {
+	switch value {
+	case "standby", "operate":
+		return true
+	default:
+		return false
+	}
 }
 
 func mergeZeroStatusFields(dst reflect.Value, fallback reflect.Value) {

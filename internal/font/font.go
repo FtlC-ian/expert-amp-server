@@ -11,7 +11,7 @@ type ROM struct {
 }
 
 // Builtin returns the SPE Expert 1.3K display ROM, loaded directly from the
-// renderer.
+// 256-glyph table extracted from SPE-style LCD font table at VA 0x46b568.
 //
 // Every glyph is already in MSB-left bit order, matching the renderer directly.
 // No normalization or override step is needed.

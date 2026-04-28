@@ -434,7 +434,7 @@
           "Settings"
         ],
         "summary": "Update settings",
-        "description": "Writes local config. displayPollingEnabled and statusPollingEnabled are live toggles. Listen address and pollIntervalMs (the backend display-frame refresh cadence) still require restart to take effect. statusPollIntervalMs controls backend protocol-status refresh. Legacy serialPoll* fields remain accepted only as backward-compatible aliases; the documented status poll frame itself is fixed in code rather than user-editable.",
+        "description": "Writes local config. Preferred polling fields are pollingMode (off, both, status, display) and pollIntervalMs. both alternates status and display writes on one cadence; status is for automation/API, display is for front-panel/template work, and off is diagnostic. Legacy polling booleans and statusPollIntervalMs remain accepted/readable for compatibility and are normalized on save.",
         "requestBody": {
           "required": true,
           "content": {
@@ -447,7 +447,8 @@
                   "value": {
                     "serialPort": "/dev/ttyUSB0",
                     "listenAddress": ":8088",
-                    "pollIntervalMs": 200,
+                    "pollingMode": "both",
+                    "pollIntervalMs": 125,
                     "displayPollingEnabled": true,
                     "statusPollingEnabled": true,
                     "serialBaudRate": 115200,
@@ -455,7 +456,20 @@
                     "statusPollCommandEnabled": true,
                     "statusPollIntervalMs": 125,
                     "serialAssertDTR": true,
-                    "serialAssertRTS": true
+                    "serialAssertRTS": true,
+                    "panelModelLabel": "",
+                    "inputLabels": {
+                      "1": "",
+                      "2": ""
+                    },
+                    "antennaLabels": {
+                      "1": "",
+                      "2": "",
+                      "3": "",
+                      "4": "",
+                      "5": "",
+                      "6": ""
+                    }
                   }
                 }
               }
@@ -1363,6 +1377,16 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "pollingMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "both",
+              "status",
+              "display"
+            ],
+            "description": "Unified serial polling mode. Preferred over legacy polling booleans."
           }
         }
       },
@@ -1474,23 +1498,33 @@
           "serialAssertRTS": {
             "type": "boolean"
           },
+          "pollingMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "both",
+              "status",
+              "display"
+            ],
+            "description": "Unified serial polling mode. Preferred over legacy polling booleans."
+          },
           "panelModelLabel": {
             "type": "string",
-            "description": "Optional cosmetic label for the amp-shaped Front Panel model corner. Does not change status model identity."
+            "description": "Optional cosmetic label for the amp-shaped front-panel model/callsign text. Does not change protocol status identity."
           },
           "inputLabels": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Optional cosmetic Operator labels for amp inputs keyed by input number, currently 1-2."
+            "description": "Optional cosmetic labels for amp inputs keyed by input number as a string."
           },
           "antennaLabels": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Optional cosmetic Operator labels for antenna ports keyed by antenna number, currently 1-6."
+            "description": "Optional cosmetic labels for antenna ports keyed by antenna number as a string."
           }
         }
       },
@@ -1539,23 +1573,33 @@
           "serialAssertRTS": {
             "type": "boolean"
           },
+          "pollingMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "both",
+              "status",
+              "display"
+            ],
+            "description": "Unified serial polling mode. Preferred over legacy polling booleans."
+          },
           "panelModelLabel": {
             "type": "string",
-            "description": "Optional cosmetic label for the amp-shaped Front Panel model corner. Does not change status model identity."
+            "description": "Optional cosmetic label for the amp-shaped front-panel model/callsign text. Does not change protocol status identity."
           },
           "inputLabels": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Optional cosmetic Operator labels for amp inputs keyed by input number, currently 1-2."
+            "description": "Optional cosmetic labels for amp inputs keyed by input number as a string."
           },
           "antennaLabels": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Optional cosmetic Operator labels for antenna ports keyed by antenna number, currently 1-6."
+            "description": "Optional cosmetic labels for antenna ports keyed by antenna number as a string."
           }
         }
       },

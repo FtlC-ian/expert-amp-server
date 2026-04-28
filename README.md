@@ -43,7 +43,8 @@ Example default config:
 {
   "serialPort": "",
   "listenAddress": ":8088",
-  "pollIntervalMs": 200,
+  "pollingMode": "both",
+  "pollIntervalMs": 125,
   "displayPollingEnabled": true,
   "statusPollingEnabled": true
 }

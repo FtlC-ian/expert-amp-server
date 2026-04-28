@@ -449,7 +449,7 @@ func TestRuntimeEndpointIncludesPollingShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if _, err := mgr.Update(config.Settings{SerialPort: "/dev/ttyUSB0", ListenAddress: ":8088", PollIntervalMs: 250, DisplayPollingEnabled: false, StatusPollingEnabled: true}); err != nil {
+	if _, err := mgr.Update(config.Settings{SerialPort: "/dev/ttyUSB0", ListenAddress: ":8088", PollingMode: "status", PollIntervalMs: 250, DisplayPollingEnabled: false, StatusPollingEnabled: true, StatusPollCommandEnabled: true}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -464,6 +464,7 @@ func TestRuntimeEndpointIncludesPollingShape(t *testing.T) {
 	var body struct {
 		Success bool `json:"success"`
 		Data    struct {
+			PollingMode           string `json:"pollingMode"`
 			PollIntervalMs        int    `json:"pollIntervalMs"`
 			DisplayPollingEnabled bool   `json:"displayPollingEnabled"`
 			StatusPollingEnabled  bool   `json:"statusPollingEnabled"`
@@ -475,6 +476,9 @@ func TestRuntimeEndpointIncludesPollingShape(t *testing.T) {
 	}
 	if !body.Success {
 		t.Fatalf("unexpected failure body: %+v", body)
+	}
+	if body.Data.PollingMode != "status" {
+		t.Fatalf("PollingMode = %q, want status", body.Data.PollingMode)
 	}
 	if body.Data.PollIntervalMs != 250 {
 		t.Fatalf("PollIntervalMs = %d, want 250", body.Data.PollIntervalMs)
@@ -582,11 +586,11 @@ func TestWatchUIHasTelemetryPolling(t *testing.T) {
 	if !strings.Contains(body, "/api/v1/display/ws") {
 		t.Error("watch page missing display websocket endpoint")
 	}
-	if !strings.Contains(body, "Status polling enabled") {
-		t.Error("watch page missing updated status polling wording")
+	if !strings.Contains(body, "Polling mode") {
+		t.Error("watch page missing unified polling mode wording")
 	}
-	if !strings.Contains(body, "Protocol status refresh enabled") {
-		t.Error("watch page missing updated protocol status refresh wording")
+	if !strings.Contains(body, "Both alternates protocol status") {
+		t.Error("watch page missing unified polling explanation")
 	}
 	if !strings.Contains(body, "/api/v1/status") {
 		t.Error("watch page/API reference missing /api/v1/status")
@@ -648,6 +652,7 @@ func TestSettingsEndpointPersistsAdvancedSerialFields(t *testing.T) {
 	payload, _ := json.Marshal(map[string]interface{}{
 		"serialPort":               "/dev/ttyUSB0",
 		"listenAddress":            ":8088",
+		"pollingMode":              "off",
 		"pollIntervalMs":           250,
 		"displayPollingEnabled":    true,
 		"statusPollingEnabled":     true,
@@ -681,6 +686,9 @@ func TestSettingsEndpointPersistsAdvancedSerialFields(t *testing.T) {
 	if s.StatusPollCommandEnabled {
 		t.Errorf("StatusPollCommandEnabled = true, want false")
 	}
+	if s.PollingMode != "off" {
+		t.Errorf("PollingMode = %q, want off", s.PollingMode)
+	}
 	if s.StatusPollIntervalMs != 750 {
 		t.Errorf("StatusPollIntervalMs = %d, want 750", s.StatusPollIntervalMs)
 	}
@@ -713,9 +721,8 @@ func TestSettingsPageHasAllConfigFields(t *testing.T) {
 	for _, id := range []string{
 		"s-serial-port",
 		"s-listen-address",
+		"s-polling-mode",
 		"s-poll-interval",
-		"s-display-polling",
-		"s-status-polling",
 		"s-panel-model-label",
 		"s-input-1-label",
 		"s-input-2-label",
@@ -725,6 +732,8 @@ func TestSettingsPageHasAllConfigFields(t *testing.T) {
 		"s-antenna-4-label",
 		"s-antenna-5-label",
 		"s-antenna-6-label",
+		"s-display-polling",
+		"s-status-polling",
 		"s-baud",
 		"s-read-timeout",
 		"s-status-poll-command-enabled",
@@ -818,6 +827,7 @@ func TestSettingsEndpointAcceptsLegacySerialPollAliases(t *testing.T) {
 	payload, _ := json.Marshal(map[string]interface{}{
 		"serialPort":            "/dev/ttyUSB0",
 		"listenAddress":         ":8088",
+		"pollingMode":           "off",
 		"pollIntervalMs":        250,
 		"displayPollingEnabled": true,
 		"statusPollingEnabled":  true,
@@ -841,7 +851,43 @@ func TestSettingsEndpointAcceptsLegacySerialPollAliases(t *testing.T) {
 	}
 }
 
-func TestSettingsEndpointStatusPollingNoRestartNeeded(t *testing.T) {
+func TestSettingsEndpointDerivesPollingModeFromLegacyBooleans(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	h, _, _, _, _ := newServer(mgr, 250*time.Millisecond, func() {})
+	falseVal := false
+	trueVal := true
+	payload, _ := json.Marshal(map[string]interface{}{
+		"serialPort":               "/dev/ttyUSB0",
+		"listenAddress":            ":8088",
+		"pollIntervalMs":           125,
+		"displayPollingEnabled":    falseVal,
+		"statusPollingEnabled":     trueVal,
+		"statusPollCommandEnabled": trueVal,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", res.Code, res.Body.String())
+	}
+	var body struct{ Data config.Snapshot }
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got := body.Data.Settings.PollingMode; got != "status" {
+		t.Fatalf("PollingMode = %q, want status", got)
+	}
+	if !body.Data.Settings.StatusPollingEnabled || !body.Data.Settings.StatusPollCommandEnabled || body.Data.Settings.DisplayPollingEnabled {
+		t.Fatalf("legacy polling fields not synced: %+v", body.Data.Settings)
+	}
+}
+
+func TestSettingsEndpointPollingModeChangeNeedsRestart(t *testing.T) {
 	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -850,6 +896,7 @@ func TestSettingsEndpointStatusPollingNoRestartNeeded(t *testing.T) {
 	if _, err := mgr.Update(config.Settings{
 		SerialPort:            "/dev/ttyUSB0",
 		ListenAddress:         ":8088",
+		PollingMode:           "both",
 		PollIntervalMs:        250,
 		DisplayPollingEnabled: true,
 		StatusPollingEnabled:  true,
@@ -861,9 +908,10 @@ func TestSettingsEndpointStatusPollingNoRestartNeeded(t *testing.T) {
 	payload, _ := json.Marshal(map[string]interface{}{
 		"serialPort":            "/dev/ttyUSB0",
 		"listenAddress":         ":8088",
+		"pollingMode":           "display",
 		"pollIntervalMs":        250,
 		"displayPollingEnabled": true,
-		"statusPollingEnabled":  false, // toggled off
+		"statusPollingEnabled":  false,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -883,7 +931,7 @@ func TestSettingsEndpointStatusPollingNoRestartNeeded(t *testing.T) {
 	if !body.Success {
 		t.Fatalf("unexpected failure: %+v", body)
 	}
-	if body.Message != "settings saved" {
-		t.Fatalf("Message = %q, want \"settings saved\" (statusPollingEnabled is a live toggle, no restart needed)", body.Message)
+	if body.Message != "settings saved, restart the server for runtime changes to take effect" {
+		t.Fatalf("Message = %q, want restart-needed runtime note", body.Message)
 	}
 }
