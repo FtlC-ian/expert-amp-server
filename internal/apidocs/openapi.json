@@ -447,13 +447,13 @@
                   "value": {
                     "serialPort": "/dev/ttyUSB0",
                     "listenAddress": ":8088",
-                    "pollIntervalMs": 250,
+                    "pollIntervalMs": 200,
                     "displayPollingEnabled": true,
                     "statusPollingEnabled": true,
                     "serialBaudRate": 115200,
                     "serialReadTimeoutMs": 250,
                     "statusPollCommandEnabled": true,
-                    "statusPollIntervalMs": 500,
+                    "statusPollIntervalMs": 125,
                     "serialAssertDTR": true,
                     "serialAssertRTS": true
                   }
@@ -1083,6 +1083,52 @@
           },
           "screenText": {
             "type": "string"
+          },
+          "lcdFlags": {
+            "$ref": "#/components/schemas/LCDFlags"
+          }
+        }
+      },
+      "LCDFlags": {
+        "type": "object",
+        "description": "GetLCD flag word. rawInverted is the inverted little-endian word from bytes 7..8; decoded is rawInverted XOR 0xffff. When checksumValid is true, leds exposes front-panel LED bits for the amp-shaped UI.",
+        "properties": {
+          "rawInverted": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "decoded": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "checksumPresent": {
+            "type": "boolean"
+          },
+          "checksumValid": {
+            "type": "boolean"
+          },
+          "leds": {
+            "$ref": "#/components/schemas/LCDLEDs"
+          }
+        }
+      },
+      "LCDLEDs": {
+        "type": "object",
+        "description": "Front-panel LED states decoded from checksum-valid LCD flags. operate, set, and tune were validated on live hardware; tx follows the adjacent flag bit and should be confirmed with a safe TX capture.",
+        "properties": {
+          "tx": {
+            "type": "boolean"
+          },
+          "operate": {
+            "type": "boolean"
+          },
+          "set": {
+            "type": "boolean"
+          },
+          "tune": {
+            "type": "boolean"
           }
         }
       },
@@ -1427,10 +1473,6 @@
           },
           "serialAssertRTS": {
             "type": "boolean"
-          },
-          "panelModelLabel": {
-            "type": "string",
-            "description": "Optional cosmetic override for the amp-shaped Front Panel model label. Blank means auto-detect from status.modelName. Does not change API model identity."
           }
         }
       },
@@ -1478,10 +1520,6 @@
           },
           "serialAssertRTS": {
             "type": "boolean"
-          },
-          "panelModelLabel": {
-            "type": "string",
-            "description": "Optional cosmetic override for the amp-shaped Front Panel model label. Blank means auto-detect from status.modelName. Does not change API model identity."
           }
         }
       },
@@ -1542,9 +1580,7 @@
       },
       "APIResponse": {
         "type": "object",
-        "required": [
-          "success"
-        ],
+        "required": ["success"],
         "properties": {
           "success": {
             "type": "boolean"

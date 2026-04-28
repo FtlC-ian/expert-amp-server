@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/binary"
 	"errors"
 	"os"
 	"strings"
@@ -8,12 +9,20 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 )
 
-// RadioDisplayPrefix is the 8-byte header that begins every SPE Expert radio
-// display frame. Exported so the serial layer can use it for stream boundary
-// detection and test construction.
+// RadioDisplayPrefix is the legacy 8-byte prefix used by the stream decoder
+// and older display-frame tests. For 371-byte GetLCD responses, byte 7 is also
+// the first byte of the inverted flag word; use GetLCDResponsePrefix when
+// validating the fully understood GetLCD layout.
 var RadioDisplayPrefix = []byte{0xAA, 0xAA, 0xAA, 0x6A, 0x01, 0x95, 0xFE, 0x01}
 
+// GetLCDResponsePrefix is the fixed 7-byte prefix before the inverted 2-byte
+// flag word in 371-byte GetLCD responses.
+var GetLCDResponsePrefix = []byte{0xAA, 0xAA, 0xAA, 0x6A, 0x01, 0x95, 0xFE}
+
 func IsRadioDisplayFrame(frame []byte) bool {
+	if IsGetLCDResponseFrame(frame) {
+		return true
+	}
 	if len(frame) < len(RadioDisplayPrefix) {
 		return false
 	}
@@ -30,8 +39,8 @@ func IsRadioDisplayFrame(frame []byte) bool {
 // font.ROM.Glyph as the ROM index.
 //
 // The SPE Expert 1.3K protocol byte IS the ROM index — no translation needed
-// for the printable text range. The extracted font ROM at VA 0x46b568 in
-// The display ROM uses glyphs at the same indices the protocol uses:
+// for the printable text range. The bundled SPE-style LCD font table stores
+// glyphs at the same indices the protocol uses:
 //
 //   - 0x00       → 0x60 (blank; protocol blank maps to ROM blank slot)
 //   - 0x01–0x5f  → direct pass-through (ROM index = protocol byte)
@@ -54,7 +63,7 @@ func DecodeDisplayChar(v byte) byte {
 		// Direct pass-through: protocol byte = ROM index.
 		return v
 	case v >= 0x80 && v <= 0xdf:
-		// Full custom-glyph range confirmed present in extracted font ROM.
+		// Full custom-glyph range confirmed present in the bundled LCD font table.
 		// 0xE0–0xFF are blank in the ROM and decode to 0x60 below.
 		return v
 	default:
@@ -156,12 +165,72 @@ func GuessDisplayStart(frame []byte) int {
 // one position to the right within its row.
 const displayBodyOffset = 9 // prefix(8) + frame-type-discriminator(1)
 
+const (
+	legacyLCDDataOffset = displayBodyOffset
+	getLCDPrefixLen     = 3
+	getLCDLengthOffset  = 3
+	getLCDHeaderLen     = getLCDPrefixLen + 2 + 2
+	getLCDFlagLen       = 2
+	getLCDPayloadLen    = getLCDFlagLen + display.Rows*display.Cols + display.Cols
+	getLCDTotalLen      = getLCDHeaderLen + getLCDPayloadLen + 2
+)
+
+// IsGetLCDResponseFrame reports whether frame starts with the length/checksum
+// shape of a response to the 0x80 GetLCD request. Captured standalone responses
+// are 371 bytes. Live stream frames may be longer because bytes from a following
+// status-poll response can arrive before the next display prefix; in that case
+// the first 371 bytes are still the GetLCD response and the trailing bytes are
+// ignored by display parsing and flag checksum validation.
+func IsGetLCDResponseFrame(frame []byte) bool {
+	if len(frame) < getLCDTotalLen {
+		return false
+	}
+	if len(frame) < getLCDHeaderLen {
+		return false
+	}
+	for i := range GetLCDResponsePrefix {
+		if frame[i] != GetLCDResponsePrefix[i] {
+			return false
+		}
+	}
+	return int(binary.LittleEndian.Uint16(frame[getLCDLengthOffset:])) == getLCDPayloadLen
+}
+
+func LCDDataOffset(frame []byte) int {
+	if IsGetLCDResponseFrame(frame) {
+		return getLCDHeaderLen + getLCDFlagLen
+	}
+	return legacyLCDDataOffset
+}
+
+func LCDFlagsFromFrame(frame []byte) (*LCDFlags, bool) {
+	if !IsGetLCDResponseFrame(frame) {
+		return nil, false
+	}
+	raw := binary.LittleEndian.Uint16(frame[getLCDHeaderLen : getLCDHeaderLen+getLCDFlagLen])
+	flags := &LCDFlags{
+		RawInverted:     raw,
+		Decoded:         ^raw,
+		ChecksumPresent: len(frame) >= getLCDTotalLen,
+	}
+	if flags.ChecksumPresent {
+		sum := 0
+		for _, b := range frame[getLCDHeaderLen : getLCDHeaderLen+getLCDPayloadLen] {
+			sum += int(b)
+		}
+		got := binary.LittleEndian.Uint16(frame[getLCDHeaderLen+getLCDPayloadLen:])
+		flags.ChecksumValid = uint16(sum) == got
+	}
+	flags.LEDs = DecodeLCDLEDs(flags.Decoded, flags.ChecksumValid)
+	return flags, true
+}
+
 func StateFromFrame(frame []byte) (display.State, error) {
 	if !IsRadioDisplayFrame(frame) {
 		return display.State{}, errors.New("not a radio display frame")
 	}
 	state := display.NewState()
-	start := displayBodyOffset
+	start := LCDDataOffset(frame)
 	bodyLength := min(display.Rows*display.Cols, len(frame)-start)
 	for i := 0; i < bodyLength; i++ {
 		row := i / display.Cols
@@ -193,7 +262,7 @@ func ScreenText(frame []byte) (string, error) {
 	if !IsRadioDisplayFrame(frame) {
 		return "", errors.New("not a radio display frame")
 	}
-	start := displayBodyOffset
+	start := LCDDataOffset(frame)
 	bodyLength := min(display.Rows*display.Cols, len(frame)-start)
 	rows := make([]string, 0, display.Rows)
 	for row := 0; row < display.Rows; row++ {
@@ -227,12 +296,54 @@ func LoadFixtureState(path string) (display.State, FrameMeta, error) {
 		return display.State{}, FrameMeta{}, err
 	}
 	text, _ := ScreenText(frame)
+	flags, _ := LCDFlagsFromFrame(frame)
 	return state, FrameMeta{
 		Source:      path,
 		Length:      len(frame),
-		StartOffset: displayBodyOffset,
+		StartOffset: LCDDataOffset(frame),
 		ScreenText:  text,
+		LCDFlags:    flags,
 	}, nil
+}
+
+const (
+	LCDFlagTX      uint16 = 0x0800
+	LCDFlagOperate uint16 = 0x1000
+	LCDFlagSet     uint16 = 0x2000
+	LCDFlagTune    uint16 = 0x4000
+
+	KnownLCDLEDMask = LCDFlagTX | LCDFlagOperate | LCDFlagSet | LCDFlagTune
+)
+
+type LCDFlags struct {
+	RawInverted     uint16
+	Decoded         uint16
+	ChecksumPresent bool
+	ChecksumValid   bool
+	LEDs            *LCDLEDs
+}
+
+type LCDLEDs struct {
+	TX      bool
+	Operate bool
+	Set     bool
+	Tune    bool
+}
+
+func (f LCDFlags) Validated() bool {
+	return f.ChecksumPresent && f.ChecksumValid
+}
+
+func DecodeLCDLEDs(decoded uint16, checksumValid bool) *LCDLEDs {
+	if !checksumValid {
+		return nil
+	}
+	return &LCDLEDs{
+		TX:      decoded&LCDFlagTX != 0,
+		Operate: decoded&LCDFlagOperate != 0,
+		Set:     decoded&LCDFlagSet != 0,
+		Tune:    decoded&LCDFlagTune != 0,
+	}
 }
 
 type FrameMeta struct {
@@ -240,6 +351,7 @@ type FrameMeta struct {
 	Length      int
 	StartOffset int
 	ScreenText  string
+	LCDFlags    *LCDFlags
 }
 
 // ReadFixtureBytes reads the raw bytes from a fixture file. Exported for

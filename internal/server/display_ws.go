@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
 	"github.com/gorilla/websocket"
 )
@@ -12,10 +13,11 @@ import (
 type displayRenderEvent struct {
 	// Sequence is the authoritative runtime snapshot sequence for display invalidation.
 	// A zero value is valid for an empty initial snapshot and should not trigger a refresh.
-	Sequence  uint64    `json:"sequence"`
-	UpdatedAt time.Time `json:"updatedAt,omitempty"`
-	Source    string    `json:"source,omitempty"`
-	FrameKind string    `json:"frameKind,omitempty"`
+	Sequence  uint64        `json:"sequence"`
+	UpdatedAt time.Time     `json:"updatedAt,omitempty"`
+	Source    string        `json:"source,omitempty"`
+	FrameKind string        `json:"frameKind,omitempty"`
+	Frame     api.FrameInfo `json:"frame,omitempty"`
 }
 
 func handleDisplayWebsocket(opts Options) http.HandlerFunc {
@@ -43,6 +45,7 @@ func handleDisplayWebsocket(opts Options) http.HandlerFunc {
 				UpdatedAt: snapshot.UpdatedAt,
 				Source:    snapshot.Source,
 				FrameKind: snapshot.FrameKind,
+				Frame:     snapshot.Frame,
 			}
 			payload, err := json.Marshal(event)
 			if err != nil {

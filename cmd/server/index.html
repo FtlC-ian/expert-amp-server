@@ -794,7 +794,7 @@
     }
 
     /* ═══════════════════════════════════════════════
-       SPE EXPERT FRONT PANEL LAYOUT
+       1.3K FRONT PANEL LAYOUT
     ═══════════════════════════════════════════════ */
 
     /* Outer chassis wrapper */
@@ -1040,7 +1040,7 @@
         <!-- Chassis header -->
         <div class="panel-1k3-header">
           <span class="panel-1k3-brand">SPE Expert</span>
-          <span class="panel-1k3-model" id="panel-model-label">SPE</span>
+          <span class="panel-1k3-model" id="panel-model-label">1.3K</span>
         </div>
 
         <!-- Main body: left cluster | display | right cluster -->
@@ -1427,7 +1427,7 @@
 
           <div class="settings-row">
             <label class="settings-label" for="s-poll-interval">Display frame refresh interval (ms)</label>
-            <input id="s-poll-interval" class="settings-input" type="number" min="1" value="250">
+            <input id="s-poll-interval" class="settings-input" type="number" min="1" value="200">
           </div>
           <p class="settings-hint">Backend display-frame polling cadence. This affects how often the server asks the amp for display/frame data. The web UI mostly reads cached state, so refreshing the page faster will not outrun this cadence.</p>
 
@@ -1444,12 +1444,6 @@
             <label class="settings-checkbox-label" for="s-status-polling">Status polling enabled</label>
           </div>
           <p class="settings-hint">Live toggle — pauses or resumes backend protocol-status refresh immediately without a restart. /api/v1/status and the websocket status feed mostly serve cached in-memory state built from this path.</p>
-
-          <div class="settings-row">
-            <label class="settings-label" for="s-panel-model-label">Panel model label override</label>
-            <input id="s-panel-model-label" class="settings-input" type="text" maxlength="16" placeholder="auto">
-          </div>
-          <p class="settings-hint">Optional cosmetic label for the amp-shaped Front Panel corner. Leave blank to use the model detected from status, for example 1.3K-FA or 1.5K-FA. This does not change API model identity.</p>
 
         </div>
 
@@ -1492,7 +1486,7 @@
 
             <div class="settings-row">
               <label class="settings-label" for="s-status-poll-interval">Status command refresh interval (ms)</label>
-              <input id="s-status-poll-interval" class="settings-input" type="number" min="1" value="500">
+              <input id="s-status-poll-interval" class="settings-input" type="number" min="1" value="125">
             </div>
             <p class="settings-hint">Backend protocol-status cadence. Websocket clients and most API consumers read cached state from this path, so polling the API faster than this mainly just reads the same snapshot more often.</p>
 
@@ -1928,13 +1922,13 @@
     const panelModelLabel   = document.getElementById('panel-model-label');
 
     let tick = 0;
+    let latestStatus = null;
     let statusSocket = null;
     let statusSocketRetryTimer = null;
     let displaySocket = null;
     let displaySocketRetryTimer = null;
     let displayPollingEnabled = true;
     let lastDisplaySequence = 0;
-    let panelModelLabelOverride = '';
 
     // Apply persisted display prefs on load
     applyLayout(currentLayout());
@@ -1998,6 +1992,40 @@
       el.className = 'led ' + cssClass;
     }
 
+    let latestDisplayLEDs = null;
+
+    function displayLEDsFromFrame(frame) {
+      const flags = frame && frame.lcdFlags;
+      if (!flags || flags.checksumValid !== true || !flags.leds) return null;
+      return flags.leds;
+    }
+
+    function applyFrontPanelLEDs(status) {
+      const leds = latestDisplayLEDs;
+      if (leds) {
+        setLed('led-tx', leds.tx ? 'led-red' : 'led-off');
+        setLed('led-op', leds.operate ? 'led-orange' : 'led-off');
+        setLed('led-tune', leds.tune ? 'led-yellow' : 'led-off');
+        setLed('led-set', leds.set ? 'led-yellow' : 'led-off');
+      } else {
+        if (status && typeof status.tx === 'boolean') {
+          setLed('led-tx', status.tx ? 'led-red' : 'led-off');
+        } else {
+          setLed('led-tx', 'led-off');
+        }
+
+        const opState = status && typeof status.operatingState === 'string' && status.operatingState
+          ? status.operatingState.toLowerCase()
+          : (status && typeof status.mode === 'string' ? status.mode.toLowerCase() : '');
+        setLed('led-op', opState.includes('operat') ? 'led-orange' : 'led-off');
+        setLed('led-tune', 'led-off');
+        setLed('led-set', 'led-off');
+      }
+
+      setLed('led-on', status && status.recentContact === true ? 'led-green' : 'led-off');
+      setLed('led-al', status && Array.isArray(status.activeAlarms) && status.activeAlarms.length > 0 ? 'led-red' : 'led-off');
+    }
+
     function refreshDisplayRender(force = false) {
       if (!force && !displayPollingEnabled) {
         return;
@@ -2033,26 +2061,12 @@
     function handleDisplayRefreshEvent(event, force = false) {
       if (!event) return;
       const previousSequence = lastDisplaySequence;
+      latestDisplayLEDs = displayLEDsFromFrame(event.frame);
       applyDisplaySnapshotMeta(event);
+      applyFrontPanelLEDs(latestStatus);
       if (force || Number(event.sequence || 0) !== previousSequence) {
         refreshDisplayRender(force);
       }
-    }
-
-    function shortModelLabel(modelName) {
-      const raw = typeof modelName === 'string' ? modelName.trim() : '';
-      if (!raw) return '';
-      return raw
-        .replace(/^EXPERT\s+/i, '')
-        .replace(/\s+/g, ' ')
-        .replace(/^1\.3K-FA$/i, '1.3K-FA')
-        .replace(/^1\.5K-FA$/i, '1.5K-FA')
-        .replace(/^2K-FA$/i, '2K-FA')
-        .replace(/^2\.0K-FA$/i, '2K-FA');
-    }
-
-    function panelModelDisplay(status) {
-      return panelModelLabelOverride || shortModelLabel(status && status.modelName) || 'SPE';
     }
 
     function resetStatusIndicators() {
@@ -2062,10 +2076,11 @@
       setLed('led-on', 'led-off');
       setLed('led-tune', 'led-off');
       setLed('led-set', 'led-off');
-      if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
+      if (panelModelLabel) panelModelLabel.textContent = 'SPE';
     }
 
     function updateStatusIndicators(status) {
+      latestStatus = status || null;
       if (!status) {
         resetStatusIndicators();
         renderOperatorStatus(null);
@@ -2073,7 +2088,7 @@
       }
 
       if (panelModelLabel) {
-        panelModelLabel.textContent = panelModelDisplay(status);
+        panelModelLabel.textContent = status.modelName || 'SPE';
       }
 
       const headerModel = document.getElementById('header-model');
@@ -2081,21 +2096,7 @@
         headerModel.textContent = status.modelName || 'SPE Expert';
       }
 
-      if (typeof status.tx === 'boolean') {
-        setLed('led-tx', status.tx ? 'led-red' : 'led-off');
-      } else {
-        setLed('led-tx', 'led-off');
-      }
-
-      const opState = typeof status.operatingState === 'string' && status.operatingState
-        ? status.operatingState.toLowerCase()
-        : (typeof status.mode === 'string' ? status.mode.toLowerCase() : '');
-      setLed('led-op', opState.includes('operat') ? 'led-orange' : 'led-off');
-      setLed('led-al', Array.isArray(status.activeAlarms) && status.activeAlarms.length > 0 ? 'led-red' : 'led-off');
-
-      setLed('led-on', status.recentContact === true ? 'led-green' : 'led-off');
-      setLed('led-tune', 'led-off');
-      setLed('led-set', 'led-off');
+      applyFrontPanelLEDs(status);
       renderOperatorStatus(status);
     }
 
@@ -2261,19 +2262,16 @@
         // Connection fields
         document.getElementById('s-serial-port').value    = s.serialPort    || '';
         document.getElementById('s-listen-address').value = s.listenAddress || '';
-        document.getElementById('s-poll-interval').value  = s.pollIntervalMs || 250;
+        document.getElementById('s-poll-interval').value  = s.pollIntervalMs || 200;
         document.getElementById('s-display-polling').checked = !!s.displayPollingEnabled;
         document.getElementById('s-status-polling').checked  = !!s.statusPollingEnabled;
-        document.getElementById('s-panel-model-label').value = s.panelModelLabel || '';
         displayPollingEnabled = !!s.displayPollingEnabled;
-        panelModelLabelOverride = (s.panelModelLabel || '').trim();
-        if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
 
         // Advanced serial fields
         document.getElementById('s-baud').value                = s.serialBaudRate      || 115200;
         document.getElementById('s-read-timeout').value        = s.serialReadTimeoutMs || 250;
         document.getElementById('s-status-poll-command-enabled').checked = !!s.statusPollCommandEnabled;
-        document.getElementById('s-status-poll-interval').value = s.statusPollIntervalMs || 500;
+        document.getElementById('s-status-poll-interval').value = s.statusPollIntervalMs || 125;
         document.getElementById('s-assert-dtr').checked = !!s.serialAssertDTR;
         document.getElementById('s-assert-rts').checked = !!s.serialAssertRTS;
 
@@ -2318,10 +2316,9 @@
       const payload = {
         serialPort:            document.getElementById('s-serial-port').value.trim(),
         listenAddress:         document.getElementById('s-listen-address').value.trim(),
-        pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '250'),
+        pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '200'),
         displayPollingEnabled: document.getElementById('s-display-polling').checked,
         statusPollingEnabled:  document.getElementById('s-status-polling').checked,
-        panelModelLabel:       document.getElementById('s-panel-model-label').value.trim(),
       };
       try {
         const res  = await fetch('/api/v1/settings', {
@@ -2338,7 +2335,6 @@
         if (body.data) {
           setupCard.classList.toggle('hidden', !body.data.needsSetup);
           displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
-          panelModelLabelOverride = ((body.data.settings && body.data.settings.panelModelLabel) || '').trim();
         }
       } catch (err) {
         setStatus('connection-status', err.message, 'err');
@@ -2370,14 +2366,13 @@
       const payload = {
         serialPort:            document.getElementById('s-serial-port').value.trim(),
         listenAddress:         document.getElementById('s-listen-address').value.trim(),
-        pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '250'),
+        pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '200'),
         displayPollingEnabled: document.getElementById('s-display-polling').checked,
         statusPollingEnabled:  document.getElementById('s-status-polling').checked,
-        panelModelLabel:       document.getElementById('s-panel-model-label').value.trim(),
         serialBaudRate:        Number(document.getElementById('s-baud').value || '115200'),
         serialReadTimeoutMs:   Number(document.getElementById('s-read-timeout').value || '250'),
         statusPollCommandEnabled:  document.getElementById('s-status-poll-command-enabled').checked,
-        statusPollIntervalMs:      Number(document.getElementById('s-status-poll-interval').value || '500'),
+        statusPollIntervalMs:      Number(document.getElementById('s-status-poll-interval').value || '125'),
         serialAssertDTR:       document.getElementById('s-assert-dtr').checked,
         serialAssertRTS:       document.getElementById('s-assert-rts').checked,
       };
@@ -2395,7 +2390,6 @@
         setStatus('advanced-status', body.message || 'Saved', 'ok');
         if (body.data) {
           displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
-          panelModelLabelOverride = ((body.data.settings && body.data.settings.panelModelLabel) || '').trim();
         }
       } catch (err) {
         setStatus('advanced-status', err.message, 'err');
@@ -2544,8 +2538,6 @@
         if (!snap) return;
         setupCard.classList.toggle('hidden', !snap.needsSetup);
         displayPollingEnabled = !!(snap.settings && snap.settings.displayPollingEnabled);
-        panelModelLabelOverride = ((snap.settings && snap.settings.panelModelLabel) || '').trim();
-        if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
         // Apply persisted layout in case it changed since page load
         applyLayout(currentLayout());
         if (displayPollingEnabled) {

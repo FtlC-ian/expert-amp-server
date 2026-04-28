@@ -20,10 +20,9 @@ func loadFixture(t *testing.T, name string) []byte {
 }
 
 func TestGuessDisplayStart(t *testing.T) {
-	// GuessDisplayStart is a text-scoring heuristic used only for diagnostics and
-	// metadata reporting. It is NOT used by StateFromFrame (which uses the fixed
-	// displayBodyOffset=8 instead). These tests just document what the heuristic
-	// returns so regressions are caught.
+	// GuessDisplayStart is a text-scoring heuristic used only for diagnostics.
+	// It is NOT used by StateFromFrame, which uses LCDDataOffset instead. These
+	// tests just document what the heuristic returns so regressions are caught.
 	//
 	// Note: the heuristic returns 56 for real_home_status_frame.bin because its
 	// row 0 is all custom border glyphs (0x80–0xDF) which score as spaces and
@@ -33,9 +32,9 @@ func TestGuessDisplayStart(t *testing.T) {
 		name string
 		want int
 	}{
-		// Home frame: heuristic incorrectly scores offset 56 higher than 8 because
+		// Home frame: heuristic incorrectly scores offset 56 higher than 9 because
 		// the all-border-glyph row 0 looks "empty" to the text scorer. StateFromFrame
-		// bypasses this heuristic and always uses offset 8.
+		// bypasses this heuristic and uses LCDDataOffset.
 		{name: "real_home_status_frame.bin", want: 56},
 		{name: "real_menu_frame.bin", want: 8},
 		{name: "real_panel_frame.bin", want: 8},
@@ -52,7 +51,7 @@ func TestGuessDisplayStart(t *testing.T) {
 }
 
 // TestStateFromFrameUsesFixedOffset verifies that StateFromFrame always decodes
-// from offset 9 (displayBodyOffset), not from the heuristic GuessDisplayStart.
+// from LCDDataOffset, not from the heuristic GuessDisplayStart.
 //
 // Frame layout: [8-byte prefix][1-byte frame-type discriminator][320-byte body]
 // The display body starts at byte 9. Using 8 instead caused the frame-type
@@ -61,7 +60,108 @@ func TestGuessDisplayStart(t *testing.T) {
 // ornament glyph (menu/panel: discriminator=0xD8 → custom glyph), shifting
 // every subsequent cell one position to the right within its row.
 //
-// Fix: StateFromFrame uses displayBodyOffset (=9) unconditionally.
+// Fix: StateFromFrame uses LCDDataOffset (=9 for current 371-byte GetLCD captures
+// and legacy short captures).
+func TestGetLCDResponseLayoutParsesFlagsDataAndChecksum(t *testing.T) {
+	cases := []struct {
+		name        string
+		rawInverted uint16
+		decoded     uint16
+		checksumOK  bool
+	}{
+		{name: "real_home_status_frame.bin", rawInverted: 0xf801, decoded: 0x07fe, checksumOK: true},
+		{name: "sample_display_frame.bin", rawInverted: 0x3301, decoded: 0xccfe, checksumOK: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := loadFixture(t, tc.name)
+			assertGetLCDFrameDiagnostics(t, frame, tc.name, tc.rawInverted, tc.decoded, tc.checksumOK)
+		})
+	}
+}
+
+func TestGetLCDResponseDiagnosticsTolerateTrailingStatusBytes(t *testing.T) {
+	frame := loadFixture(t, "real_home_status_frame.bin")
+	// Live serial chunks can contain the 371-byte GetLCD response followed by a
+	// 76-byte status response before the next display prefix. Display parsing and
+	// flag checks must use only the leading GetLCD response and ignore the tail.
+	frame = append(append([]byte(nil), frame...), make([]byte, 76)...)
+
+	assertGetLCDFrameDiagnostics(t, frame, "real_home_status_frame.bin+status-tail", 0xf801, 0x07fe, true)
+	text, err := ScreenText(frame)
+	if err != nil {
+		t.Fatalf("ScreenText: %v", err)
+	}
+	if !strings.Contains(text, "EXPERT 1.3K-FA") || !strings.Contains(text, "Standby") {
+		t.Fatalf("ScreenText missing expected display text after trailing bytes:\n%s", text)
+	}
+}
+
+func assertGetLCDFrameDiagnostics(t *testing.T, frame []byte, name string, rawInverted, decoded uint16, checksumOK bool) {
+	t.Helper()
+	if !IsGetLCDResponseFrame(frame) {
+		t.Fatalf("IsGetLCDResponseFrame(%s) = false, want true", name)
+	}
+	if got := LCDDataOffset(frame); got != 9 {
+		t.Fatalf("LCDDataOffset(%s) = %d, want 9", name, got)
+	}
+	flags, ok := LCDFlagsFromFrame(frame)
+	if !ok || flags == nil {
+		t.Fatalf("LCDFlagsFromFrame(%s) missing", name)
+	}
+	if flags.RawInverted != rawInverted || flags.Decoded != decoded {
+		t.Fatalf("flags = raw 0x%04x decoded 0x%04x, want raw 0x%04x decoded 0x%04x", flags.RawInverted, flags.Decoded, rawInverted, decoded)
+	}
+	if !flags.ChecksumPresent {
+		t.Fatal("ChecksumPresent = false, want true")
+	}
+	if flags.ChecksumValid != checksumOK {
+		t.Fatalf("ChecksumValid = %v, want %v", flags.ChecksumValid, checksumOK)
+	}
+	if checksumOK && flags.LEDs == nil {
+		t.Fatalf("LEDs missing for checksum-valid %s", name)
+	}
+	if !checksumOK && flags.LEDs != nil {
+		t.Fatalf("LEDs = %+v for checksum-invalid %s, want nil", flags.LEDs, name)
+	}
+}
+
+func TestLCDFlagLEDDecodeUsesChecksumValidDecodedBits(t *testing.T) {
+	if got := DecodeLCDLEDs(0x07fe, true); got == nil || got.TX || got.Operate || got.Set || got.Tune {
+		t.Fatalf("standby LEDs = %+v, want all false", got)
+	}
+	if got := DecodeLCDLEDs(0x17fe, true); got == nil || !got.Operate || got.TX || got.Set || got.Tune {
+		t.Fatalf("operate LEDs = %+v, want operate only", got)
+	}
+	if got := DecodeLCDLEDs(0x27fe, true); got == nil || !got.Set || got.TX || got.Operate || got.Tune {
+		t.Fatalf("set LEDs = %+v, want set only", got)
+	}
+	if got := DecodeLCDLEDs(0x47fe, true); got == nil || !got.Tune || got.TX || got.Operate || got.Set {
+		t.Fatalf("tune LEDs = %+v, want tune only", got)
+	}
+	if got := DecodeLCDLEDs(0x7ffe, false); got != nil {
+		t.Fatalf("checksum-invalid LEDs = %+v, want nil", got)
+	}
+}
+
+func TestLegacyShortDisplayFramesDoNotExposeLCDFlags(t *testing.T) {
+	for _, name := range []string{"real_menu_frame.bin", "real_panel_frame.bin"} {
+		t.Run(name, func(t *testing.T) {
+			frame := loadFixture(t, name)
+			if IsGetLCDResponseFrame(frame) {
+				t.Fatalf("IsGetLCDResponseFrame(%s) = true, want false", name)
+			}
+			if got := LCDDataOffset(frame); got != displayBodyOffset {
+				t.Fatalf("LCDDataOffset(%s) = %d, want %d", name, got, displayBodyOffset)
+			}
+			if flags, ok := LCDFlagsFromFrame(frame); ok || flags != nil {
+				t.Fatalf("LCDFlagsFromFrame(%s) = %+v, %v; want nil, false", name, flags, ok)
+			}
+		})
+	}
+}
+
 func TestStateFromFrameUsesFixedOffset(t *testing.T) {
 	cases := []struct {
 		name string
@@ -153,7 +253,7 @@ func TestStateFromFrameLoadsPackedAttrBitplaneWhenPresent(t *testing.T) {
 }
 
 // TestDecodeDisplayCharROMMapping verifies DecodeDisplayChar against the
-// placeholder fallback table.
+// bundled SPE-style LCD font table.
 //
 // The protocol byte IS the ROM index. No +0x20 shift is applied.
 // An earlier version applied v+0x20 to the 0x01–0x5F range, which caused every

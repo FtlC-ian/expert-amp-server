@@ -35,6 +35,7 @@ type SerialSourceConfig struct {
 	MaxBuffer                 int
 	DisplayPollEnabledFn      func() bool
 	StatusPollEnabledFn       func() bool
+	LCDFlagDebug              bool
 }
 
 // Defaults returns a SerialSourceConfig with sensible SPE Expert defaults.
@@ -48,7 +49,7 @@ func DefaultSerialSourceConfig(port string) SerialSourceConfig {
 		DisplayPollInterval:       1 * time.Second,
 		DisplayPollFrameHex:       hex.EncodeToString(protocol.DisplayPollCommand),
 		StatusPollCommandEnabled:  true,
-		StatusPollCommandInterval: 500 * time.Millisecond,
+		StatusPollCommandInterval: 125 * time.Millisecond,
 		StatusPollCommandFrameHex: hex.EncodeToString(protocol.StatusPollCommand),
 		AssertDTR:                 true,
 		AssertRTS:                 true,
@@ -98,6 +99,10 @@ type SerialSource struct {
 
 	writeMu sync.Mutex
 	specs   map[string]transport.ButtonSpec
+
+	flagDebugMu      sync.Mutex
+	lastUnknownFlags uint16
+	haveUnknownFlags bool
 
 	// cancel stops the background read loop.
 	cancel context.CancelFunc
@@ -411,7 +416,11 @@ func (s *SerialSource) applyFrame(frame []byte) {
 	meta := api.FrameInfo{
 		Source:      "serial",
 		Length:      len(frame),
-		StartOffset: protocol.GuessDisplayStart(frame),
+		StartOffset: protocol.LCDDataOffset(frame),
+	}
+	if flags, ok := protocol.LCDFlagsFromFrame(frame); ok {
+		meta.LCDFlags = apiLCDFlags(flags)
+		s.logLCDFlagDebug(flags, meta.ScreenText)
 	}
 	if text, err := protocol.ScreenText(frame); err == nil {
 		meta.ScreenText = text
@@ -441,6 +450,57 @@ func (s *SerialSource) applyFrame(frame []byte) {
 	s.framesSeen.Add(1)
 	s.lastFrameLen.Store(int64(len(frame)))
 	s.lastFrameAt.Store(time.Now().Unix())
+}
+
+func (s *SerialSource) logLCDFlagDebug(flags *protocol.LCDFlags, screenText string) {
+	if !s.cfg.LCDFlagDebug || flags == nil || !flags.Validated() {
+		return
+	}
+	unknown := flags.Decoded &^ protocol.KnownLCDLEDMask
+
+	s.flagDebugMu.Lock()
+	changed := !s.haveUnknownFlags || unknown != s.lastUnknownFlags
+	if changed {
+		s.lastUnknownFlags = unknown
+		s.haveUnknownFlags = true
+	}
+	s.flagDebugMu.Unlock()
+
+	if !changed {
+		return
+	}
+	leds := flags.LEDs
+	if leds == nil {
+		log.Printf("lcd flag debug: unknown=0x%04x decoded=0x%04x rawInverted=0x%04x checksumValid=%v", unknown, flags.Decoded, flags.RawInverted, flags.ChecksumValid)
+		return
+	}
+	log.Printf("lcd flag debug: unknown=0x%04x decoded=0x%04x rawInverted=0x%04x leds={tx:%t op:%t set:%t tune:%t} screen=%q", unknown, flags.Decoded, flags.RawInverted, leds.TX, leds.Operate, leds.Set, leds.Tune, firstScreenLine(screenText))
+}
+
+func firstScreenLine(screenText string) string {
+	line, _, _ := strings.Cut(screenText, "\n")
+	return strings.TrimSpace(line)
+}
+
+func apiLCDFlags(flags *protocol.LCDFlags) *api.LCDFlags {
+	if flags == nil {
+		return nil
+	}
+	out := &api.LCDFlags{
+		RawInverted:     flags.RawInverted,
+		Decoded:         flags.Decoded,
+		ChecksumPresent: flags.ChecksumPresent,
+		ChecksumValid:   flags.ChecksumValid,
+	}
+	if flags.LEDs != nil {
+		out.LEDs = &api.LCDLEDs{
+			TX:      flags.LEDs.TX,
+			Operate: flags.LEDs.Operate,
+			Set:     flags.LEDs.Set,
+			Tune:    flags.LEDs.Tune,
+		}
+	}
+	return out
 }
 
 func (s *SerialSource) applyStatusFrame(frame []byte) {
@@ -492,7 +552,7 @@ func (s *SerialSource) statusPollInterval() time.Duration {
 	if s.cfg.StatusPollCommandInterval > 0 {
 		return s.cfg.StatusPollCommandInterval
 	}
-	return 500 * time.Millisecond
+	return 125 * time.Millisecond
 }
 
 func (s *SerialSource) setErr(msg string) {

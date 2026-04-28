@@ -99,7 +99,7 @@ func (s *Store) Apply(update Update) (Snapshot, bool) {
 
 	if s.snapshot.State == update.State &&
 		reflect.DeepEqual(s.snapshot.Telemetry, update.Telemetry) &&
-		s.snapshot.Frame == update.Frame &&
+		reflect.DeepEqual(s.snapshot.Frame, update.Frame) &&
 		s.snapshot.FrameKind == update.FrameKind &&
 		s.snapshot.Source == resolvedSource {
 		snapshot := s.snapshot
@@ -164,7 +164,7 @@ func (p *Poller) Run(ctx context.Context) error {
 		return nil
 	}
 	if p.Interval <= 0 {
-		p.Interval = 250 * time.Millisecond
+		p.Interval = 200 * time.Millisecond
 	}
 
 	if p.Enabled == nil || p.Enabled() {
@@ -194,7 +194,5 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		}
 		return
 	}
-	if snapshot, changed := p.Store.Apply(update); changed && p.Logger != nil {
-		p.Logger.Printf("snapshot updated seq=%d source=%s frameKind=%s", snapshot.Sequence, snapshot.Source, snapshot.FrameKind)
-	}
+	_, _ = p.Store.Apply(update)
 }

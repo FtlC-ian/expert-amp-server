@@ -37,15 +37,16 @@ var (
 func main() {
 	addr := flag.String("addr", ":8088", "listen address")
 	configPath := flag.String("config", "config/expert-amp-server.json", "path to local runtime config")
-	pollInterval := flag.Duration("poll-interval", 250*time.Millisecond, "snapshot poll interval")
+	pollInterval := flag.Duration("poll-interval", 200*time.Millisecond, "snapshot poll interval")
+	lcdFlagDebug := flag.Bool("lcd-flag-debug", false, "log changes in unknown GetLCD flag bits for protocol investigation")
 	flag.Parse()
 
-	if err := run(*addr, *configPath, *pollInterval); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := run(*addr, *configPath, *pollInterval, *lcdFlagDebug); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
 
-func run(addr, configPath string, pollInterval time.Duration) error {
+func run(addr, configPath string, pollInterval time.Duration, lcdFlagDebug bool) error {
 	cfg, err := config.NewManager(configPath, addr)
 	if err != nil {
 		return err
@@ -54,7 +55,7 @@ func run(addr, configPath string, pollInterval time.Duration) error {
 	baseCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	handler, snapshot, poller, serialSource, requestRestart := newServer(cfg, pollInterval, stop)
+	handler, snapshot, poller, serialSource, requestRestart := newServer(cfg, pollInterval, stop, lcdFlagDebug)
 
 	srv := &http.Server{
 		Addr:    snapshot.Settings.ListenAddress,
@@ -139,7 +140,11 @@ func (r *restartSignal) attach(parent context.Context) context.Context {
 	return ctx
 }
 
-func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.CancelFunc) (http.Handler, config.Snapshot, *runtime.Poller, *runtime.SerialSource, *restartSignal) {
+func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.CancelFunc, lcdFlagDebugOpt ...bool) (http.Handler, config.Snapshot, *runtime.Poller, *runtime.SerialSource, *restartSignal) {
+	lcdFlagDebug := false
+	if len(lcdFlagDebugOpt) > 0 {
+		lcdFlagDebug = lcdFlagDebugOpt[0]
+	}
 	signal := newRestartSignal()
 	snapshot := cfg.Get()
 	rom := font.Builtin()
@@ -180,6 +185,7 @@ func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.Can
 			StatusPollCommandFrameHex: defaults.StatusPollCommandFrameHex,
 			AssertDTR:                 snapshot.Settings.SerialAssertDTR,
 			AssertRTS:                 snapshot.Settings.SerialAssertRTS,
+			LCDFlagDebug:              lcdFlagDebug,
 			DisplayPollEnabledFn: func() bool {
 				return cfg.Get().Settings.DisplayPollingEnabled
 			},
@@ -266,12 +272,21 @@ func loadFixtures(fallback display.State) runtime.FixtureCatalog {
 	for key, path := range fixtures {
 		if state, meta, err := protocol.LoadFixtureState(path); err == nil {
 			states[key] = state
-			frames[key] = api.FrameInfo{
+			frame := api.FrameInfo{
 				Source:      meta.Source,
 				Length:      meta.Length,
 				StartOffset: meta.StartOffset,
 				ScreenText:  meta.ScreenText,
 			}
+			if meta.LCDFlags != nil {
+				frame.LCDFlags = &api.LCDFlags{
+					RawInverted:     meta.LCDFlags.RawInverted,
+					Decoded:         meta.LCDFlags.Decoded,
+					ChecksumPresent: meta.LCDFlags.ChecksumPresent,
+					ChecksumValid:   meta.LCDFlags.ChecksumValid,
+				}
+			}
+			frames[key] = frame
 		}
 	}
 	if _, ok := states["home"]; !ok {

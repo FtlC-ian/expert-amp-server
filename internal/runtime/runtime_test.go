@@ -48,6 +48,55 @@ func TestStoreApplyIncrementsSequenceOnChange(t *testing.T) {
 	}
 }
 
+func TestStoreApplyTreatsEqualLCDFlagsAsIdentical(t *testing.T) {
+	store := NewStore(Snapshot{})
+	state := display.DemoState()
+	telemetry := api.Telemetry{Source: "serial", TX: boolPtr(false)}
+	frame := api.FrameInfo{
+		Source:      "serial",
+		Length:      447,
+		StartOffset: 9,
+		LCDFlags: &api.LCDFlags{
+			RawInverted:     0xf801,
+			Decoded:         0x07fe,
+			ChecksumPresent: true,
+			ChecksumValid:   true,
+			LEDs:            &api.LCDLEDs{TX: false, Operate: false, Set: false, Tune: false},
+		},
+	}
+
+	snapshot, changed := store.Apply(Update{State: state, Telemetry: telemetry, Frame: frame, FrameKind: "serial", Source: "serial"})
+	if !changed {
+		t.Fatal("expected first apply to change snapshot")
+	}
+	if snapshot.Sequence != 1 {
+		t.Fatalf("sequence = %d, want 1", snapshot.Sequence)
+	}
+
+	// Rebuild the same frame with new pointer identities. This mirrors live serial
+	// decoding, where LCDFlags/LEDs are freshly allocated on every poll even when
+	// the visible display and flag values are unchanged.
+	sameFrame := api.FrameInfo{
+		Source:      "serial",
+		Length:      447,
+		StartOffset: 9,
+		LCDFlags: &api.LCDFlags{
+			RawInverted:     0xf801,
+			Decoded:         0x07fe,
+			ChecksumPresent: true,
+			ChecksumValid:   true,
+			LEDs:            &api.LCDLEDs{TX: false, Operate: false, Set: false, Tune: false},
+		},
+	}
+	snapshot, changed = store.Apply(Update{State: state, Telemetry: telemetry, Frame: sameFrame, FrameKind: "serial", Source: "serial"})
+	if changed {
+		t.Fatal("expected equal LCD flag values with new pointers to be ignored")
+	}
+	if snapshot.Sequence != 1 {
+		t.Fatalf("sequence after equal LCD flag apply = %d, want 1", snapshot.Sequence)
+	}
+}
+
 func TestStoreApplyFallsBackToTelemetrySource(t *testing.T) {
 	store := NewStore(Snapshot{})
 	snapshot, changed := store.Apply(Update{

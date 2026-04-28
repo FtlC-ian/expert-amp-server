@@ -29,7 +29,7 @@ func TestNewManagerCreatesDefaultConfig(t *testing.T) {
 	if !snap.Settings.DisplayPollingEnabled || !snap.Settings.StatusPollingEnabled {
 		t.Fatalf("polling defaults not enabled: %+v", snap.Settings)
 	}
-	if !snap.Settings.StatusPollCommandEnabled || snap.Settings.StatusPollIntervalMs != 500 {
+	if !snap.Settings.StatusPollCommandEnabled || snap.Settings.StatusPollIntervalMs != 125 {
 		t.Fatalf("status poll command defaults unexpected: %+v", snap.Settings)
 	}
 
@@ -71,7 +71,7 @@ func TestLoadOrCreateNormalizesExistingConfig(t *testing.T) {
 	if !snap.Settings.DisplayPollingEnabled || !snap.Settings.StatusPollingEnabled {
 		t.Fatalf("polling defaults not enabled after normalize: %+v", snap.Settings)
 	}
-	if !snap.Settings.StatusPollCommandEnabled || snap.Settings.StatusPollIntervalMs != 500 {
+	if !snap.Settings.StatusPollCommandEnabled || snap.Settings.StatusPollIntervalMs != 125 {
 		t.Fatalf("status poll command defaults unexpected after normalize: %+v", snap.Settings)
 	}
 }

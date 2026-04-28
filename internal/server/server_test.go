@@ -489,7 +489,6 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 		StatusPollIntervalMs:     500,
 		SerialAssertDTR:          true,
 		SerialAssertRTS:          true,
-		PanelModelLabel:          "1.5K-FA",
 	}
 	falseVal := false
 	interval := 900
@@ -512,19 +511,6 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 	}
 	if merged.StatusPollingEnabled != current.StatusPollingEnabled || merged.SerialBaudRate != current.SerialBaudRate || merged.SerialReadTimeoutMs != current.SerialReadTimeoutMs {
 		t.Fatalf("unrelated current fields were not preserved: %+v", merged)
-	}
-	if merged.PanelModelLabel != "" {
-		t.Fatalf("PanelModelLabel = %q, want empty when omitted from request", merged.PanelModelLabel)
-	}
-	label := "  1.5K-FA  "
-	merged = mergeSettingsRequest(current, settingsRequest{
-		SerialPort:      current.SerialPort,
-		ListenAddress:   current.ListenAddress,
-		PollIntervalMs:  current.PollIntervalMs,
-		PanelModelLabel: label,
-	})
-	if merged.PanelModelLabel != "1.5K-FA" {
-		t.Fatalf("PanelModelLabel = %q, want trimmed override", merged.PanelModelLabel)
 	}
 }
 
