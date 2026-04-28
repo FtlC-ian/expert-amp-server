@@ -307,22 +307,30 @@ func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg s
 		}
 
 		now := time.Now()
-		if !nextDisplayPoll.IsZero() && !now.Before(nextDisplayPoll) && s.displayPollEnabled() {
-			if err := s.writeFrame(ctx, displayPollFrame); err != nil {
-				return fmt.Errorf("serial write display poll: %w", err)
-			}
-			nextDisplayPoll = now.Add(s.displayPollInterval())
-		} else if !nextDisplayPoll.IsZero() && !s.displayPollEnabled() {
+		wrotePoll := false
+		if !nextStatusPoll.IsZero() && !s.statusPollEnabled() {
+			nextStatusPoll = now.Add(s.statusPollInterval())
+		}
+		if !nextDisplayPoll.IsZero() && !s.displayPollEnabled() {
 			nextDisplayPoll = now.Add(s.displayPollInterval())
 		}
-
 		if !nextStatusPoll.IsZero() && !now.Before(nextStatusPoll) && s.statusPollEnabled() {
 			if err := s.writeFrame(ctx, statusPollFrame); err != nil {
 				return fmt.Errorf("serial write status poll: %w", err)
 			}
 			nextStatusPoll = now.Add(s.statusPollInterval())
-		} else if !nextStatusPoll.IsZero() && !s.statusPollEnabled() {
-			nextStatusPoll = now.Add(s.statusPollInterval())
+			wrotePoll = true
+		} else if !nextDisplayPoll.IsZero() && !now.Before(nextDisplayPoll) && s.displayPollEnabled() {
+			if err := s.writeFrame(ctx, displayPollFrame); err != nil {
+				return fmt.Errorf("serial write display poll: %w", err)
+			}
+			nextDisplayPoll = now.Add(s.displayPollInterval())
+			wrotePoll = true
+		}
+		if wrotePoll {
+			// Avoid issuing display and status requests back-to-back. The amp's serial
+			// response path is much more reliable if we write one request, then give the
+			// reader a chance to drain its response before sending the next poll.
 		}
 
 		n, err := port.Read(buf)

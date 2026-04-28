@@ -59,6 +59,13 @@ func (d *DisplayStreamDecoder) Push(chunk []byte) [][]byte {
 			d.buf = d.buf[start:]
 		}
 
+		if IsGetLCDResponseFrame(d.buf) {
+			frame := append([]byte(nil), d.buf[:getLCDTotalLen]...)
+			frames = append(frames, frame)
+			d.buf = d.buf[getLCDTotalLen:]
+			continue
+		}
+
 		next := bytes.Index(d.buf[len(RadioDisplayPrefix):], RadioDisplayPrefix)
 		if next < 0 {
 			d.trimWithPrefix()

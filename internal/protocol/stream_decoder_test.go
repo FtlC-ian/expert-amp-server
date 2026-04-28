@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -136,5 +137,24 @@ func TestStreamDecoderCapsBufferOnPartialPrefix(t *testing.T) {
 	// because we have prefix + body (capped at 256) + prefix.
 	if len(got) != 1 {
 		t.Fatalf("frames = %d, want 1 after closing boundary", len(got))
+	}
+}
+
+func TestStreamDecoderSplitsGetLCDBeforeTrailingStatusFrame(t *testing.T) {
+	lcd := loadFixture(t, "real_home_status_frame.bin")
+	status := []byte("\xaa\xaa\xaaC" + strings.Repeat("S", 72))
+	stream := append(append([]byte{}, lcd...), status...)
+	stream = append(stream, lcd...)
+
+	decoder := NewDisplayStreamDecoder(StreamDecoderConfig{})
+	got := decoder.Push(stream)
+	if len(got) != 2 {
+		t.Fatalf("frames = %d, want 2", len(got))
+	}
+	if len(got[0]) != getLCDTotalLen || len(got[1]) != getLCDTotalLen {
+		t.Fatalf("frame lengths = %d, %d; want %d, %d", len(got[0]), len(got[1]), getLCDTotalLen, getLCDTotalLen)
+	}
+	if !bytes.Equal(got[0], lcd) || !bytes.Equal(got[1], lcd) {
+		t.Fatal("decoder did not preserve exact GetLCD frames")
 	}
 }
