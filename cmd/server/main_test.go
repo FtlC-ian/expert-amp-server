@@ -312,6 +312,11 @@ func TestWatchUIHasPanelLayoutAndOperatorAlternate(t *testing.T) {
 	if !htmlHasIDWithClass(body, "op-tune-state", "operator-control-state") || !strings.Contains(body, "Ready") {
 		t.Fatalf("watch page missing operator tune state readout: %q", body)
 	}
+	for _, id := range []string{"op-set-lcd-indicator", "op-tune-lcd-indicator"} {
+		if !htmlHasIDWithClass(body, id, "operator-lcd-indicator") {
+			t.Fatalf("watch page missing operator LCD indicator %q: %q", id, body)
+		}
+	}
 	if !htmlHasClasses(body, "operator-card-title", "operator-help-only") || !strings.Contains(body, "Operate and routine controls") {
 		t.Fatalf("watch page missing operator help-only routine controls heading: %q", body)
 	}
@@ -376,6 +381,17 @@ func TestWatchUIHasPanelLayoutAndOperatorAlternate(t *testing.T) {
 		`function nextOperatorFaultPreview(state)`,
 		`function previewOperatorStatus(status)`,
 		`function updateOperatorFaultPreviewToggle()`,
+		`function displayLEDsFromFrame(frame)`,
+		`flags.checksumValid !== true`,
+		`function applyOperatorLCDIndicators()`,
+		`setOperatorLCDIndicator('op-set-lcd-indicator', 'SET', !!(leds && leds.set))`,
+		`setOperatorLCDIndicator('op-tune-lcd-indicator', 'TUNE', !!(leds && leds.tune))`,
+		`operator-lcd-indicator`,
+		`aria-label="LCD SET indicator inactive"`,
+		`aria-label="LCD TUNE indicator inactive"`,
+		`title="LCD SET/Menu indicator"`,
+		`title="LCD TUNE indicator"`,
+		`aria-pressed="false"`,
 		`menu-hidden`,
 		`operator-help-only`,
 		`operator-help-button-label`,

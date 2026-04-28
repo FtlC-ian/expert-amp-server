@@ -478,10 +478,52 @@
       cursor: not-allowed;
     }
     .operator-nav-symbol {
-      display: block;
+      display: inline-flex;
+      align-items: center;
       font-size: 0.84rem;
       line-height: 1;
       letter-spacing: 0.02em;
+    }
+    .operator-lcd-indicator {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 9px;
+      width: 9px;
+      height: 9px;
+      min-height: 9px;
+      border-radius: 999px;
+      border: 1px solid #314631;
+      background: #111a11;
+      color: transparent;
+      font-size: 0;
+      line-height: 1;
+      padding: 0;
+      flex: 0 0 auto;
+    }
+    .operator-lcd-indicator.active {
+      border-color: #9a7d22;
+      background: #4c3b0b;
+      color: transparent;
+      box-shadow: 0 0 0 1px rgba(255, 226, 138, 0.12), 0 0 8px rgba(255, 199, 71, 0.34);
+    }
+    .operator-lcd-indicator--set.active {
+      border-color: #9a7d22;
+      background: #e0b52b;
+      box-shadow: 0 0 0 1px rgba(255, 226, 138, 0.16), 0 0 8px rgba(255, 199, 71, 0.42);
+    }
+    .operator-lcd-indicator--tune.active {
+      border-color: #2e9f52;
+      background: #42d86b;
+      box-shadow: 0 0 0 1px rgba(111, 255, 151, 0.14), 0 0 8px rgba(66, 216, 107, 0.42);
+    }
+    .operator-nav-key .operator-lcd-indicator {
+      margin-left: 5px;
+      vertical-align: middle;
+    }
+    .operator-control-button .operator-lcd-indicator {
+      margin-left: 6px;
+      vertical-align: middle;
     }
     .operator-controls-grid {
       display: grid;
@@ -1191,6 +1233,7 @@
                     </button>
                     <button class="operator-nav-key" onclick="sendButton('set')" title="SET">
                       <span class="operator-nav-symbol">SET</span>
+                      <span class="operator-lcd-indicator operator-lcd-indicator--set" id="op-set-lcd-indicator" aria-label="LCD SET indicator inactive" aria-pressed="false" title="LCD SET/Menu indicator"></span>
                     </button>
                     <button class="operator-nav-key" onclick="sendButton('display')" title="DSP">
                       <span class="operator-nav-symbol">DSP</span>
@@ -1200,7 +1243,7 @@
                 <div class="operator-tune-card" id="operator-tune-card">
                   <div class="operator-card-title operator-help-only">Tune</div>
                   <div class="operator-control-state operator-help-only" id="op-tune-state">Ready</div>
-                  <button class="operator-control-button operator-control-nav" onclick="sendButton('tune')"><span class="operator-button-compact">TUNE</span><span class="operator-help-button-label">Start tune cycle</span></button>
+                  <button class="operator-control-button operator-control-nav" onclick="sendButton('tune')"><span class="operator-button-compact">TUNE</span><span class="operator-help-button-label">Start tune cycle</span><span class="operator-lcd-indicator operator-lcd-indicator--tune" id="op-tune-lcd-indicator" aria-label="LCD TUNE indicator inactive" aria-pressed="false" title="LCD TUNE indicator"></span></button>
                   <div class="operator-control-hint operator-help-only">Secondary active-operating control, promoted above aux/manual but kept out of the routine strip.</div>
                 </div>
               </div>
@@ -2120,6 +2163,20 @@
       return flags.leds;
     }
 
+    function setOperatorLCDIndicator(id, label, active) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.toggle('active', !!active);
+      el.setAttribute('aria-pressed', active ? 'true' : 'false');
+      el.setAttribute('aria-label', `LCD ${label} indicator ${active ? 'active' : 'inactive'}`);
+    }
+
+    function applyOperatorLCDIndicators() {
+      const leds = latestDisplayLEDs;
+      setOperatorLCDIndicator('op-set-lcd-indicator', 'SET', !!(leds && leds.set));
+      setOperatorLCDIndicator('op-tune-lcd-indicator', 'TUNE', !!(leds && leds.tune));
+    }
+
     function applyFrontPanelLEDs(status) {
       const leds = latestDisplayLEDs;
       if (leds) {
@@ -2144,6 +2201,7 @@
 
       setLed('led-on', status && status.recentContact === true ? 'led-green' : 'led-off');
       setLed('led-al', status && Array.isArray(status.activeAlarms) && status.activeAlarms.length > 0 ? 'led-red' : 'led-off');
+      applyOperatorLCDIndicators();
     }
 
     function refreshDisplayRender(force = false) {
@@ -2197,6 +2255,7 @@
       setLed('led-tune', 'led-off');
       setLed('led-set', 'led-off');
       if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
+      applyOperatorLCDIndicators();
     }
 
     function updateStatusIndicators(status) {
