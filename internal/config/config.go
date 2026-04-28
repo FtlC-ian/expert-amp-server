@@ -20,6 +20,12 @@ type Settings struct {
 	DisplayPollingEnabled bool   `json:"displayPollingEnabled"`
 	StatusPollingEnabled  bool   `json:"statusPollingEnabled"`
 
+	// Cosmetic station labels for the built-in web UI. These do not change
+	// protocol/status identity or button behavior.
+	PanelModelLabel string            `json:"panelModelLabel,omitempty"`
+	InputLabels     map[string]string `json:"inputLabels,omitempty"`
+	AntennaLabels   map[string]string `json:"antennaLabels,omitempty"`
+
 	// Serial connection parameters for live ingest.
 	SerialBaudRate           int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      int  `json:"serialReadTimeoutMs,omitempty"`
@@ -42,11 +48,14 @@ type Manager struct {
 }
 
 type rawSettings struct {
-	SerialPort            *string `json:"serialPort"`
-	ListenAddress         *string `json:"listenAddress"`
-	PollIntervalMs        *int    `json:"pollIntervalMs"`
-	DisplayPollingEnabled *bool   `json:"displayPollingEnabled"`
-	StatusPollingEnabled  *bool   `json:"statusPollingEnabled"`
+	SerialPort            *string           `json:"serialPort"`
+	ListenAddress         *string           `json:"listenAddress"`
+	PollIntervalMs        *int              `json:"pollIntervalMs"`
+	DisplayPollingEnabled *bool             `json:"displayPollingEnabled"`
+	StatusPollingEnabled  *bool             `json:"statusPollingEnabled"`
+	PanelModelLabel       *string           `json:"panelModelLabel,omitempty"`
+	InputLabels           map[string]string `json:"inputLabels,omitempty"`
+	AntennaLabels         map[string]string `json:"antennaLabels,omitempty"`
 
 	SerialBaudRate           *int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      *int  `json:"serialReadTimeoutMs,omitempty"`
@@ -153,6 +162,11 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.StatusPollingEnabled != nil {
 		out.StatusPollingEnabled = *r.StatusPollingEnabled
 	}
+	if r.PanelModelLabel != nil {
+		out.PanelModelLabel = normalizeLabel(*r.PanelModelLabel)
+	}
+	out.InputLabels = normalizeLabelMap(r.InputLabels)
+	out.AntennaLabels = normalizeLabelMap(r.AntennaLabels)
 	if r.SerialBaudRate != nil && *r.SerialBaudRate > 0 {
 		out.SerialBaudRate = *r.SerialBaudRate
 	}
@@ -189,6 +203,9 @@ func normalizeSettings(in, defaults Settings) Settings {
 	}
 	out.DisplayPollingEnabled = in.DisplayPollingEnabled
 	out.StatusPollingEnabled = in.StatusPollingEnabled
+	out.PanelModelLabel = normalizeLabel(in.PanelModelLabel)
+	out.InputLabels = normalizeLabelMap(in.InputLabels)
+	out.AntennaLabels = normalizeLabelMap(in.AntennaLabels)
 	if in.SerialBaudRate > 0 {
 		out.SerialBaudRate = in.SerialBaudRate
 	}
@@ -209,7 +226,70 @@ func validatedSettings(in, defaults Settings) (Settings, error) {
 	if err := validateSerialPort(out.SerialPort); err != nil {
 		return Settings{}, err
 	}
+	if err := validateLabel("panelModelLabel", out.PanelModelLabel); err != nil {
+		return Settings{}, err
+	}
+	if err := validateLabelMap("inputLabels", out.InputLabels, 2); err != nil {
+		return Settings{}, err
+	}
+	if err := validateLabelMap("antennaLabels", out.AntennaLabels, 6); err != nil {
+		return Settings{}, err
+	}
 	return out, nil
+}
+
+func normalizeLabel(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func normalizeLabelMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		key = strings.TrimSpace(key)
+		value = normalizeLabel(value)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func validateLabel(field, value string) error {
+	if len(value) > 32 {
+		return fmt.Errorf("%s is too long", field)
+	}
+	for _, r := range value {
+		if r == '\n' || r == '\r' || r == '\t' || unicode.IsControl(r) {
+			return fmt.Errorf("%s contains unsupported control characters", field)
+		}
+	}
+	return nil
+}
+
+func validateLabelMap(field string, labels map[string]string, maxIndex int) error {
+	for key, value := range labels {
+		idx := 0
+		for _, r := range key {
+			if r < '0' || r > '9' {
+				return fmt.Errorf("%s has unsupported key %q", field, key)
+			}
+			idx = idx*10 + int(r-'0')
+		}
+		if idx < 1 || idx > maxIndex {
+			return fmt.Errorf("%s key %q is out of range", field, key)
+		}
+		if err := validateLabel(field+"["+key+"]", value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateSerialPort(value string) error {

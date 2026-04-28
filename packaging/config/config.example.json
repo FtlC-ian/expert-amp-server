@@ -9,5 +9,18 @@
   "statusPollCommandEnabled": true,
   "statusPollIntervalMs": 125,
   "serialAssertDTR": true,
-  "serialAssertRTS": true
+  "serialAssertRTS": true,
+  "panelModelLabel": "",
+  "inputLabels": {
+    "1": "",
+    "2": ""
+  },
+  "antennaLabels": {
+    "1": "",
+    "2": "",
+    "3": "",
+    "4": "",
+    "5": "",
+    "6": ""
+  }
 }

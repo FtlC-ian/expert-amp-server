@@ -152,6 +152,64 @@ func TestUpdatePersistsSettings(t *testing.T) {
 	}
 }
 
+func TestUpdatePersistsStationLabels(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "expert-amp-server.json")
+	mgr, err := NewManager(path, ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	snap, err := mgr.Update(Settings{
+		SerialPort:            "/dev/ttyUSB1",
+		ListenAddress:         ":8088",
+		PollIntervalMs:        DefaultPollIntervalMs,
+		DisplayPollingEnabled: true,
+		StatusPollingEnabled:  true,
+		PanelModelLabel:       "  AF5SH  ",
+		InputLabels:           map[string]string{"1": " IC-7300 ", "2": "ANAN G2", "3": "ignored"},
+		AntennaLabels:         map[string]string{"1": "Dipole", "6": "Dummy Load", "7": "ignored"},
+	})
+	if err == nil {
+		t.Fatal("Update error = nil, want out-of-range label error")
+	}
+
+	snap, err = mgr.Update(Settings{
+		SerialPort:            "/dev/ttyUSB1",
+		ListenAddress:         ":8088",
+		PollIntervalMs:        DefaultPollIntervalMs,
+		DisplayPollingEnabled: true,
+		StatusPollingEnabled:  true,
+		PanelModelLabel:       "  AF5SH  ",
+		InputLabels:           map[string]string{"1": " IC-7300 ", "2": "ANAN G2"},
+		AntennaLabels:         map[string]string{"1": "Dipole", "6": "Dummy Load"},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if snap.Settings.PanelModelLabel != "AF5SH" {
+		t.Fatalf("PanelModelLabel = %q", snap.Settings.PanelModelLabel)
+	}
+	if snap.Settings.InputLabels["1"] != "IC-7300" || snap.Settings.InputLabels["2"] != "ANAN G2" {
+		t.Fatalf("InputLabels not normalized: %+v", snap.Settings.InputLabels)
+	}
+	if snap.Settings.AntennaLabels["1"] != "Dipole" || snap.Settings.AntennaLabels["6"] != "Dummy Load" {
+		t.Fatalf("AntennaLabels not normalized: %+v", snap.Settings.AntennaLabels)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var got Settings
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.PanelModelLabel != "AF5SH" || got.InputLabels["2"] != "ANAN G2" || got.AntennaLabels["6"] != "Dummy Load" {
+		t.Fatalf("saved station labels mismatch: %+v", got)
+	}
+}
+
 func TestUpdateRejectsObviouslyBadSerialPort(t *testing.T) {
 	mgr, err := NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
 	if err != nil {

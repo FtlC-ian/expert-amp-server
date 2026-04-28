@@ -66,11 +66,14 @@ type alarmsResponse struct {
 }
 
 type settingsRequest struct {
-	SerialPort            string `json:"serialPort"`
-	ListenAddress         string `json:"listenAddress"`
-	PollIntervalMs        int    `json:"pollIntervalMs"`
-	DisplayPollingEnabled *bool  `json:"displayPollingEnabled"`
-	StatusPollingEnabled  *bool  `json:"statusPollingEnabled"`
+	SerialPort            string            `json:"serialPort"`
+	ListenAddress         string            `json:"listenAddress"`
+	PollIntervalMs        int               `json:"pollIntervalMs"`
+	DisplayPollingEnabled *bool             `json:"displayPollingEnabled"`
+	StatusPollingEnabled  *bool             `json:"statusPollingEnabled"`
+	PanelModelLabel       string            `json:"panelModelLabel,omitempty"`
+	InputLabels           map[string]string `json:"inputLabels,omitempty"`
+	AntennaLabels         map[string]string `json:"antennaLabels,omitempty"`
 
 	SerialBaudRate           *int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      *int  `json:"serialReadTimeoutMs,omitempty"`
@@ -553,6 +556,9 @@ func mergeSettingsRequest(current config.Settings, req settingsRequest) config.S
 		PollIntervalMs:           req.PollIntervalMs,
 		DisplayPollingEnabled:    pickBool(current.DisplayPollingEnabled, req.DisplayPollingEnabled),
 		StatusPollingEnabled:     pickBool(current.StatusPollingEnabled, req.StatusPollingEnabled),
+		PanelModelLabel:          req.PanelModelLabel,
+		InputLabels:              req.InputLabels,
+		AntennaLabels:            req.AntennaLabels,
 		SerialBaudRate:           pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
 		SerialReadTimeoutMs:      pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
 		StatusPollCommandEnabled: pickBool(current.StatusPollCommandEnabled, firstBool(req.StatusPollCommandEnabled, req.SerialPollEnabled)),

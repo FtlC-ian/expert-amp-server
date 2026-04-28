@@ -1473,6 +1473,24 @@
           },
           "serialAssertRTS": {
             "type": "boolean"
+          },
+          "panelModelLabel": {
+            "type": "string",
+            "description": "Optional cosmetic label for the amp-shaped Front Panel model corner. Does not change status model identity."
+          },
+          "inputLabels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Optional cosmetic Operator labels for amp inputs keyed by input number, currently 1-2."
+          },
+          "antennaLabels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Optional cosmetic Operator labels for antenna ports keyed by antenna number, currently 1-6."
           }
         }
       },
@@ -1520,6 +1538,24 @@
           },
           "serialAssertRTS": {
             "type": "boolean"
+          },
+          "panelModelLabel": {
+            "type": "string",
+            "description": "Optional cosmetic label for the amp-shaped Front Panel model corner. Does not change status model identity."
+          },
+          "inputLabels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Optional cosmetic Operator labels for amp inputs keyed by input number, currently 1-2."
+          },
+          "antennaLabels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Optional cosmetic Operator labels for antenna ports keyed by antenna number, currently 1-6."
           }
         }
       },
@@ -1580,7 +1616,9 @@
       },
       "APIResponse": {
         "type": "object",
-        "required": ["success"],
+        "required": [
+          "success"
+        ],
         "properties": {
           "success": {
             "type": "boolean"

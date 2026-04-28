@@ -1445,6 +1445,50 @@
           </div>
           <p class="settings-hint">Live toggle — pauses or resumes backend protocol-status refresh immediately without a restart. /api/v1/status and the websocket status feed mostly serve cached in-memory state built from this path.</p>
 
+          <hr class="settings-divider">
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-panel-model-label">Panel model / callsign label</label>
+            <input id="s-panel-model-label" class="settings-input" type="text" maxlength="32" placeholder="auto, 1.5K-FA, AF5SH">
+          </div>
+          <p class="settings-hint">Cosmetic label for the amp-shaped Front Panel corner. Blank uses detected model text. This does not change API status or protocol identity.</p>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-input-1-label">Input 1 label</label>
+            <input id="s-input-1-label" class="settings-input" type="text" maxlength="32" placeholder="Input 1">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-input-2-label">Input 2 label</label>
+            <input id="s-input-2-label" class="settings-input" type="text" maxlength="32" placeholder="Input 2">
+          </div>
+          <p class="settings-hint">Optional Operator labels for the amp inputs, for example IC-7300, ANAN G2, or Flex. The SPE control action still just cycles the amp input.</p>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-antenna-1-label">Antenna 1 label</label>
+            <input id="s-antenna-1-label" class="settings-input" type="text" maxlength="32" placeholder="Antenna 1">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-antenna-2-label">Antenna 2 label</label>
+            <input id="s-antenna-2-label" class="settings-input" type="text" maxlength="32" placeholder="Antenna 2">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-antenna-3-label">Antenna 3 label</label>
+            <input id="s-antenna-3-label" class="settings-input" type="text" maxlength="32" placeholder="Antenna 3">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-antenna-4-label">Antenna 4 label</label>
+            <input id="s-antenna-4-label" class="settings-input" type="text" maxlength="32" placeholder="Antenna 4">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-antenna-5-label">Antenna 5 label</label>
+            <input id="s-antenna-5-label" class="settings-input" type="text" maxlength="32" placeholder="Antenna 5">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-antenna-6-label">Antenna 6 label</label>
+            <input id="s-antenna-6-label" class="settings-input" type="text" maxlength="32" placeholder="Antenna 6">
+          </div>
+          <p class="settings-hint">Optional Operator labels for up to six antenna ports. 1.3K-FA and 1.5K-FA commonly expose four antenna ports; 2K-FA models expose six.</p>
+
         </div>
 
         <div class="settings-action-row">
@@ -1760,8 +1804,8 @@
       const lowerTempText = typeof data.temperatureLowerC === 'number' ? data.temperatureLowerC.toFixed(0) + ' °C' : data.temperatureLowerDisplay;
       const combinerTempText = typeof data.temperatureCombinerC === 'number' ? data.temperatureCombinerC.toFixed(0) + ' °C' : data.temperatureCombinerDisplay;
       const antennaRaw = typeof data.antenna === 'string' ? data.antenna.trim() : '';
-      const antennaText = antennaRaw ? 'ANT ' + antennaRaw : 'ANT –';
-      const inputText = data.input ? 'Input ' + data.input : 'Input –';
+      const antennaText = labelFor('antennaLabels', antennaRaw, 'ANT');
+      const inputText = labelFor('inputLabels', data.input, 'Input');
       const outputLevel = typeof data.outputLevel === 'string' ? data.outputLevel.trim().toUpperCase() : '';
       const powerText = outputLevel || '–';
       const atuStatus = typeof data.atuStatusCode === 'string' ? data.atuStatusCode.trim() : '';
@@ -1929,7 +1973,93 @@
     let displaySocketRetryTimer = null;
     let displayPollingEnabled = true;
     let lastDisplaySequence = 0;
+    let stationLabels = { panelModelLabel: '', inputLabels: {}, antennaLabels: {} };
 
+
+    function cleanLabel(value) {
+      if (value === null || value === undefined) return '';
+      return String(value).trim();
+    }
+
+    function normalizeLabelMap(value) {
+      const out = {};
+      if (!value || typeof value !== 'object') return out;
+      Object.keys(value).forEach(key => {
+        const cleaned = cleanLabel(value[key]);
+        if (cleaned) out[String(key)] = cleaned;
+      });
+      return out;
+    }
+
+    function applyStationLabels(settings) {
+      const s = settings || {};
+      stationLabels = {
+        panelModelLabel: cleanLabel(s.panelModelLabel),
+        inputLabels: normalizeLabelMap(s.inputLabels),
+        antennaLabels: normalizeLabelMap(s.antennaLabels),
+      };
+    }
+
+    function shortModelLabel(modelName) {
+      const text = cleanLabel(modelName).replace(/^EXPERT\s+/i, '').replace(/\s+/g, ' ');
+      if (!text) return '';
+      return text
+        .replace(/^1\.3K\s*-?\s*FA$/i, '1.3K-FA')
+        .replace(/^1\.5K\s*-?\s*FA$/i, '1.5K-FA')
+        .replace(/^2\.0K\s*-?\s*FA$/i, '2K-FA')
+        .replace(/^2K\s*-?\s*FA$/i, '2K-FA');
+    }
+
+    function panelModelDisplay(status) {
+      return stationLabels.panelModelLabel || shortModelLabel(status && status.modelName) || 'SPE';
+    }
+
+    function labelFor(mapName, value, fallbackPrefix) {
+      let key = cleanLabel(value);
+      if (!key && typeof value === 'number' && Number.isFinite(value)) key = String(value);
+      const match = key.match(/[0-9]+/);
+      key = match ? match[0] : '';
+      const map = stationLabels[mapName] || {};
+      return (key && map[key]) ? map[key] : (key ? fallbackPrefix + ' ' + key : fallbackPrefix + ' –');
+    }
+
+    function labelsFromSettingsForm() {
+      const inputLabels = {};
+      for (let i = 1; i <= 2; i++) {
+        const value = cleanLabel(document.getElementById(`s-input-${i}-label`).value);
+        if (value) inputLabels[String(i)] = value;
+      }
+      const antennaLabels = {};
+      for (let i = 1; i <= 6; i++) {
+        const value = cleanLabel(document.getElementById(`s-antenna-${i}-label`).value);
+        if (value) antennaLabels[String(i)] = value;
+      }
+      return {
+        panelModelLabel: cleanLabel(document.getElementById('s-panel-model-label').value),
+        inputLabels,
+        antennaLabels,
+      };
+    }
+
+    function populateStationLabelFields(settings) {
+      const s = settings || {};
+      document.getElementById('s-panel-model-label').value = s.panelModelLabel || '';
+      const inputLabels = s.inputLabels || {};
+      for (let i = 1; i <= 2; i++) {
+        document.getElementById(`s-input-${i}-label`).value = inputLabels[String(i)] || '';
+      }
+      const antennaLabels = s.antennaLabels || {};
+      for (let i = 1; i <= 6; i++) {
+        document.getElementById(`s-antenna-${i}-label`).value = antennaLabels[String(i)] || '';
+      }
+    }
+
+    function applySettingsFromResponse(data) {
+      if (!data || !data.settings) return;
+      applyStationLabels(data.settings);
+      if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(latestStatus);
+      renderOperatorStatus(latestStatus);
+    }
     // Apply persisted display prefs on load
     applyLayout(currentLayout());
     applyPolarity(currentPolarity());
@@ -2076,7 +2206,7 @@
       setLed('led-on', 'led-off');
       setLed('led-tune', 'led-off');
       setLed('led-set', 'led-off');
-      if (panelModelLabel) panelModelLabel.textContent = 'SPE';
+      if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(null);
     }
 
     function updateStatusIndicators(status) {
@@ -2088,7 +2218,7 @@
       }
 
       if (panelModelLabel) {
-        panelModelLabel.textContent = status.modelName || 'SPE';
+        panelModelLabel.textContent = panelModelDisplay(status);
       }
 
       const headerModel = document.getElementById('header-model');
@@ -2266,6 +2396,10 @@
         document.getElementById('s-display-polling').checked = !!s.displayPollingEnabled;
         document.getElementById('s-status-polling').checked  = !!s.statusPollingEnabled;
         displayPollingEnabled = !!s.displayPollingEnabled;
+        populateStationLabelFields(s);
+        applyStationLabels(s);
+        if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(latestStatus);
+        renderOperatorStatus(latestStatus);
 
         // Advanced serial fields
         document.getElementById('s-baud').value                = s.serialBaudRate      || 115200;
@@ -2319,6 +2453,7 @@
         pollIntervalMs:        Number(document.getElementById('s-poll-interval').value || '200'),
         displayPollingEnabled: document.getElementById('s-display-polling').checked,
         statusPollingEnabled:  document.getElementById('s-status-polling').checked,
+        ...labelsFromSettingsForm(),
       };
       try {
         const res  = await fetch('/api/v1/settings', {
@@ -2335,6 +2470,7 @@
         if (body.data) {
           setupCard.classList.toggle('hidden', !body.data.needsSetup);
           displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
+          applySettingsFromResponse(body.data);
         }
       } catch (err) {
         setStatus('connection-status', err.message, 'err');
@@ -2375,6 +2511,7 @@
         statusPollIntervalMs:      Number(document.getElementById('s-status-poll-interval').value || '125'),
         serialAssertDTR:       document.getElementById('s-assert-dtr').checked,
         serialAssertRTS:       document.getElementById('s-assert-rts').checked,
+        ...labelsFromSettingsForm(),
       };
       try {
         const res = await fetch('/api/v1/settings', {
@@ -2390,6 +2527,7 @@
         setStatus('advanced-status', body.message || 'Saved', 'ok');
         if (body.data) {
           displayPollingEnabled = !!(body.data.settings && body.data.settings.displayPollingEnabled);
+          applySettingsFromResponse(body.data);
         }
       } catch (err) {
         setStatus('advanced-status', err.message, 'err');
@@ -2403,7 +2541,6 @@
         const body = await res.json();
         if (body && body.data) {
           updateStatusIndicators(body.data);
-          updateOperatorStatus(body.data);
         }
       } catch (_) {
         // network error during status poll, keep last indicators
@@ -2442,7 +2579,6 @@
           try {
             const status = JSON.parse(event.data);
             updateStatusIndicators(status);
-            updateOperatorStatus(status);
           } catch (_) {
             // ignore malformed payloads, fallback polling still exists
           }
@@ -2538,6 +2674,7 @@
         if (!snap) return;
         setupCard.classList.toggle('hidden', !snap.needsSetup);
         displayPollingEnabled = !!(snap.settings && snap.settings.displayPollingEnabled);
+        applySettingsFromResponse(snap);
         // Apply persisted layout in case it changed since page load
         applyLayout(currentLayout());
         if (displayPollingEnabled) {

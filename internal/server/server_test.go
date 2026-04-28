@@ -489,6 +489,9 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 		StatusPollIntervalMs:     500,
 		SerialAssertDTR:          true,
 		SerialAssertRTS:          true,
+		PanelModelLabel:          "AF5SH",
+		InputLabels:              map[string]string{"1": "IC-7300"},
+		AntennaLabels:            map[string]string{"4": "Hexbeam"},
 	}
 	falseVal := false
 	interval := 900
@@ -511,6 +514,18 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 	}
 	if merged.StatusPollingEnabled != current.StatusPollingEnabled || merged.SerialBaudRate != current.SerialBaudRate || merged.SerialReadTimeoutMs != current.SerialReadTimeoutMs {
 		t.Fatalf("unrelated current fields were not preserved: %+v", merged)
+	}
+	if merged.PanelModelLabel != "" || len(merged.InputLabels) != 0 || len(merged.AntennaLabels) != 0 {
+		t.Fatalf("station labels should be replaced by request payload, got: %+v", merged)
+	}
+
+	merged = mergeSettingsRequest(current, settingsRequest{
+		PanelModelLabel: "AF5SH",
+		InputLabels:     map[string]string{"2": "ANAN G2"},
+		AntennaLabels:   map[string]string{"4": "Hexbeam"},
+	})
+	if merged.PanelModelLabel != "AF5SH" || merged.InputLabels["2"] != "ANAN G2" || merged.AntennaLabels["4"] != "Hexbeam" {
+		t.Fatalf("station label merge mismatch: %+v", merged)
 	}
 }
 
