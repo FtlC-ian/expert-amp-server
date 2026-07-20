@@ -199,6 +199,18 @@ func NewHandler(opts Options) http.Handler {
 		writeAPI(w, http.StatusOK, api.Response{Success: true, Data: resp})
 	})
 
+	mux.HandleFunc("/api/v1/display/text", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMethodAPI(w, r, http.MethodGet) {
+			return
+		}
+		snapshot := currentSnapshot(opts.Store)
+		modelName := snapshot.Telemetry.ModelName
+		if opts.StatusState != nil {
+			modelName = opts.StatusState.Resolve(snapshot).ModelName
+		}
+		writeAPI(w, http.StatusOK, api.Response{Success: true, Data: displayTextFromSnapshot(snapshot, modelName)})
+	})
+
 	mux.HandleFunc("/api/v1/display/frame", func(w http.ResponseWriter, r *http.Request) {
 		if !allowMethodAPI(w, r, http.MethodGet) {
 			return

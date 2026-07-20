@@ -157,6 +157,23 @@
         }
       }
     },
+    "/api/v1/display/text": {
+      "get": {
+        "tags": [
+          "Display"
+        ],
+        "summary": "Get accessible display text",
+        "description": "Returns a screen-reader-friendly view of the current runtime LCD. rows always contains eight strings of exactly 40 characters, preserving physical geometry. highlightedSpans use zero-based rows and inclusive startColumn/exclusive endColumn coordinates. Custom glyphs are left blank rather than assigned guessed semantics; screenText retains the existing trimmed frame text as a fallback, and /api/v1/display/state remains the raw character/attribute source.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DisplayTextResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/display/frame": {
       "get": {
         "tags": [
@@ -644,6 +661,16 @@
           }
         }
       },
+      "DisplayTextResponse": {
+        "description": "Accessible display text envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseDisplayText"
+            }
+          }
+        }
+      },
       "FrameInfoResponse": {
         "description": "Frame metadata envelope",
         "content": {
@@ -825,6 +852,22 @@
           },
           "data": {
             "$ref": "#/components/schemas/DisplayStateEnvelopeData"
+          }
+        }
+      },
+      "ResponseDisplayText": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/DisplayText"
           }
         }
       },
@@ -1080,6 +1123,90 @@
                 "maximum": 255
               }
             }
+          }
+        }
+      },
+      "DisplayText": {
+        "type": "object",
+        "required": [
+          "rows",
+          "highlightedSpans",
+          "selectedText",
+          "sequence",
+          "updatedAt"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "description": "Decoded LCD rows with physical spacing preserved. Unknown/custom glyphs decode as spaces.",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 40,
+              "maxLength": 40
+            }
+          },
+          "highlightedSpans": {
+            "type": "array",
+            "description": "Contiguous reverse-video ranges in row-major order.",
+            "items": {
+              "$ref": "#/components/schemas/DisplayTextSpan"
+            }
+          },
+          "selectedText": {
+            "type": "string",
+            "description": "Non-blank highlighted span text, trimmed and joined with newlines in row-major order."
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string"
+          },
+          "modelName": {
+            "type": "string"
+          },
+          "screenText": {
+            "type": "string",
+            "description": "Existing trimmed frame decoder output retained as a fallback."
+          }
+        }
+      },
+      "DisplayTextSpan": {
+        "type": "object",
+        "required": [
+          "row",
+          "startColumn",
+          "endColumn",
+          "text"
+        ],
+        "properties": {
+          "row": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7
+          },
+          "startColumn": {
+            "type": "integer",
+            "description": "Inclusive zero-based start column.",
+            "minimum": 0,
+            "maximum": 39
+          },
+          "endColumn": {
+            "type": "integer",
+            "description": "Exclusive zero-based end column.",
+            "minimum": 1,
+            "maximum": 40
+          },
+          "text": {
+            "type": "string",
+            "description": "Decoded text across the complete highlighted geometry."
           }
         }
       },

@@ -4,4 +4,6 @@ real-home-frame.png
 *.log
 /config/
 dist/
+/server
+/display-capture
 AGENTS.md

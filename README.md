@@ -71,8 +71,11 @@ curl http://localhost:8088/healthz
 curl http://localhost:8088/api/v1/version
 curl http://localhost:8088/api/v1/status
 curl http://localhost:8088/api/v1/runtime/snapshot
+curl http://localhost:8088/api/v1/display/text | jq
 curl -o screen.png http://localhost:8088/api/v1/display/render.png
 ```
+
+`GET /api/v1/display/text` provides the current eight-row LCD as fixed-width decoded text, including highlighted ranges and selected text for screen-reader clients. The bundled `display-capture` command can passively record unique display states using GET requests only. See [Display accessibility and passive capture](docs/DISPLAY_ACCESSIBILITY.md) for the response contract and capture workflow.
 
 The app also serves:
 
@@ -87,6 +90,7 @@ Start here:
 
 - [Raspberry Pi install guide](docs/INSTALL_PI.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Display accessibility and passive capture](docs/DISPLAY_ACCESSIBILITY.md)
 - [Protocol notes](docs/PROTOCOL.md)
 - [Node-RED integration guide](docs/integrations/node-red.md)
 - [Screenshot/reference index](docs/reference/screens/README.md)
