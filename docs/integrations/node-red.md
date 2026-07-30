@@ -85,8 +85,8 @@ npm install node-red-dashboard node-red-contrib-ui-level
 
 | Order | Button | Action sent |
 |---|---|---|
-| 1 | Backlight Off | `display` (closest available — cycles display page) |
-| 2 | Backlight On | `display` |
+| 1 | Backlight Off | `backlight-off` |
+| 2 | Backlight On | `backlight-on` |
 | 3 | L - | `l-` |
 | 4 | L + | `l+` |
 | 5 | C - | `c-` |
@@ -97,8 +97,8 @@ npm install node-red-dashboard node-red-contrib-ui-level
 | 10 | Display | `display` |
 | 11 | Left Arrow | `left` |
 | 12 | Right Arrow | `right` |
-| 13 | Fan Quiet / Toggle | disabled (not in current API) |
-| 14 | Fan Normal / N/A | disabled (not in current API) |
+| 13 | Fan Boost | Requests persistent CONTEST mode through `POST /api/v1/fan-policy/override` |
+| 14 | Fan Normal | Requests persistent Normal mode through `POST /api/v1/fan-policy/override` |
 
 ---
 
@@ -107,7 +107,7 @@ npm install node-red-dashboard node-red-contrib-ui-level
 Edit the **"Set expertAmpBaseUrl"** function node to point at your server:
 
 ```js
-const baseUrl = 'http://192.168.1.100:8088';  // your host
+const baseUrl = 'http://amp-host.local:8088';  // your host
 ```
 
 Default is `http://localhost:8088`.
@@ -117,7 +117,7 @@ Clean-import gotcha: the three `ui_level` nodes require their full `node-red-con
 Also update the **websocket-client** config node if your server is not local:
 
 ```text
-ws://192.168.1.100:8088/api/v1/status/ws
+ws://amp-host.local:8088/api/v1/status/ws
 ```
 
 Use `wss://...` if your deployment is TLS-terminated.
@@ -143,8 +143,15 @@ tune, off, power, operate, cat
 back, on, standby
 ```
 
-Fan mode actions (`fan-quiet`, `fan-normal`) are not in the current action table.
-The Fan buttons are shown disabled in the dashboard.
+Fan mode is not a raw front-panel action. The checked-in dashboard's **Fan Boost** and **Fan Normal** buttons POST `{"mode":"contest"}` or `{"mode":"normal"}` to `/api/v1/fan-policy/override`. These overrides remain active until explicitly changed unless an API client supplies `durationMinutes`; that countdown begins only after the requested mode is display-verified. Send `{"mode":"automatic"}` to return desired-policy selection to the temperature controller.
+
+The original WB2WGH macro is not safe to reproduce through generic button calls. It was fan-tested only on a 2K-FA, sends a fixed eleven-RIGHT menu sequence without reading the LCD, and can alter the wrong setting if the starting screen or one command differs. The server replaces it with the captured display-verified transaction.
+
+Use `GET /api/v1/fan-policy` for the disabled-by-default temperature/hysteresis decision and navigation receipt. Test the manual Fan Boost endpoint on the connected amplifier before enabling automatic control. Active control requires polling mode `both` and starts only after fresh protocol and checksum-valid LCD RX evidence. The server verifies the known menu path and stops on the first mismatch. If initially OPERATE, it temporarily requests and verifies STANDBY because tested hardware ignores SET on the OPERATE home screen. After verified SAVE and return home it restores and verifies OPERATE only when this transaction originally disabled it.
+
+If TX begins, the controller sends no writes, pauses its ordinary waypoint timeout, and resumes only after ordered protocol and LCD RX evidence reverifies the exact expected state. Fan-value toggles and SAVE are RX-only. The temporary STANDBY may skip an unattended transmit cycle. Overtemperature safety preempts fan control and suppresses OPERATE restoration. After stale or unknown status, unsupported state, timeout, ambiguous toggle, write failure, or screen mismatch, the controller never blindly restores OPERATE and requires the operator to verify STANDBY.
+
+`POST /api/v1/fan-policy/verify` refreshes a receipt loaded as `persisted-stale` after server restart. While connected, a complete manually driven FAN MANAGEMENT → SAVE → STORING DATA → home sequence is also observed and recorded. A menu value seen before SAVE is never treated as the stored EEPROM mode.
 
 ---
 
@@ -173,8 +180,8 @@ The Fan buttons are shown disabled in the dashboard.
 | Logging State = CSV file | Logging State shows "HTTP API" | File logging not applicable |
 | Gauge labels: Volts / Amps | Gauge labels now use promoted API fields for PA volts and PA amps | Driven from `/api/v1/status` instead of hidden note strings |
 | Bank select buttons | Bank tile is read-only | Bank select not in current API |
-| Fan Quiet / Fan Normal | Shown as disabled | Not in current action table |
-| Backlight On/Off | Mapped to `display` action | No backlight command in current API |
+| Fan Quiet / Fan Normal | Fan Boost / Fan Normal use the verified fan-policy override API | Raw fan buttons are not document-backed commands; the server performs the captured temporary-STANDBY transaction |
+| Backlight On/Off | Document-backed `backlight-on` / `backlight-off` actions | Hardware effect remains model-dependent |
 | Power On (Python script) | Calls experimental `POST /api/v1/actions/wake` | Experimental HTTP wake action |
 | History charts / fidelity notes | Removed from the example | They added clutter and unnecessary dashboard weight for the current use case |
 
@@ -194,7 +201,7 @@ Before declaring the flow healthy:
 4. **Tiles update** — open Node-RED Dashboard (`/ui`), confirm SPE tiles show values
 5. **Display render loads** — Display group shows amp display image (may be blank in fixture mode)
 6. **Safe button action works** — click Set or Display button; check debug tab for `OK: set` / `OK: display`
-7. **Alarm tile updates** — alarms endpoint stub returns empty; Warnings + Alarms should show blue `No Alarms / No Warnings`
+7. **Alarm tile updates** — `/api/v1/alarms` returns protocol-native warning/alarm lists plus safety-monitor state. Monitoring is observational unless the server's separate overtemperature standby arm flag is explicitly enabled; with no active vendor alarm, Warnings + Alarms should show blue `No Alarms / No Warnings`
 8. **Error handling** — stop the Expert Amp Server completely; USB Status tile should turn red after fallback requests fail
 
 ---
@@ -217,7 +224,8 @@ The websocket nodes used here are part of core Node-RED; no extra websocket pack
 - Websocket-first design for live status, with automatic HTTP fallback so the dashboard does not go stale on disconnect.
 - Flow works against the canonical `/api/v1` surface. No direct serial wiring in Node-RED.
 - `/api/v1/status/ws` carries the same canonical status model as `GET /api/v1/status` and is the preferred live feed.
-- `/api/v1/status` remains the fallback polling route and the authoritative machine-readable status surface for reconnect gaps and manual refreshes. It uses the vendor-documented status poll/response shape where available, with display-derived values only as fallback. Protocol-backed fields now include raw-plus-decoded band and warning/alarm fields (`bandCode`/`bandText`, `warningCode`/`warningsText`, `alarmCode`/`alarmsText`), the raw `atuStatusCode`, and first-class meter fields such as `antennaSwr`, `paSupplyVoltage`, `paCurrent`, `temperatureLowerC`, and `temperatureCombinerC` when the amp model reports them.
+- Stable automation fields include `outputLevel` as a string and `temperatureC` as a JSON number in canonical Celsius. For example, a Node-RED function can use `String(status.outputLevel || '')` for the power preset and `Number(status.temperatureC)` only after checking that the field is present. Do not parse `temperatureDisplay` for automation.
+- `/api/v1/status` remains the fallback polling route and the authoritative machine-readable status surface for reconnect gaps and manual refreshes. It uses the vendor-documented status poll/response shape where available, with display-derived values only as fallback. Protocol-backed fields now include raw-plus-decoded band and warning/alarm fields (`bandCode`/`bandText`, `warningCode`/`warningsText`, `alarmCode`/`alarmsText`), the raw `atuStatusCode`, and first-class meter fields such as `antennaSwr`, `paSupplyVoltage`, `paCurrent`, `temperatureLowerC`, and `temperatureCombinerC` when the amp model reports them. All `*C` fields are canonical Celsius; set `amplifierTemperatureUnit` to match the amplifier SET menu because the status response itself omits the unit.
 - The checked-in example intentionally matches the cleaned-up working dashboard: no History group, no extra chart panels, and a tighter display block.
 - All node IDs are stable across re-imports (MD5 of seed name). Existing nodes will update on re-import.
 - The flow is project-clean: no Ian-specific hostnames, entity IDs, or HA-specific details.

@@ -55,6 +55,28 @@ func TestTelemetryFromDisplayStateHomeFixture(t *testing.T) {
 	}
 }
 
+func TestTelemetryFromDisplayStateConvertsExplicitFahrenheit(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(1, "EXPERT 2K-FA")
+	state.SetRow(6, "TEMP")
+	state.SetRow(7, "86 F")
+
+	telem := TelemetryFromDisplayState(state, "serial")
+	if telem.TemperatureUnit != "F" || telem.TemperatureDisplay != "86 F" {
+		t.Fatalf("unexpected raw-unit fields: %+v", telem)
+	}
+	if telem.TemperatureC == nil || *telem.TemperatureC != 30 {
+		t.Fatalf("TemperatureC = %v, want 30", telem.TemperatureC)
+	}
+}
+
+func TestParseTemperatureAcceptsDegreeSymbol(t *testing.T) {
+	got, unit, ok := parseTemperature("86 °F")
+	if !ok || unit != "F" || got != 30 {
+		t.Fatalf("parseTemperature = %v, %q, %v; want 30, F, true", got, unit, ok)
+	}
+}
+
 func TestTelemetryFromDisplayStateOperateScreenLeavesModelNameEmptyWhenRowIsNotAModel(t *testing.T) {
 	state := display.NewState()
 	copy(state.Chars[1][:], []byte("PA OUT 0W pep"))

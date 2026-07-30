@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
+	"github.com/FtlC-ian/expert-amp-server/internal/tempunit"
 )
 
 var StatusPollCommand = []byte{0x55, 0x55, 0x55, 0x01, 0x90, 0x90}
@@ -131,19 +132,32 @@ func normalizeStatusFields(fields []string) []string {
 }
 
 func StatusFromFrame(frame []byte, source string) (api.Status, error) {
+	return StatusFromFrameWithTemperatureUnit(frame, source, tempunit.Celsius)
+}
+
+func StatusFromFrameWithTemperatureUnit(frame []byte, source, temperatureUnit string) (api.Status, error) {
 	resp, err := ParseStatusFrame(frame)
 	if err != nil {
 		return api.Status{}, err
 	}
-	return StatusFromResponse(resp, source), nil
+	return StatusFromResponseWithTemperatureUnit(resp, source, temperatureUnit), nil
 }
 
 func StatusFromResponse(resp StatusResponse, source string) api.Status {
+	return StatusFromResponseWithTemperatureUnit(resp, source, tempunit.Celsius)
+}
+
+func StatusFromResponseWithTemperatureUnit(resp StatusResponse, source, temperatureUnit string) api.Status {
+	temperatureUnit, ok := tempunit.Normalize(temperatureUnit)
+	if !ok {
+		temperatureUnit = tempunit.Celsius
+	}
 	status := api.Status{
 		Telemetry: api.Telemetry{
-			Source:     source,
-			Confidence: "protocol-native",
-			Provenance: "status-poll",
+			Source:          source,
+			Confidence:      "protocol-native",
+			Provenance:      "status-poll",
+			TemperatureUnit: temperatureUnit,
 		},
 		BandCode:      resp.BandCode,
 		BandText:      bandTextFromCode(resp.BandCode),
@@ -203,18 +217,21 @@ func StatusFromResponse(resp StatusResponse, source string) api.Status {
 		status.PACurrentDisplay = resp.IPARaw
 	}
 	if t, ok := parseIntFloat(resp.TempUpperRaw); ok {
-		status.TemperatureC = &t
-		status.TemperatureDisplay = formatWholeNumberTemperatureDisplay(t)
+		celsius := tempunit.ToCelsius(t, temperatureUnit)
+		status.TemperatureC = &celsius
+		status.TemperatureDisplay = tempunit.Format(t, temperatureUnit)
 	}
 	if lower, ok := parseIntFloat(resp.TempLowerRaw); ok {
-		status.TemperatureLowerC = &lower
-		status.TemperatureLowerDisplay = formatWholeNumberTemperatureDisplay(lower)
+		celsius := tempunit.ToCelsius(lower, temperatureUnit)
+		status.TemperatureLowerC = &celsius
+		status.TemperatureLowerDisplay = tempunit.Format(lower, temperatureUnit)
 	} else if raw := zeroIf(resp.TempLowerRaw, "0"); raw != "" {
 		status.TemperatureLowerDisplay = raw
 	}
 	if comb, ok := parseIntFloat(resp.TempCombRaw); ok {
-		status.TemperatureCombinerC = &comb
-		status.TemperatureCombinerDisplay = formatWholeNumberTemperatureDisplay(comb)
+		celsius := tempunit.ToCelsius(comb, temperatureUnit)
+		status.TemperatureCombinerC = &celsius
+		status.TemperatureCombinerDisplay = tempunit.Format(comb, temperatureUnit)
 	} else if raw := zeroIf(resp.TempCombRaw, "0"); raw != "" {
 		status.TemperatureCombinerDisplay = raw
 	}
@@ -410,10 +427,6 @@ func zeroIf(v string, zero string) string {
 		return ""
 	}
 	return v
-}
-
-func formatWholeNumberTemperatureDisplay(v float64) string {
-	return fmt.Sprintf("%.0f C", v)
 }
 
 type StatusStreamDecoder struct {

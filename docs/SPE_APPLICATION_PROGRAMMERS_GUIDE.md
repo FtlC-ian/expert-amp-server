@@ -1,4 +1,4 @@
-# SPE Expert Application Programmer’s Guide, agent reference
+# SPE Expert Application Programmer’s Guide reference
 
 Authoritative source: SPE’s Application Programmer’s Guide, Rev 1.1, for Expert 1.3K-FA, 1.5K-FA, and 2K-FA amplifiers.
 

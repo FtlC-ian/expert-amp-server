@@ -282,6 +282,28 @@ func TestStatusFromResponseFormatsNonZeroNumericFields(t *testing.T) {
 	}
 }
 
+func TestStatusFromResponseConvertsConfiguredFahrenheitToCanonicalCelsius(t *testing.T) {
+	status := StatusFromResponseWithTemperatureUnit(StatusResponse{
+		PAIdentifier: "20K",
+		TempUpperRaw: "86",
+		TempLowerRaw: "84",
+		TempCombRaw:  "90",
+	}, "serial", "F")
+
+	if status.TemperatureUnit != "F" || status.TemperatureDisplay != "86 F" {
+		t.Fatalf("unexpected raw-unit fields: %+v", status.Telemetry)
+	}
+	if status.TemperatureC == nil || *status.TemperatureC != 30 {
+		t.Fatalf("TemperatureC = %v, want 30", status.TemperatureC)
+	}
+	if status.TemperatureLowerC == nil || *status.TemperatureLowerC < 28.88 || *status.TemperatureLowerC > 28.89 {
+		t.Fatalf("TemperatureLowerC = %v, want about 28.89", status.TemperatureLowerC)
+	}
+	if status.TemperatureCombinerC == nil || *status.TemperatureCombinerC < 32.22 || *status.TemperatureCombinerC > 32.23 {
+		t.Fatalf("TemperatureCombinerC = %v, want about 32.22", status.TemperatureCombinerC)
+	}
+}
+
 func TestNormalizeStatusFieldsOnlyAcceptsObservedEdgeEmptyCase(t *testing.T) {
 	observed := []string{"", "13K", "S", "R", "A", "2", "05", "4b", "0r", "L", "0000", " 0.00", " 0.00", " 0.0", " 0.0", " 25", "000", "000", "N", "N", ""}
 	normalized := normalizeStatusFields(observed)

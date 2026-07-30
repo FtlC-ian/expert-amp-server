@@ -7,12 +7,15 @@ import (
 	"image/color"
 	"image/png"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/config"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/font"
+	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/render"
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
@@ -27,21 +30,23 @@ type VersionInfo struct {
 }
 
 type Options struct {
-	IndexHTML       []byte
-	DocsHTML        []byte
-	OpenAPIJSON     []byte
-	ROM             *font.ROM
-	Store           *runtime.Store
-	StatusState     *runtime.StatusState
-	SerialSource    *runtime.SerialSource // nil when running in fixture mode
-	DemoState       display.State
-	AltState        display.State
-	Fixtures        runtime.FixtureCatalog
-	Config          *config.Manager
-	ButtonTransport transport.ButtonTransport
-	WakeTransport   transport.WakeTransport
-	RestartServer   func(context.Context) error
-	Version         VersionInfo
+	IndexHTML        []byte
+	DocsHTML         []byte
+	OpenAPIJSON      []byte
+	ROM              *font.ROM
+	Store            *runtime.Store
+	StatusState      *runtime.StatusState
+	SerialSource     *runtime.SerialSource // nil when running in fixture mode
+	DemoState        display.State
+	AltState         display.State
+	Fixtures         runtime.FixtureCatalog
+	Config           *config.Manager
+	SafetyController *monitoring.Controller
+	FanPolicy        *fanpolicy.Controller
+	ButtonTransport  transport.ButtonTransport
+	WakeTransport    transport.WakeTransport
+	RestartServer    func(context.Context) error
+	Version          VersionInfo
 }
 
 type displayStateResponse struct {
@@ -61,21 +66,41 @@ type runtimeStatusResponse struct {
 }
 
 type alarmsResponse struct {
-	Active []string `json:"active"`
-	Source string   `json:"source,omitempty"`
-	Stub   bool     `json:"stub"`
+	Active        []string          `json:"active"`
+	Warnings      []string          `json:"warnings"`
+	WarningCode   string            `json:"warningCode,omitempty"`
+	AlarmCode     string            `json:"alarmCode,omitempty"`
+	Source        string            `json:"source,omitempty"`
+	RecentContact bool              `json:"recentContact"`
+	LastContactAt string            `json:"lastContactAt,omitempty"`
+	Monitor       monitoring.Result `json:"monitor"`
+	Stub          bool              `json:"stub"`
 }
 
 type settingsRequest struct {
-	SerialPort            string            `json:"serialPort"`
-	ListenAddress         string            `json:"listenAddress"`
-	PollingMode           string            `json:"pollingMode"`
-	PollIntervalMs        int               `json:"pollIntervalMs"`
-	DisplayPollingEnabled *bool             `json:"displayPollingEnabled"`
-	StatusPollingEnabled  *bool             `json:"statusPollingEnabled"`
-	PanelModelLabel       string            `json:"panelModelLabel,omitempty"`
-	InputLabels           map[string]string `json:"inputLabels,omitempty"`
-	AntennaLabels         map[string]string `json:"antennaLabels,omitempty"`
+	SerialPort                  *string            `json:"serialPort"`
+	ListenAddress               *string            `json:"listenAddress"`
+	PollingMode                 string             `json:"pollingMode"`
+	PollIntervalMs              *int               `json:"pollIntervalMs"`
+	DisplayPollingEnabled       *bool              `json:"displayPollingEnabled"`
+	StatusPollingEnabled        *bool              `json:"statusPollingEnabled"`
+	AmplifierTemperatureUnit    *string            `json:"amplifierTemperatureUnit,omitempty"`
+	PanelModelLabel             *string            `json:"panelModelLabel,omitempty"`
+	InputLabels                 *map[string]string `json:"inputLabels,omitempty"`
+	AntennaLabels               *map[string]string `json:"antennaLabels,omitempty"`
+	SafetyMonitoringEnabled     *bool              `json:"safetyMonitoringEnabled,omitempty"`
+	OvertemperatureStandbyArmed *bool              `json:"overtemperatureStandbyArmed,omitempty"`
+	TemperatureWarningC         *float64           `json:"temperatureWarningC,omitempty"`
+	TemperatureTripC            *float64           `json:"temperatureTripC,omitempty"`
+	TemperatureResetC           *float64           `json:"temperatureResetC,omitempty"`
+	SWRWarning                  *float64           `json:"swrWarning,omitempty"`
+	SWRTrip                     *float64           `json:"swrTrip,omitempty"`
+	AutomaticFanPolicyEnabled   *bool              `json:"automaticFanPolicyEnabled,omitempty"`
+	FanHighTemperatureC         *float64           `json:"fanHighTemperatureC,omitempty"`
+	FanNormalTemperatureC       *float64           `json:"fanNormalTemperatureC,omitempty"`
+	FanDisplayProfile           *string            `json:"fanDisplayProfile,omitempty"`
+	VerifyFanModeOnStartup      *bool              `json:"verifyFanModeOnStartup,omitempty"`
+	FanBoostDurationMinutes     *int               `json:"fanBoostDurationMinutes,omitempty"`
 
 	SerialBaudRate           *int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      *int  `json:"serialReadTimeoutMs,omitempty"`
@@ -85,6 +110,11 @@ type settingsRequest struct {
 	SerialPollIntervalMs     *int  `json:"serialPollIntervalMs,omitempty"`
 	SerialAssertDTR          *bool `json:"serialAssertDTR,omitempty"`
 	SerialAssertRTS          *bool `json:"serialAssertRTS,omitempty"`
+}
+
+type fanPolicyOverrideRequest struct {
+	Mode            string `json:"mode"`
+	DurationMinutes *int   `json:"durationMinutes,omitempty"`
 }
 
 func selectedStatus(opts Options) api.Status {
@@ -251,8 +281,113 @@ func NewHandler(opts Options) http.Handler {
 		if !allowMethodAPI(w, r, http.MethodGet) {
 			return
 		}
-		snapshot := currentSnapshot(opts.Store)
-		writeAPI(w, http.StatusOK, api.Response{Success: true, Data: alarmsResponse{Active: []string{}, Source: snapshot.Source, Stub: true}})
+		status := selectedStatus(opts)
+		settings := config.Settings{}
+		if opts.Config != nil {
+			settings = opts.Config.Get().Settings
+		}
+		monitor := monitoring.Evaluate(status, settings.SafetyMonitoringEnabled, monitoring.Thresholds{
+			TemperatureWarningC: settings.TemperatureWarningC,
+			TemperatureTripC:    settings.TemperatureTripC,
+			TemperatureResetC:   settings.TemperatureResetC,
+			SWRWarning:          settings.SWRWarning,
+			SWRTrip:             settings.SWRTrip,
+		})
+		monitor = opts.SafetyController.Apply(monitor, settings.OvertemperatureStandbyArmed)
+		writeAPI(w, http.StatusOK, api.Response{Success: true, Data: alarmsResponse{
+			Active:        nonNilStrings(status.ActiveAlarms),
+			Warnings:      nonNilStrings(status.Warnings),
+			WarningCode:   status.WarningCode,
+			AlarmCode:     status.AlarmCode,
+			Source:        status.Source,
+			RecentContact: status.RecentContact,
+			LastContactAt: status.LastContactAt,
+			Monitor:       monitor,
+			Stub:          false,
+		}})
+	})
+
+	mux.HandleFunc("/api/v1/fan-policy", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMethodAPI(w, r, http.MethodGet) {
+			return
+		}
+		if opts.FanPolicy == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, "fan-policy controller unavailable")
+			return
+		}
+		settings := config.Settings{}
+		if opts.Config != nil {
+			settings = opts.Config.Get().Settings
+		}
+		status := opts.StatusState.CurrentProtocolNativeWithContact()
+		result := opts.FanPolicy.View(status, fanPolicySettings(settings))
+		writeAPI(w, http.StatusOK, api.Response{Success: true, Data: result})
+	})
+
+	mux.HandleFunc("/api/v1/fan-policy/override", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMethodAPI(w, r, http.MethodPost) {
+			return
+		}
+		if opts.FanPolicy == nil || opts.Config == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, "fan-policy control unavailable")
+			return
+		}
+		var req fanPolicyOverrideRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		policy, ok := fanPolicyOverride(req.Mode)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, "mode must be automatic, normal, or contest")
+			return
+		}
+		var duration time.Duration
+		if req.DurationMinutes != nil {
+			if *req.DurationMinutes < 1 || *req.DurationMinutes > 10080 {
+				writeAPIError(w, http.StatusBadRequest, "durationMinutes must be between 1 and 10080")
+				return
+			}
+			if policy == "" {
+				writeAPIError(w, http.StatusBadRequest, "durationMinutes is only valid for normal or contest overrides")
+				return
+			}
+			duration = time.Duration(*req.DurationMinutes) * time.Minute
+		}
+		if err := opts.FanPolicy.SetManualOverride(policy, duration); err != nil {
+			writeAPIError(w, http.StatusConflict, err.Error())
+			return
+		}
+		settings := opts.Config.Get().Settings
+		status := opts.StatusState.CurrentProtocolNativeWithContact()
+		result := opts.FanPolicy.UpdateSettings(status, fanPolicySettings(settings))
+		writeAPI(w, http.StatusAccepted, api.Response{
+			Success: true,
+			Message: "manual fan override accepted; the verified transaction will run when RX safety evidence is available",
+			Data:    result,
+		})
+	})
+
+	mux.HandleFunc("/api/v1/fan-policy/verify", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMethodAPI(w, r, http.MethodPost) {
+			return
+		}
+		if opts.FanPolicy == nil || opts.Config == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, "fan-policy control unavailable")
+			return
+		}
+		if err := opts.FanPolicy.RequestVerification("api"); err != nil {
+			writeAPIError(w, http.StatusConflict, err.Error())
+			return
+		}
+		settings := opts.Config.Get().Settings
+		status := opts.StatusState.CurrentProtocolNativeWithContact()
+		result := opts.FanPolicy.UpdateSettings(status, fanPolicySettings(settings))
+		writeAPI(w, http.StatusAccepted, api.Response{
+			Success: true,
+			Message: "fan-mode verification accepted; the verified transaction will run when RX safety evidence is available",
+			Data:    result,
+		})
 	})
 
 	mux.HandleFunc("/api/v1/runtime/snapshot", func(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +462,10 @@ func NewHandler(opts Options) http.Handler {
 			case http.MethodGet:
 				writeAPI(w, http.StatusOK, api.Response{Success: true, Data: opts.Config.Get()})
 			case http.MethodPost:
-				handleSettingsUpdateAPI(w, r, opts.Config)
+				handleSettingsUpdateAPI(w, r, opts.Config, func(settings config.Settings) {
+					status := opts.StatusState.CurrentProtocolNativeWithContact()
+					opts.FanPolicy.UpdateSettings(status, fanPolicySettings(settings))
+				})
 			default:
 				writeMethodNotAllowedAPI(w, []string{http.MethodGet, http.MethodPost})
 			}
@@ -539,11 +677,16 @@ func handleWakeActionAPI(w http.ResponseWriter, r *http.Request, wakeTransport t
 	writeAPI(w, http.StatusOK, api.Response{Success: true, Message: "wake sent", Data: result})
 }
 
-func handleSettingsUpdateAPI(w http.ResponseWriter, r *http.Request, mgr *config.Manager) {
+func handleSettingsUpdateAPI(w http.ResponseWriter, r *http.Request, mgr *config.Manager, settingsApplied func(config.Settings)) {
 	current := mgr.Get()
 	req, err := decodeSettingsRequest(r)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if (req.FanHighTemperatureC != nil && *req.FanHighTemperatureC <= 0) ||
+		(req.FanNormalTemperatureC != nil && *req.FanNormalTemperatureC <= 0) {
+		writeAPIError(w, http.StatusBadRequest, "automatic fan policy thresholds must be greater than zero")
 		return
 	}
 	nextSettings := mergeSettingsRequest(current.Settings, req)
@@ -551,6 +694,9 @@ func handleSettingsUpdateAPI(w http.ResponseWriter, r *http.Request, mgr *config
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if settingsApplied != nil {
+		settingsApplied(next.Settings)
 	}
 	writeAPI(w, http.StatusOK, api.Response{Success: true, Message: settingsMessage(current.Settings, next.Settings), Data: next})
 }
@@ -568,22 +714,74 @@ func mergeSettingsRequest(current config.Settings, req settingsRequest) config.S
 	statusPollingEnabled := pickBool(current.StatusPollingEnabled, req.StatusPollingEnabled)
 	statusPollCommandEnabled := pickBool(current.StatusPollCommandEnabled, firstBool(req.StatusPollCommandEnabled, req.SerialPollEnabled))
 	return config.Settings{
-		SerialPort:               req.SerialPort,
-		ListenAddress:            req.ListenAddress,
-		PollingMode:              mergedPollingMode(current.PollingMode, req, displayPollingEnabled, statusPollingEnabled, statusPollCommandEnabled),
-		PollIntervalMs:           req.PollIntervalMs,
-		DisplayPollingEnabled:    displayPollingEnabled,
-		StatusPollingEnabled:     statusPollingEnabled,
-		PanelModelLabel:          req.PanelModelLabel,
-		InputLabels:              req.InputLabels,
-		AntennaLabels:            req.AntennaLabels,
-		SerialBaudRate:           pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
-		SerialReadTimeoutMs:      pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
-		StatusPollCommandEnabled: statusPollCommandEnabled,
-		StatusPollIntervalMs:     pickPositiveInt(current.StatusPollIntervalMs, firstInt(req.StatusPollIntervalMs, req.SerialPollIntervalMs)),
-		SerialAssertDTR:          pickBool(current.SerialAssertDTR, req.SerialAssertDTR),
-		SerialAssertRTS:          pickBool(current.SerialAssertRTS, req.SerialAssertRTS),
+		SerialPort:                  pickOptionalString(current.SerialPort, req.SerialPort),
+		ListenAddress:               pickOptionalString(current.ListenAddress, req.ListenAddress),
+		PollingMode:                 mergedPollingMode(current.PollingMode, req, displayPollingEnabled, statusPollingEnabled, statusPollCommandEnabled),
+		PollIntervalMs:              pickPositiveInt(current.PollIntervalMs, req.PollIntervalMs),
+		DisplayPollingEnabled:       displayPollingEnabled,
+		StatusPollingEnabled:        statusPollingEnabled,
+		AmplifierTemperatureUnit:    pickOptionalString(current.AmplifierTemperatureUnit, req.AmplifierTemperatureUnit),
+		PanelModelLabel:             pickOptionalString(current.PanelModelLabel, req.PanelModelLabel),
+		InputLabels:                 pickOptionalMap(current.InputLabels, req.InputLabels),
+		AntennaLabels:               pickOptionalMap(current.AntennaLabels, req.AntennaLabels),
+		SafetyMonitoringEnabled:     pickBool(current.SafetyMonitoringEnabled, req.SafetyMonitoringEnabled),
+		OvertemperatureStandbyArmed: pickBool(current.OvertemperatureStandbyArmed, req.OvertemperatureStandbyArmed),
+		TemperatureWarningC:         pickFloat(current.TemperatureWarningC, req.TemperatureWarningC),
+		TemperatureTripC:            pickFloat(current.TemperatureTripC, req.TemperatureTripC),
+		TemperatureResetC:           pickFloat(current.TemperatureResetC, req.TemperatureResetC),
+		SWRWarning:                  pickFloat(current.SWRWarning, req.SWRWarning),
+		SWRTrip:                     pickFloat(current.SWRTrip, req.SWRTrip),
+		AutomaticFanPolicyEnabled:   pickBool(current.AutomaticFanPolicyEnabled, req.AutomaticFanPolicyEnabled),
+		FanHighTemperatureC:         pickFloat(current.FanHighTemperatureC, req.FanHighTemperatureC),
+		FanNormalTemperatureC:       pickFloat(current.FanNormalTemperatureC, req.FanNormalTemperatureC),
+		FanDisplayProfile:           pickOptionalString(current.FanDisplayProfile, req.FanDisplayProfile),
+		VerifyFanModeOnStartup:      pickBool(current.VerifyFanModeOnStartup, req.VerifyFanModeOnStartup),
+		FanBoostDurationMinutes:     pickInt(current.FanBoostDurationMinutes, req.FanBoostDurationMinutes),
+		SerialBaudRate:              pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
+		SerialReadTimeoutMs:         pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
+		StatusPollCommandEnabled:    statusPollCommandEnabled,
+		StatusPollIntervalMs:        pickPositiveInt(current.StatusPollIntervalMs, firstInt(req.StatusPollIntervalMs, req.SerialPollIntervalMs)),
+		SerialAssertDTR:             pickBool(current.SerialAssertDTR, req.SerialAssertDTR),
+		SerialAssertRTS:             pickBool(current.SerialAssertRTS, req.SerialAssertRTS),
 	}
+}
+
+func fanPolicySettings(settings config.Settings) fanpolicy.Settings {
+	return fanpolicy.Settings{
+		Enabled:            settings.AutomaticFanPolicyEnabled,
+		HighTemperatureC:   settings.FanHighTemperatureC,
+		NormalTemperatureC: settings.FanNormalTemperatureC,
+		DisplayProfile:     settings.FanDisplayProfile,
+		SafetyStandbyArmed: settings.SafetyMonitoringEnabled && settings.OvertemperatureStandbyArmed,
+		SafetyStandbyTripC: settings.TemperatureTripC,
+	}
+}
+
+func fanPolicyOverride(mode string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "automatic":
+		return "", true
+	case "normal":
+		return fanpolicy.PolicyNormal, true
+	case "contest":
+		return fanpolicy.PolicyHigh, true
+	default:
+		return "", false
+	}
+}
+
+func pickOptionalString(current string, next *string) string {
+	if next != nil {
+		return *next
+	}
+	return current
+}
+
+func pickOptionalMap(current map[string]string, next *map[string]string) map[string]string {
+	if next != nil {
+		return *next
+	}
+	return current
 }
 
 func mergedPollingMode(current string, req settingsRequest, display, status, statusCommand bool) string {
@@ -619,8 +817,29 @@ func pickBool(current bool, next *bool) bool {
 	return current
 }
 
+func pickFloat(current float64, next *float64) float64 {
+	if next != nil {
+		return *next
+	}
+	return current
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return append([]string(nil), values...)
+}
+
 func pickPositiveInt(current int, next *int) int {
 	if next != nil && *next > 0 {
+		return *next
+	}
+	return current
+}
+
+func pickInt(current int, next *int) int {
+	if next != nil {
 		return *next
 	}
 	return current

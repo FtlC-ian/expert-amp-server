@@ -13,7 +13,7 @@ Expert Amp Server is a small local service that runs near an SPE Expert amplifie
 The server has two jobs:
 
 1. **Ingest binary display frames** from the amp's serial/USB connection and decode them into a structured screen model.
-2. **Expose that state** through a local web UI and a REST API for use by Node-RED, Thetis gauges, scripts, and AI agents.
+2. **Expose that state** through a local web UI and a REST API for use by Node-RED, station dashboards, and scripts.
 3. **Prefer protocol-native status** for machine-readable amp state while keeping display-derived data for mirroring and fallback.
 
 The current service can run from fixture/demo state for development, but the production path is a live serial source configured through the local settings/config file. Live ingest owns display-frame refresh, protocol status polling, button writes, and the shared in-memory snapshot served by the UI and `/api/v1/...` endpoints.
@@ -62,9 +62,11 @@ Handles raw display frames and documented status-poll responses from the amp.
 - `StateFromFrame` — ties those together: validates header → decodes 8×40 chars into a `display.State`
 - `ScreenText` — extracts a plain-text representation from a frame (trims trailing spaces and empty rows)
 - `LoadFixtureState` — loads a `.bin` file from disk, decodes it, and returns both the state and metadata
-- `StatusFromFrame` / `StatusFromResponse` — parse the documented status-poll response into protocol-native `api.Status` fields
+- `StatusFromFrame` / `StatusFromResponse` — parse the documented status-poll response into protocol-native `api.Status` fields, converting unitless amplifier readings into canonical Celsius when configured
 
 This package owns the boundary between "raw bytes from hardware" and "structured display model."
+
+The vendor status response does not identify whether temperature numbers are Celsius or Fahrenheit. `amplifierTemperatureUnit` therefore belongs at this ingest boundary: all `*C` API fields and policy inputs remain canonical Celsius, while display companions retain the configured amplifier unit.
 
 ### `internal/display`
 
@@ -134,7 +136,10 @@ The HTTP server wires everything together. It:
 | `/api/v1/status` | GET | Canonical amp status JSON | Live, prefers protocol-native status poll data |
 | `/api/v1/status/ws` | GET | Canonical amp status websocket | Live |
 | `/api/v1/telemetry` | GET | Canonical telemetry snapshot route | Live runtime snapshot, mainly UI/fallback |
-| `/api/v1/alarms` | GET | Canonical alarms route | Live phase-1 stub |
+| `/api/v1/alarms` | GET | Canonical alarms route | Protocol-native warnings/alarms, monitoring, and optional one-shot overtemperature standby state |
+| `/api/v1/fan-policy` | GET | Fan-policy state | Automatic/manual policy, verification confidence, and recovery state |
+| `/api/v1/fan-policy/override` | POST | Manual fan override | Requests automatic, Normal, or CONTEST through the verified transaction |
+| `/api/v1/fan-policy/verify` | POST | Fan-mode verification | Revalidates the saved amplifier fan mode |
 | `/api/v1/runtime` | GET | Canonical runtime settings/status view | Live |
 | `/api/v1/runtime/snapshot` | GET | Canonical runtime snapshot route | Live |
 | `/api/v1/runtime/ingest` | GET | Canonical ingest diagnostics route | Live |
@@ -163,10 +168,14 @@ runtime.SerialSource
       ├── display frames ──► protocol.StateFromFrame ──► display.State/runtime snapshot
       │                                           │
       │                                           └──► render.Image / render.SVG / display websocket invalidation
+      │                                           │
+      │                                           └──► checksum-valid LCD TX/RX + verified menu waypoints
       │
       └── status poll responses ──► protocol.StatusFromFrame ──► runtime.StatusState
                                                         │
-                                                        └──► /api/v1/status and /api/v1/status/ws
+                                                        ├──► /api/v1/status and /api/v1/status/ws
+                                                        ├──► monitoring.Controller
+                                                        └──► fanpolicy.Controller
 ```
 
 Development/fallback mode:
@@ -179,7 +188,7 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 
 ---
 
-## What is wired vs. what is a stub
+## What is wired vs. what remains deliberately limited
 
 | Capability | Status |
 |---|---|
@@ -196,6 +205,8 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 | General WebSocket / SSE for other live updates | Status and display websocket paths are working; no broad event bus beyond those |
 | OpenAPI spec (`/api/v1/openapi.json`) | Working, served by the app as a conservative phase 1 artifact |
 | Local docs UI (`/api/v1/docs`) | Working, renders the served OpenAPI document into a built-in local reference page |
+| Temperature/SWR monitoring | Working; observational unless overtemperature standby is separately armed |
+| Display-verified fan policy | Working and hardware-confirmed on a First Series 1.3K-FA; other models remain experimental |
 
 ---
 
@@ -206,3 +217,5 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 - **No vendor binaries.** The repo must not include vendor executables. Protocol/font provenance needs to be documented honestly before public release.
 - **API must be boring and stable.** Prefer explicit JSON over cleverness. The canonical REST surface is the current `/api/v1/...` API; older non-v1 routes are compatibility holdovers, not the preferred contract.
 - **Every feature needs tests.** Decoder changes need regression tests against fixture files.
+- **Automatic standby is narrow and one-way.** It may send the documented OPERATE toggle once per latched overtemperature episode only with fresh protocol-native OPERATE and RX evidence. It never acts during TX, retries, powers off, or auto-wakes.
+- **Fan navigation is one verified transaction.** Automatic, manual, and verification requests share the same temporary-STANDBY path, pause every write during TX, stop on unexpected screens, and restore OPERATE only after verified SAVE/home completion when the controller owned the transition.

@@ -91,6 +91,8 @@ var defaultButtonSpecs = []ButtonSpec{
 	{Name: "right", Code: buttonCode(0x10), Safe: true, Comment: "documented front-panel [▼►] key, treated as right navigation until real hardware confirms every mode"},
 	{Name: "down", Code: buttonCode(0x10), Safe: true, Comment: "documented front-panel [▼►] key, exposed as an alias of right and still needs physical confirmation button-by-button"},
 	{Name: "set", Code: buttonCode(0x11), Safe: true, Comment: "confirm or enter"},
+	{Name: "backlight-on", Code: buttonCode(0x82), Safe: true, Comment: "documented BACKLIGHT ON direct command; still needs physical confirmation on every amplifier model"},
+	{Name: "backlight-off", Code: buttonCode(0x83), Safe: true, Comment: "documented BACKLIGHT OFF direct command; still needs physical confirmation on every amplifier model"},
 	{Name: "back", Safe: false, Comment: "blocked because the current docs do not establish a distinct back command separate from the navigation keys"},
 	{Name: "on", Safe: false, Comment: "blocked because the current docs expose POWER and SWITCH OFF but do not establish a distinct ON command"},
 	{Name: "standby", Safe: false, Comment: "blocked because the current docs do not establish a standalone standby button code in the newer direct-command table"},
@@ -106,6 +108,7 @@ func DefaultButtonMap() map[string]ButtonSpec {
 
 type LocalButtonTransport struct {
 	portName string
+	baudRate int
 	opener   serial.PortOpener
 	timeout  time.Duration
 	specs    map[string]ButtonSpec
@@ -173,29 +176,36 @@ func RunWakeSequence(ctx context.Context, port WakeSequencePort, seq WakeSequenc
 
 type LocalWakeTransport struct {
 	portName string
+	baudRate int
 	opener   serial.PortOpener
 	timeout  time.Duration
 	sequence WakeSequence
 }
 
-func NewLocalButtonTransport(portName string, opener serial.PortOpener, timeout time.Duration) *LocalButtonTransport {
+func NewLocalButtonTransport(portName string, baudRate int, opener serial.PortOpener, timeout time.Duration) *LocalButtonTransport {
+	if baudRate <= 0 {
+		baudRate = 115200
+	}
 	if timeout <= 0 {
 		timeout = DefaultButtonTimeout
 	}
 	if opener == nil {
 		opener = serial.OpenRealPort{}
 	}
-	return &LocalButtonTransport{portName: strings.TrimSpace(portName), opener: opener, timeout: timeout, specs: DefaultButtonMap()}
+	return &LocalButtonTransport{portName: strings.TrimSpace(portName), baudRate: baudRate, opener: opener, timeout: timeout, specs: DefaultButtonMap()}
 }
 
-func NewLocalWakeTransport(portName string, opener serial.PortOpener, timeout time.Duration) *LocalWakeTransport {
+func NewLocalWakeTransport(portName string, baudRate int, opener serial.PortOpener, timeout time.Duration) *LocalWakeTransport {
+	if baudRate <= 0 {
+		baudRate = 115200
+	}
 	if timeout <= 0 {
 		timeout = DefaultButtonTimeout
 	}
 	if opener == nil {
 		opener = serial.OpenRealPort{}
 	}
-	return &LocalWakeTransport{portName: strings.TrimSpace(portName), opener: opener, timeout: timeout, sequence: DefaultWakeSequence()}
+	return &LocalWakeTransport{portName: strings.TrimSpace(portName), baudRate: baudRate, opener: opener, timeout: timeout, sequence: DefaultWakeSequence()}
 }
 
 func (t *LocalButtonTransport) SendButton(ctx context.Context, action api.ButtonAction) (api.ActionResult, error) {
@@ -210,7 +220,7 @@ func (t *LocalButtonTransport) SendButton(ctx context.Context, action api.Button
 	frame := frameForCode(*spec.Code)
 	writeCtx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
-	if err := writeFrame(writeCtx, t.opener, t.portName, frame); err != nil {
+	if err := writeFrame(writeCtx, t.opener, t.portName, t.baudRate, frame); err != nil {
 		return api.ActionResult{Name: action.Name, Queued: false, Sent: false, Transport: "serial", FrameHex: hex.EncodeToString(frame)}, err
 	}
 	return api.ActionResult{Name: action.Name, Queued: false, Sent: true, Transport: "serial", FrameHex: hex.EncodeToString(frame)}, nil
@@ -222,7 +232,7 @@ func (t *LocalWakeTransport) SendWake(ctx context.Context) (api.ActionResult, er
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
-	if err := runWake(writeCtx, t.opener, t.portName, t.sequence); err != nil {
+	if err := runWake(writeCtx, t.opener, t.portName, t.baudRate, t.sequence); err != nil {
 		return api.ActionResult{Name: "wake", Queued: false, Sent: false, Transport: "serial-wake"}, err
 	}
 	return api.ActionResult{Name: "wake", Queued: false, Sent: true, Transport: "serial-wake"}, nil
@@ -232,11 +242,11 @@ func frameForCode(code byte) []byte {
 	return []byte{0x55, 0x55, 0x55, 0x01, code, code}
 }
 
-func writeFrame(ctx context.Context, opener serial.PortOpener, portName string, frame []byte) error {
+func writeFrame(ctx context.Context, opener serial.PortOpener, portName string, baudRate int, frame []byte) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("button send canceled: %w", err)
 	}
-	port, err := opener.Open(portName, 115200)
+	port, err := opener.Open(portName, baudRate)
 	if err != nil {
 		return fmt.Errorf("open button transport on %s: %w", portName, err)
 	}
@@ -286,11 +296,11 @@ func tRound(d time.Duration) time.Duration {
 	return d.Round(time.Millisecond)
 }
 
-func runWake(ctx context.Context, opener serial.PortOpener, portName string, seq WakeSequence) error {
+func runWake(ctx context.Context, opener serial.PortOpener, portName string, baudRate int, seq WakeSequence) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("wake canceled: %w", err)
 	}
-	port, err := opener.Open(portName, 115200)
+	port, err := opener.Open(portName, baudRate)
 	if err != nil {
 		return fmt.Errorf("open wake transport on %s: %w", portName, err)
 	}

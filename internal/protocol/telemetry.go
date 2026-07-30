@@ -6,6 +6,7 @@ import (
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/tempunit"
 )
 
 func TelemetryFromDisplayState(state display.State, source string) api.Telemetry {
@@ -62,8 +63,9 @@ func TelemetryFromDisplayState(state display.State, source string) api.Telemetry
 			}
 		case "TEMP":
 			telem.TemperatureDisplay = value
-			if parsed, ok := parseTemperatureC(value); ok {
+			if parsed, unit, ok := parseTemperature(value); ok {
 				telem.TemperatureC = &parsed
+				telem.TemperatureUnit = unit
 			}
 		}
 	}
@@ -100,17 +102,25 @@ func parseFloatDisplay(v string) (float64, bool) {
 	return f, true
 }
 
-func parseTemperatureC(v string) (float64, bool) {
-	clean := strings.TrimSpace(strings.TrimSuffix(v, "C"))
-	clean = strings.TrimSpace(clean)
+func parseTemperature(v string) (float64, string, bool) {
+	clean := strings.TrimSpace(v)
 	if clean == "" || strings.Contains(clean, "--") {
-		return 0, false
+		return 0, "", false
+	}
+	unit := tempunit.Celsius
+	upper := strings.ToUpper(clean)
+	switch {
+	case strings.HasSuffix(upper, "F"):
+		unit = tempunit.Fahrenheit
+		clean = strings.TrimSpace(strings.TrimSuffix(clean[:len(clean)-1], "°"))
+	case strings.HasSuffix(upper, "C"):
+		clean = strings.TrimSpace(strings.TrimSuffix(clean[:len(clean)-1], "°"))
 	}
 	f, err := strconv.ParseFloat(clean, 64)
 	if err != nil {
-		return 0, false
+		return 0, "", false
 	}
-	return f, true
+	return tempunit.ToCelsius(f, unit), unit, true
 }
 
 func displayDerivedModelName(row string) string {

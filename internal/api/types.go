@@ -40,6 +40,7 @@ type Telemetry struct {
 	PACurrent                  *float64 `json:"paCurrent,omitempty"`
 	PACurrentDisplay           string   `json:"paCurrentDisplay,omitempty"`
 	TemperatureC               *float64 `json:"temperatureC,omitempty"`
+	TemperatureUnit            string   `json:"temperatureUnit,omitempty"`
 	TemperatureDisplay         string   `json:"temperatureDisplay,omitempty"`
 	TemperatureLowerC          *float64 `json:"temperatureLowerC,omitempty"`
 	TemperatureLowerDisplay    string   `json:"temperatureLowerDisplay,omitempty"`
