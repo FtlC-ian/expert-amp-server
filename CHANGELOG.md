@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.3.0 - 2026-07-30
+
+Fan control, temperature safety, and cross-model field-test release.
+
+### Added
+
+- Display-verified manual Fan Boost, Fan Normal, Fan Auto, and EEPROM-backed Verify operations.
+- Optional timed Fan Boost, with the timer starting only after CONTEST mode is verified.
+- Disabled-by-default automatic fan cooling with configurable Celsius thresholds and hysteresis.
+- Separately armed, state-gated overtemperature standby protection.
+- Persistent fan-policy receipts that remain explicitly stale until live verification after restart.
+- Canonical temperature-unit handling for amplifiers configured in Celsius or Fahrenheit.
+- Direct vendor-documented backlight on/off actions.
+- Stable Node-RED mappings for power level, power watts, SWR, PA voltage/current, and temperature.
+
+### Changed
+
+- Fan transactions temporarily enter verified STANDBY when required, pause all writes during TX, and restore OPERATE only when the controller owned the transition.
+- Serial button and wake fallbacks now honor the configured baud rate.
+- The 2K-FA is documented as field-confirmed for core server operation at 57600 baud; fan-menu compatibility remains experimental.
+- The OpenAPI document now reflects the v0.3.0 API surface.
+
+### Fixed
+
+- Fixed Node-RED arc gauges that were present but never wired to status data.
+- Fixed ANT SWR incorrectly mirroring ATU SWR even when `antennaSwr` was available.
+- Fixed Backlight On and Backlight Off cycling the display page instead of sending their documented commands.
+- Fixed Fahrenheit-configured amplifiers being interpreted as Celsius by monitoring and fan thresholds.
+- Fixed brief `STORING DATA!` screens being missed between display polls after a verified SAVE.
+
+### Safety and compatibility notes
+
+- Fan control is hardware-confirmed on a First Series Expert 1.3K-FA. Test manual Fan Boost before enabling automatic control on another model.
+- Set `amplifierTemperatureUnit` to match the amplifier SET menu before enabling temperature-based features; the protocol itself is unitless.
+- Automatic fan cooling and overtemperature standby remain disabled unless explicitly enabled.
+- The server is for a trusted station LAN and has no built-in authentication.
+
 ## v0.2.0 - 2026-04-28
 
 Second public release, focused on real field-test feedback, serial polling reliability, and operator UI polish.

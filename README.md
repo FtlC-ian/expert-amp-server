@@ -9,13 +9,14 @@ It is meant for radio-side computers like a Raspberry Pi, an Apache Labs ANAN G2
 - Mirrors the SPE LCD display in a browser.
 - Provides Front Panel and compact Operator layouts for day-to-day amp monitoring and control.
 - Gives you local-network amp controls: operate/standby, power level, antenna, input, tune, display/menu controls, and power-off where supported.
+- Adds display-verified manual and automatic fan cooling with timed Fan Boost, plus optional state-gated overtemperature standby protection.
 - Exposes a documented HTTP/WebSocket API for custom integrations, station dashboards, Node-RED flows, and future Thetis-style gauge work.
 - Ships a bootstrappable Node-RED dashboard example.
 - Includes Raspberry Pi/systemd install notes and a release build helper.
 
 ## What you need
 
-- An SPE Expert amplifier. Development and live testing started on an Expert 1.3K-FA, and a user has reported it running on an Expert 1.5K-FA. 2K-FA still needs confirmation.
+- An SPE Expert amplifier. Development and fan-control hardware testing use a First Series Expert 1.3K-FA. Users have also reported the server working on Expert 1.5K-FA and 2K-FA amplifiers; the reported 2K-FA setup uses 57600 baud.
 - A Raspberry Pi or other small Linux computer near the amp.
 - A USB cable from that computer to the amp's built-in USB Type-B control port. Do not use the separate CAT radio serial ports for Expert Amp Server.
 - A trusted station LAN so your browser, Node-RED host, logger, or radio-control computer can reach the server.
@@ -83,6 +84,18 @@ The app also serves:
 - local API docs at `/api/v1/docs`
 - status websocket at `/api/v1/status/ws`
 - display invalidation websocket at `/api/v1/display/ws`
+
+## Fan cooling and temperature safety
+
+Manual Fan Boost, Fan Normal, Fan Auto, and Verify controls use a display-verified transaction instead of a blind button macro. The controller temporarily enters STANDBY when necessary, pauses all menu writes during TX, verifies each expected LCD screen, saves the setting, and restores OPERATE only when it owned that transition. A timed Fan Boost begins its timer only after CONTEST mode is verified.
+
+This path is hardware-confirmed on a First Series Expert 1.3K-FA. Other Expert models are experimental until users verify their menu layouts. Test manual Fan Boost first; an unexpected screen stops the transaction rather than continuing.
+
+Automatic fan cooling is disabled by default. Optional overtemperature standby is separately armed, requires fresh protocol-native OPERATE and RX status, sends one documented OPERATE toggle per hot episode, and never retries, powers off, or wakes the amplifier.
+
+Important upgrade note: the amplifier status protocol sends temperature numbers without a unit. Before enabling temperature monitoring or fan automation, set `amplifierTemperatureUnit` to match the amplifier SET menu (`C` or `F`). All thresholds and API fields ending in `C` remain canonical Celsius.
+
+The serial rate is also model-specific. The field-reported 2K-FA setup uses `serialBaudRate: 57600`; the First Series 1.3K-FA installation uses `115200`.
 
 ## Documentation
 

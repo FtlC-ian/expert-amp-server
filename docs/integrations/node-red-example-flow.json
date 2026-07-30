@@ -133,7 +133,7 @@
     "type": "function",
     "z": "e7f8cbd87d347be8",
     "name": "Set expertAmpBaseUrl",
-    "func": "// Expert Amp Server base URL\n// Change this to match your installation (e.g. http://192.168.1.100:8088)\nconst baseUrl = 'http://localhost:8088';\nflow.set('expertAmpBaseUrl', baseUrl);\nflow.set('wsConnected', false);\nflow.set('statusTransport', 'startup');\nflow.set('usbOk', false);\nmsg.payload = 'expertAmpBaseUrl=' + baseUrl;\nreturn msg;",
+    "func": "// Expert Amp Server base URL\n// Change this to match your installation (e.g. http://amp-host.local:8088)\nconst baseUrl = 'http://localhost:8088';\nflow.set('expertAmpBaseUrl', baseUrl);\nflow.set('wsConnected', false);\nflow.set('statusTransport', 'startup');\nflow.set('usbOk', false);\nmsg.payload = 'expertAmpBaseUrl=' + baseUrl;\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -390,8 +390,8 @@
     "type": "function",
     "z": "e7f8cbd87d347be8",
     "name": "Fan out levels/gauges/history",
-    "func": "const status = msg.status || {};\nconst atuSwr = status.swr !== undefined && status.swr !== null ? Number(status.swr) : null;\nconst antSwr = atuSwr;\nconst pwrW   = status.powerWatts !== undefined ? Number(status.powerWatts) : null;\nconst pwrPct = pwrW !== null ? Math.min(100, Math.round(pwrW / 15)) : null;\n\nconst atuMsg = atuSwr !== null ? {payload: atuSwr} : null;\nconst antMsg = antSwr !== null ? {payload: antSwr} : null;\nconst pwrMsg = pwrPct !== null ? {payload: pwrPct} : null;\n\nreturn [atuMsg, antMsg, pwrMsg];",
-    "outputs": 3,
+    "func": "const status = msg.status || {};\nconst numberOrNull = value => value !== undefined && value !== null && Number.isFinite(Number(value)) ? Number(value) : null;\nconst atuSwr = numberOrNull(status.swr);\nconst antSwr = numberOrNull(status.antennaSwr) ?? atuSwr;\nconst pwrW = numberOrNull(status.powerWatts);\nconst pwrPct = pwrW !== null ? Math.min(100, Math.round(pwrW / 15)) : null;\nconst volts = numberOrNull(status.paSupplyVoltage);\nconst amps = numberOrNull(status.paCurrent);\nconst temp = numberOrNull(status.temperatureLowerC) ?? numberOrNull(status.temperatureCombinerC) ?? numberOrNull(status.temperatureC);\nconst message = value => value !== null ? {payload: value} : null;\n\nreturn [message(atuSwr), message(antSwr), message(pwrPct), message(pwrW), message(atuSwr), message(volts), message(amps), message(temp)];",
+    "outputs": 8,
     "noerr": 0,
     "initialize": "",
     "finalize": "",
@@ -407,6 +407,21 @@
       ],
       [
         "94747badeb9a33ec"
+      ],
+      [
+        "1ac07f2b26234a6c"
+      ],
+      [
+        "70e8539f10472eb2"
+      ],
+      [
+        "d019f7b6b522c810"
+      ],
+      [
+        "8658fc305da14952"
+      ],
+      [
+        "dae6566f6782a2cf"
       ]
     ]
   },
@@ -1272,7 +1287,7 @@
     "order": 1,
     "width": 2,
     "height": 1,
-    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'display'})\">Backlight<br/>Off</md-button>",
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'backlight-off'})\">Backlight<br/>Off</md-button>",
     "storeOutMessages": true,
     "fwdInMessages": true,
     "resendOnRefresh": false,
@@ -1295,7 +1310,7 @@
     "order": 2,
     "width": 2,
     "height": 1,
-    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'display'})\">Backlight<br/>On</md-button>",
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPEhoverblue\" style=\"background-image :blue\" ng-click=\"send({payload: 'backlight-on'})\">Backlight<br/>On</md-button>",
     "storeOutMessages": true,
     "fwdInMessages": true,
     "resendOnRefresh": false,
@@ -1544,11 +1559,11 @@
     "type": "ui_template",
     "z": "e7f8cbd87d347be8",
     "group": "0bc47e0db6c53ad2",
-    "name": "Fan Quiet or Toggle",
+    "name": "Fan Boost",
     "order": 13,
     "width": 2,
     "height": 1,
-    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPErounded\" style=\"color:#888; background-image:gray\">Fan Quiet<br/>(N/A)</md-button>",
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPErounded\" style=\"color:white; background-image:linear-gradient(180deg,orange,orange)\" ng-click=\"send({payload: 'contest'})\">Fan<br/>Boost</md-button>",
     "storeOutMessages": true,
     "fwdInMessages": true,
     "resendOnRefresh": false,
@@ -1557,7 +1572,9 @@
     "x": 1600,
     "y": 500,
     "wires": [
-      []
+      [
+        "54f54f54f54f54f1"
+      ]
     ]
   },
   {
@@ -1565,11 +1582,11 @@
     "type": "ui_template",
     "z": "e7f8cbd87d347be8",
     "group": "0bc47e0db6c53ad2",
-    "name": "Fan Normal or N/A",
+    "name": "Fan Normal",
     "order": 14,
     "width": 2,
     "height": 1,
-    "format": "<md-button ng-disabled=\"true\" class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPErounded\" style=\"color:#888; background-image:gray\">Fan Normal<br/>(N/A)</md-button>",
+    "format": "<md-button class=\"SPEvibrate SPEfilled SPEtouched SPEmedfont SPErounded\" style=\"color:white; background-image:linear-gradient(180deg,green,green)\" ng-click=\"send({payload: 'normal'})\">Fan<br/>Normal</md-button>",
     "storeOutMessages": true,
     "fwdInMessages": true,
     "resendOnRefresh": false,
@@ -1578,7 +1595,28 @@
     "x": 1600,
     "y": 500,
     "wires": [
-      []
+      [
+        "54f54f54f54f54f1"
+      ]
+    ]
+  },
+  {
+    "id": "54f54f54f54f54f1",
+    "type": "function",
+    "z": "e7f8cbd87d347be8",
+    "name": "Prepare verified fan override",
+    "func": "const mode = String(msg.payload || '').trim().toLowerCase();\nif (mode !== 'contest' && mode !== 'normal' && mode !== 'automatic') {\n  node.warn('unsupported fan override: ' + JSON.stringify(msg.payload));\n  return null;\n}\nconst base = flow.get('expertAmpBaseUrl') || 'http://localhost:8088';\nmsg.url = base + '/api/v1/fan-policy/override';\nmsg.method = 'POST';\nmsg.headers = {'Content-Type': 'application/json'};\nmsg.topic = 'fan ' + mode;\nmsg.payload = {mode: mode};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1840,
+    "y": 500,
+    "wires": [
+      [
+        "497a4503ea2ffa78"
+      ]
     ]
   },
   {
@@ -1586,7 +1624,7 @@
     "type": "comment",
     "z": "e7f8cbd87d347be8",
     "name": "Expert Amp Server Node-RED example - WB2WGH dashboard fidelity pass",
-    "info": "Dashboard-fidelity port of the WB2WGH SPE Linear flow (V1.3) to Expert Amp Server /api/v1.\n\nPreserved from original:\n- SPE Master CSS (SPEvibrate, SPEfilled, SPEtouched, SPErounded, SPEhoverblue, SPEhoverred)\n- Group layout: SPE (width=6) + SPE Auxiliary (width=4) on one tab\n- All 25 original SPE tile names and order\n- All 14 SPE Auxiliary button names and order\n- ui_gauge x5 (order positions 8, 9, 12, 13, 16)\n- ui_level x3 for ATU SWR / ANT SWR / Output Power (order 2, 4, 6)\n- Color-state logic: RX/TX, Mode, PWR Level, Warnings, Alarms\n- Tune static-green button, Power On/Off orange buttons\n\nChanged from original:\n- Serial nodes removed; live status is websocket-first via /api/v1/status/ws with HTTP fallback polling (5s) + GET /api/v1/alarms (10s)\n- Display render invalidation is websocket-first via /api/v1/display/ws, with render.png refreshed only on real snapshot changes\n- Button actions POST to /api/v1/actions/button\n- Logging State shows 'HTTP API' (file/CSV logging removed)\n- USB Status reflects websocket-first/API connectivity, not physical USB\n- USB Sync triggers immediate HTTP status refresh\n- Gauges remapped to promoted API fields for PA volts, PA amps, ANT SWR, plus Power W / SWR / temperatures where available\n- Backlight On/Off mapped to 'display' (closest available action)\n- Fan Quiet / Fan Normal shown as disabled (not in current action table)\n- Bank tile is read-only (bank select not in current API)\n- Display render image added at top on its own refresh path (Expert Amp Server feature)\n- back / on / standby remain blocked per server policy\n\nRequired packages: node-red-dashboard, node-red-contrib-ui-level\nServer default: http://localhost:8088 -- edit 'Set expertAmpBaseUrl' to change.",
+    "info": "Dashboard-fidelity port of the WB2WGH SPE Linear flow (V1.3) to Expert Amp Server /api/v1.\n\nPreserved from original:\n- SPE Master CSS (SPEvibrate, SPEfilled, SPEtouched, SPErounded, SPEhoverblue, SPEhoverred)\n- Group layout: SPE (width=6) + SPE Auxiliary (width=4) on one tab\n- All 25 original SPE tile names and order\n- All 14 SPE Auxiliary button names and order\n- ui_gauge x5 (order positions 8, 9, 12, 13, 16)\n- ui_level x3 for ATU SWR / ANT SWR / Output Power (order 2, 4, 6)\n- Color-state logic: RX/TX, Mode, PWR Level, Warnings, Alarms\n- Tune static-green button, Power On/Off orange buttons\n\nChanged from original:\n- Serial nodes removed; live status is websocket-first via /api/v1/status/ws with HTTP fallback polling (5s) + GET /api/v1/alarms (10s)\n- Display render invalidation is websocket-first via /api/v1/display/ws, with render.png refreshed only on real snapshot changes\n- Button actions POST to /api/v1/actions/button\n- Logging State shows 'HTTP API' (file/CSV logging removed)\n- USB Status reflects websocket-first/API connectivity, not physical USB\n- USB Sync triggers immediate HTTP status refresh\n- Gauges remapped to promoted API fields for PA volts, PA amps, ANT SWR, plus Power W / SWR / temperatures where available\n- Backlight On/Off use the document-backed direct actions\n- Fan Boost / Fan Normal POST verified persistent overrides to /api/v1/fan-policy/override; omitted duration means until explicitly changed\n- Bank tile is read-only (bank select not in current API)\n- Display render image added at top on its own refresh path (Expert Amp Server feature)\n- back / on / standby remain blocked per server policy\n\nRequired packages: node-red-dashboard, node-red-contrib-ui-level\nServer default: http://localhost:8088 -- edit 'Set expertAmpBaseUrl' to change.",
     "x": 240,
     "y": 40,
     "wires": []

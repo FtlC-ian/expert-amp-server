@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
 )
@@ -489,6 +491,117 @@ func TestSerialSourceStatusFrameDoesNotOverwriteDisplaySnapshotTelemetry(t *test
 	if status.Provenance != "status-poll" {
 		t.Fatalf("status provenance = %q, want status-poll", status.Provenance)
 	}
+}
+
+func TestSerialSourceStatusFrameDrivesFanPolicyFromProtocolTemperature(t *testing.T) {
+	statusFrame := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	displayTemp := 99.0
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0"}, &mockSerialOpener{port: &mockSerialPort{}}, Update{
+		Telemetry: api.Telemetry{
+			TemperatureC: &displayTemp,
+			Provenance:   "display-frame",
+		},
+	})
+	controller := fanpolicy.NewController()
+	src.ConfigureFanPolicyController(controller, func() fanpolicy.Settings {
+		return fanpolicy.Settings{
+			Enabled:            true,
+			HighTemperatureC:   30,
+			NormalTemperatureC: 20,
+			DisplayProfile:     fanpolicy.SupportedDisplayProfile,
+		}
+	})
+
+	src.applyStatusFrame(statusFrame)
+
+	result := controller.Current()
+	if result.Observations.MaximumTemperatureC == nil || *result.Observations.MaximumTemperatureC != 25 {
+		t.Fatalf("fan-policy temperature = %v, want protocol-native 25 C", result.Observations.MaximumTemperatureC)
+	}
+	if result.DesiredPolicy != fanpolicy.PolicyUnknown {
+		t.Fatalf("desired policy = %q, want unknown inside hysteresis without prior state", result.DesiredPolicy)
+	}
+	if result.Observations.Provenance != "status-poll" || !result.Observations.RecentContact {
+		t.Fatalf("unexpected observations: %+v", result.Observations)
+	}
+}
+
+func TestSerialSourceAppliesLiveConfiguredFahrenheitUnit(t *testing.T) {
+	statusFrame := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	unit := "F"
+	src := NewSerialSource(SerialSourceConfig{
+		Port:              "/dev/ttyTEST0",
+		TemperatureUnitFn: func() string { return unit },
+	}, &mockSerialOpener{port: &mockSerialPort{}}, Update{})
+
+	src.applyStatusFrame(statusFrame)
+	status := src.StatusState().CurrentProtocolNative()
+	if status.TemperatureC == nil || *status.TemperatureC > -3.88 || *status.TemperatureC < -3.89 ||
+		status.TemperatureDisplay != "25 F" || status.TemperatureUnit != "F" {
+		t.Fatalf("unexpected Fahrenheit status: %+v", status.Telemetry)
+	}
+}
+
+func TestSerialSourcePassesOnlyChecksumValidLCDTXEvidenceToFanController(t *testing.T) {
+	statusFrame := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	displayFrame, err := os.ReadFile("../../fixtures/real_home_status_frame.bin")
+	if err != nil {
+		t.Fatalf("ReadFile fixture: %v", err)
+	}
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0"}, &mockSerialOpener{port: &mockSerialPort{}}, Update{})
+	controller := fanpolicy.NewController()
+	src.ConfigureFanPolicyController(controller, func() fanpolicy.Settings {
+		return fanpolicy.Settings{
+			Enabled:            true,
+			HighTemperatureC:   30,
+			NormalTemperatureC: 20,
+			DisplayProfile:     fanpolicy.SupportedDisplayProfile,
+		}
+	})
+	src.applyStatusFrame(statusFrame)
+
+	src.applyFrame(withLCDTX(t, displayFrame, false))
+	if result := controller.Current(); containsString(result.BlockedBy, "known-lcd-rx") || containsString(result.BlockedBy, "rx") {
+		t.Fatalf("checksum-valid LCD RX was not accepted: %+v", result)
+	}
+	src.applyFrame(withLCDTX(t, displayFrame, true))
+	if result := controller.Current(); !containsString(result.BlockedBy, "rx") {
+		t.Fatalf("checksum-valid LCD TX was not propagated: %+v", result)
+	}
+
+	invalid := withLCDTX(t, displayFrame, false)
+	invalid[len(invalid)-1] ^= 0xff
+	src.applyFrame(invalid)
+	if result := controller.Current(); !containsString(result.BlockedBy, "known-lcd-rx") {
+		t.Fatalf("invalid-checksum LCD frame incorrectly proved RX: %+v", result)
+	}
+}
+
+func withLCDTX(t *testing.T, frame []byte, tx bool) []byte {
+	t.Helper()
+	out := append([]byte(nil), frame...)
+	raw := binary.LittleEndian.Uint16(out[7:9])
+	if tx {
+		raw &^= protocol.LCDFlagTX
+	} else {
+		raw |= protocol.LCDFlagTX
+	}
+	binary.LittleEndian.PutUint16(out[7:9], raw)
+	sum := 0
+	for _, value := range out[7:369] {
+		sum += int(value)
+	}
+	binary.LittleEndian.PutUint16(out[369:371], uint16(sum))
+	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSerialSourceWriteFrameTimeoutRestoresReadTimeout(t *testing.T) {

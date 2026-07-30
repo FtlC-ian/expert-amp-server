@@ -12,8 +12,11 @@ import (
 	"time"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
+	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
+	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
+	"github.com/FtlC-ian/expert-amp-server/internal/tempunit"
 	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
@@ -38,6 +41,7 @@ type SerialSourceConfig struct {
 	PollingModeFn             func() string
 	DisplayPollEnabledFn      func() bool
 	StatusPollEnabledFn       func() bool
+	TemperatureUnitFn         func() string
 	LCDFlagDebug              bool
 }
 
@@ -60,6 +64,7 @@ func DefaultSerialSourceConfig(port string) SerialSourceConfig {
 		AssertRTS:                 true,
 		MinFrameLen:               64,
 		MaxBuffer:                 8192,
+		TemperatureUnitFn:         func() string { return tempunit.Celsius },
 	}
 }
 
@@ -102,8 +107,12 @@ type SerialSource struct {
 	portMu sync.RWMutex
 	port   serial.Port
 
-	writeMu sync.Mutex
-	specs   map[string]transport.ButtonSpec
+	writeMu          sync.Mutex
+	specs            map[string]transport.ButtonSpec
+	safetyController *monitoring.Controller
+	safetySettings   func() monitoring.ControlSettings
+	fanController    *fanpolicy.Controller
+	fanSettings      func() fanpolicy.Settings
 
 	flagDebugMu      sync.Mutex
 	lastUnknownFlags uint16
@@ -130,6 +139,7 @@ func NewSerialSource(cfg SerialSourceConfig, opener serial.PortOpener, initial U
 func (s *SerialSource) Start(ctx context.Context) {
 	ctx, s.cancel = context.WithCancel(ctx)
 	go s.readLoop(ctx)
+	go s.safetyContactLoop(ctx)
 }
 
 // Stop signals the background read loop to exit and waits for it.
@@ -153,6 +163,26 @@ func (s *SerialSource) StatusState() *StatusState {
 		return nil
 	}
 	return s.statusState
+}
+
+func (s *SerialSource) ConfigureSafetyController(controller *monitoring.Controller, settings func() monitoring.ControlSettings) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.safetyController = controller
+	s.safetySettings = settings
+	s.mu.Unlock()
+}
+
+func (s *SerialSource) ConfigureFanPolicyController(controller *fanpolicy.Controller, settings func() fanpolicy.Settings) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.fanController = controller
+	s.fanSettings = settings
+	s.mu.Unlock()
 }
 
 // Diagnostics returns the current ingest diagnostics snapshot.
@@ -204,7 +234,7 @@ func (s *SerialSource) SendWake(ctx context.Context) (api.ActionResult, error) {
 	if opener == nil {
 		opener = serial.OpenRealPort{}
 	}
-	wake := transport.NewLocalWakeTransport(s.cfg.Port, opener, timeoutForContext(ctx))
+	wake := transport.NewLocalWakeTransport(s.cfg.Port, s.cfg.BaudRate, opener, timeoutForContext(ctx))
 	result, err := wake.SendWake(ctx)
 	result.Transport = "serial-live-wake"
 	return result, err
@@ -410,9 +440,17 @@ func (s *SerialSource) applyFrame(frame []byte) {
 		Length:      len(frame),
 		StartOffset: protocol.LCDDataOffset(frame),
 	}
+	var displayTX *bool
+	var displayOperate *bool
 	if flags, ok := protocol.LCDFlagsFromFrame(frame); ok {
 		meta.LCDFlags = apiLCDFlags(flags)
 		s.logLCDFlagDebug(flags, meta.ScreenText)
+		if flags.Validated() && flags.LEDs != nil {
+			tx := flags.LEDs.TX
+			operate := flags.LEDs.Operate
+			displayTX = &tx
+			displayOperate = &operate
+		}
 	}
 	if text, err := protocol.ScreenText(frame); err == nil {
 		meta.ScreenText = text
@@ -439,9 +477,18 @@ func (s *SerialSource) applyFrame(frame []byte) {
 	}
 	s.mu.Unlock()
 
-	s.framesSeen.Add(1)
+	generation := uint64(s.framesSeen.Add(1))
 	s.lastFrameLen.Store(int64(len(frame)))
 	s.lastFrameAt.Store(time.Now().Unix())
+
+	s.mu.RLock()
+	fanController := s.fanController
+	s.mu.RUnlock()
+	if fanController != nil {
+		fanController.ObserveDisplay(fanpolicy.DisplayObservation{
+			State: state, Generation: generation, TX: displayTX, Operate: displayOperate,
+		})
+	}
 }
 
 func (s *SerialSource) logLCDFlagDebug(flags *protocol.LCDFlags, screenText string) {
@@ -496,7 +543,11 @@ func apiLCDFlags(flags *protocol.LCDFlags) *api.LCDFlags {
 }
 
 func (s *SerialSource) applyStatusFrame(frame []byte) {
-	status, err := protocol.StatusFromFrame(frame, "serial")
+	temperatureUnit := tempunit.Celsius
+	if s.cfg.TemperatureUnitFn != nil {
+		temperatureUnit = s.cfg.TemperatureUnitFn()
+	}
+	status, err := protocol.StatusFromFrameWithTemperatureUnit(frame, "serial", temperatureUnit)
 	if err != nil {
 		s.decodeErrors.Add(1)
 		s.setErr(fmt.Sprintf("decode status frame: %v", err))
@@ -505,6 +556,56 @@ func (s *SerialSource) applyStatusFrame(frame []byte) {
 
 	if s.statusState != nil {
 		s.statusState.UpdateProtocolNative(status)
+	}
+	controllerStatus := status
+	controllerStatus.RecentContact = true
+	controllerStatus.LastContactAt = time.Now().UTC().Format(time.RFC3339)
+	s.mu.RLock()
+	safetyController := s.safetyController
+	safetySettings := s.safetySettings
+	fanController := s.fanController
+	fanSettings := s.fanSettings
+	s.mu.RUnlock()
+	if safetyController != nil && safetySettings != nil {
+		safetyController.Observe(context.Background(), controllerStatus, safetySettings())
+	}
+	if fanController != nil && fanSettings != nil {
+		fanController.Observe(controllerStatus, fanSettings())
+	}
+}
+
+func (s *SerialSource) safetyContactLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.RLock()
+			safetyController := s.safetyController
+			fanController := s.fanController
+			fanSettings := s.fanSettings
+			s.mu.RUnlock()
+			if safetyController == nil && fanController == nil {
+				continue
+			}
+			last := s.statusState.protocolUpdatedAt()
+			if !last.IsZero() && time.Since(last) > RecentContactWindow {
+				if safetyController != nil {
+					safetyController.ObserveContactLoss()
+				}
+				if fanController != nil && fanSettings != nil {
+					status := s.statusState.CurrentProtocolNativeWithContact()
+					if !status.RecentContact {
+						fanController.Observe(status, fanSettings())
+					}
+				}
+			}
+			if fanController != nil {
+				fanController.Tick(time.Now())
+			}
+		}
 	}
 }
 

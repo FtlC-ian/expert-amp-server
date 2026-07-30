@@ -16,7 +16,9 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/apidocs"
 	"github.com/FtlC-ian/expert-amp-server/internal/config"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/font"
+	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
@@ -198,6 +200,9 @@ func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.Can
 				settings := cfg.Get().Settings
 				return settings.StatusPollingEnabled && settings.StatusPollCommandEnabled
 			},
+			TemperatureUnitFn: func() string {
+				return cfg.Get().Settings.AmplifierTemperatureUnit
+			},
 		}
 		serialSource = runtime.NewSerialSource(serialCfg, serial.OpenRealPort{}, runtime.Update{
 			State:     fixtures.States["home"],
@@ -233,33 +238,92 @@ func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.Can
 		log.Fatal(err)
 	}
 
+	var rawButtonTransport transport.ButtonTransport
 	var buttonTransport transport.ButtonTransport
 	var wakeTransport transport.WakeTransport
 	if serialSource != nil {
-		buttonTransport = serialSource
+		rawButtonTransport = serialSource
 		wakeTransport = serialSource
 		statusState = serialSource.StatusState()
 	} else if snapshot.Settings.SerialPort != "" {
-		buttonTransport = transport.NewLocalButtonTransport(snapshot.Settings.SerialPort, serial.OpenRealPort{}, transport.DefaultButtonTimeout)
-		wakeTransport = transport.NewLocalWakeTransport(snapshot.Settings.SerialPort, serial.OpenRealPort{}, transport.DefaultButtonTimeout)
+		rawButtonTransport = transport.NewLocalButtonTransport(snapshot.Settings.SerialPort, snapshot.Settings.SerialBaudRate, serial.OpenRealPort{}, transport.DefaultButtonTimeout)
+		wakeTransport = transport.NewLocalWakeTransport(snapshot.Settings.SerialPort, snapshot.Settings.SerialBaudRate, serial.OpenRealPort{}, transport.DefaultButtonTimeout)
+	}
+	var safetyButtonTransport transport.ButtonTransport
+	var fanButtonTransport transport.ButtonTransport
+	if rawButtonTransport != nil {
+		coordinator := transport.NewActuationCoordinator(rawButtonTransport)
+		buttonTransport = coordinator
+		wakeTransport = coordinator.GateWake(wakeTransport)
+		safetyButtonTransport = coordinator.Owner(transport.ActuationOwnerSafety, true)
+		fanButtonTransport = coordinator.Owner(transport.ActuationOwnerFan, false)
+	}
+	safetyController := monitoring.NewController(safetyButtonTransport)
+	fanPolicyController := fanpolicy.NewController(fanButtonTransport)
+	persistedFanState := cfg.FanPolicyState()
+	fanPolicyController.ConfigurePersistence(fanpolicy.PersistentState{
+		ManualOverride:                persistedFanState.ManualOverride,
+		ManualOverrideDurationMinutes: persistedFanState.ManualOverrideDurationMinutes,
+		ManualOverrideUntil:           persistedFanState.ManualOverrideUntil,
+		LastVerifiedPolicy:            persistedFanState.LastVerifiedPolicy,
+		LastVerifiedAt:                persistedFanState.LastVerifiedAt,
+		LastVerifiedSource:            persistedFanState.LastVerifiedSource,
+	}, snapshot.Settings.VerifyFanModeOnStartup, func(state fanpolicy.PersistentState) error {
+		return cfg.UpdateFanPolicyState(config.FanPolicyRuntimeState{
+			ManualOverride:                state.ManualOverride,
+			ManualOverrideDurationMinutes: state.ManualOverrideDurationMinutes,
+			ManualOverrideUntil:           state.ManualOverrideUntil,
+			LastVerifiedPolicy:            state.LastVerifiedPolicy,
+			LastVerifiedAt:                state.LastVerifiedAt,
+			LastVerifiedSource:            state.LastVerifiedSource,
+		})
+	})
+	if serialSource != nil {
+		serialSource.ConfigureSafetyController(safetyController, func() monitoring.ControlSettings {
+			settings := cfg.Get().Settings
+			return monitoring.ControlSettings{
+				Enabled: settings.SafetyMonitoringEnabled,
+				Armed:   settings.OvertemperatureStandbyArmed,
+				Thresholds: monitoring.Thresholds{
+					TemperatureWarningC: settings.TemperatureWarningC,
+					TemperatureTripC:    settings.TemperatureTripC,
+					TemperatureResetC:   settings.TemperatureResetC,
+					SWRWarning:          settings.SWRWarning,
+					SWRTrip:             settings.SWRTrip,
+				},
+			}
+		})
+		serialSource.ConfigureFanPolicyController(fanPolicyController, func() fanpolicy.Settings {
+			settings := cfg.Get().Settings
+			return fanpolicy.Settings{
+				Enabled:            settings.AutomaticFanPolicyEnabled,
+				HighTemperatureC:   settings.FanHighTemperatureC,
+				NormalTemperatureC: settings.FanNormalTemperatureC,
+				DisplayProfile:     settings.FanDisplayProfile,
+				SafetyStandbyArmed: settings.SafetyMonitoringEnabled && settings.OvertemperatureStandbyArmed,
+				SafetyStandbyTripC: settings.TemperatureTripC,
+			}
+		})
 	}
 
 	handler := server.NewHandler(server.Options{
-		IndexHTML:       indexHTML,
-		DocsHTML:        apidocs.MustDocsHTML(),
-		OpenAPIJSON:     apidocs.MustOpenAPIJSON(),
-		ROM:             rom,
-		Store:           store,
-		StatusState:     statusState,
-		SerialSource:    serialSource,
-		DemoState:       demoState,
-		AltState:        altState,
-		Fixtures:        fixtures,
-		Config:          cfg,
-		ButtonTransport: buttonTransport,
-		WakeTransport:   wakeTransport,
-		Version:         server.VersionInfo{Version: Version, Commit: Commit, BuildDate: BuildDate, Channel: Channel},
-		RestartServer:   signal.request,
+		IndexHTML:        indexHTML,
+		DocsHTML:         apidocs.MustDocsHTML(),
+		OpenAPIJSON:      apidocs.MustOpenAPIJSON(),
+		ROM:              rom,
+		Store:            store,
+		StatusState:      statusState,
+		SerialSource:     serialSource,
+		DemoState:        demoState,
+		AltState:         altState,
+		Fixtures:         fixtures,
+		Config:           cfg,
+		SafetyController: safetyController,
+		FanPolicy:        fanPolicyController,
+		ButtonTransport:  buttonTransport,
+		WakeTransport:    wakeTransport,
+		Version:          server.VersionInfo{Version: Version, Commit: Commit, BuildDate: BuildDate, Channel: Channel},
+		RestartServer:    signal.request,
 	})
 
 	return handler, snapshot, poller, serialSource, signal

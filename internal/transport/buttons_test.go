@@ -38,9 +38,11 @@ func (m *mockPort) SetRTS(v bool) error                { m.rts = append(m.rts, v
 type mockOpener struct {
 	port serial.Port
 	err  error
+	baud int
 }
 
-func (m *mockOpener) Open(string, int) (serial.Port, error) {
+func (m *mockOpener) Open(_ string, baud int) (serial.Port, error) {
+	m.baud = baud
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -68,6 +70,8 @@ func TestLocalButtonTransportSendsSafeButton(t *testing.T) {
 		{name: "operate", actionName: "operate", want: []byte{0x55, 0x55, 0x55, 0x01, 0x0d, 0x0d}},
 		{name: "cat", actionName: "cat", want: []byte{0x55, 0x55, 0x55, 0x01, 0x0e, 0x0e}},
 		{name: "set", actionName: " Set ", want: []byte{0x55, 0x55, 0x55, 0x01, 0x11, 0x11}},
+		{name: "backlight on", actionName: "backlight-on", want: []byte{0x55, 0x55, 0x55, 0x01, 0x82, 0x82}},
+		{name: "backlight off", actionName: "backlight-off", want: []byte{0x55, 0x55, 0x55, 0x01, 0x83, 0x83}},
 		{name: "up alias", actionName: "up", want: []byte{0x55, 0x55, 0x55, 0x01, 0x0f, 0x0f}},
 		{name: "down alias", actionName: "down", want: []byte{0x55, 0x55, 0x55, 0x01, 0x10, 0x10}},
 	}
@@ -75,7 +79,8 @@ func TestLocalButtonTransportSendsSafeButton(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			port := &mockPort{}
-			transport := NewLocalButtonTransport("/dev/ttyTEST0", &mockOpener{port: port}, 500*time.Millisecond)
+			opener := &mockOpener{port: port}
+			transport := NewLocalButtonTransport("/dev/ttyTEST0", 57600, opener, 500*time.Millisecond)
 
 			result, err := transport.SendButton(context.Background(), api.ButtonAction{Name: tc.actionName})
 			if err != nil {
@@ -86,6 +91,9 @@ func TestLocalButtonTransportSendsSafeButton(t *testing.T) {
 			}
 			if len(port.written) != 1 {
 				t.Fatalf("writes = %d, want 1", len(port.written))
+			}
+			if opener.baud != 57600 {
+				t.Fatalf("baud = %d, want configured 57600", opener.baud)
 			}
 			got := port.written[0]
 			if len(got) != len(tc.want) {
@@ -101,7 +109,7 @@ func TestLocalButtonTransportSendsSafeButton(t *testing.T) {
 }
 
 func TestLocalButtonTransportRejectsUnsafeOrUnknownButtons(t *testing.T) {
-	transport := NewLocalButtonTransport("/dev/ttyTEST0", &mockOpener{port: &mockPort{}}, time.Second)
+	transport := NewLocalButtonTransport("/dev/ttyTEST0", 115200, &mockOpener{port: &mockPort{}}, time.Second)
 	for _, name := range []string{"back", "on", "standby", "bogus"} {
 		_, err := transport.SendButton(context.Background(), api.ButtonAction{Name: name})
 		actionErr := buttonActionError(err)
@@ -112,7 +120,7 @@ func TestLocalButtonTransportRejectsUnsafeOrUnknownButtons(t *testing.T) {
 }
 
 func TestLocalButtonTransportRequiresPort(t *testing.T) {
-	transport := NewLocalButtonTransport("", nil, time.Second)
+	transport := NewLocalButtonTransport("", 115200, nil, time.Second)
 	_, err := transport.SendButton(context.Background(), api.ButtonAction{Name: "set"})
 	actionErr := buttonActionError(err)
 	if actionErr == nil || actionErr.StatusCode != 503 {
@@ -121,7 +129,7 @@ func TestLocalButtonTransportRequiresPort(t *testing.T) {
 }
 
 func TestLocalButtonTransportSurfacesWriteErrors(t *testing.T) {
-	transport := NewLocalButtonTransport("/dev/ttyTEST0", &mockOpener{port: &mockPort{writeErr: errors.New("serial offline")}}, time.Second)
+	transport := NewLocalButtonTransport("/dev/ttyTEST0", 115200, &mockOpener{port: &mockPort{writeErr: errors.New("serial offline")}}, time.Second)
 	_, err := transport.SendButton(context.Background(), api.ButtonAction{Name: "left"})
 	if err == nil || err.Error() != "write button frame: serial offline" {
 		t.Fatalf("error = %v, want write button frame error", err)
@@ -130,7 +138,7 @@ func TestLocalButtonTransportSurfacesWriteErrors(t *testing.T) {
 
 func TestLocalButtonTransportTimesOutBlockedWrite(t *testing.T) {
 	block := make(chan struct{})
-	transport := NewLocalButtonTransport("/dev/ttyTEST0", &mockOpener{port: &mockPort{blockWrite: block}}, 20*time.Millisecond)
+	transport := NewLocalButtonTransport("/dev/ttyTEST0", 115200, &mockOpener{port: &mockPort{blockWrite: block}}, 20*time.Millisecond)
 	_, err := transport.SendButton(context.Background(), api.ButtonAction{Name: "right"})
 	close(block)
 	if err == nil || err.Error() == "" || !strings.Contains(err.Error(), "button send timeout") {
@@ -158,7 +166,8 @@ func TestRunWakeSequenceJigglesControlLines(t *testing.T) {
 
 func TestLocalWakeTransportUsesWakeSequence(t *testing.T) {
 	port := &mockPort{}
-	wake := NewLocalWakeTransport("/dev/ttyTEST0", &mockOpener{port: port}, time.Second)
+	opener := &mockOpener{port: port}
+	wake := NewLocalWakeTransport("/dev/ttyTEST0", 57600, opener, time.Second)
 	wake.sequence = WakeSequence{Hold: time.Millisecond}
 	result, err := wake.SendWake(context.Background())
 	if err != nil {
@@ -170,10 +179,13 @@ func TestLocalWakeTransportUsesWakeSequence(t *testing.T) {
 	if len(port.dtr) != 3 || len(port.rts) != 2 {
 		t.Fatalf("wake did not toggle control lines: dtr=%v rts=%v", port.dtr, port.rts)
 	}
+	if opener.baud != 57600 {
+		t.Fatalf("baud = %d, want configured 57600", opener.baud)
+	}
 }
 
 func TestLocalWakeTransportRequiresPort(t *testing.T) {
-	wake := NewLocalWakeTransport("", nil, time.Second)
+	wake := NewLocalWakeTransport("", 115200, nil, time.Second)
 	_, err := wake.SendWake(context.Background())
 	actionErr := buttonActionError(err)
 	if actionErr == nil || actionErr.StatusCode != 503 {

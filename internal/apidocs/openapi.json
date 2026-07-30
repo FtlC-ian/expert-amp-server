@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Expert Amp Server API",
-    "version": "0.1.0",
-    "description": "Trusted-LAN HTTP API for Expert Amp Server. The service is intended for local station networks and should not be exposed directly to the public internet. The canonical phase 1 surface lives under /api/v1. This spec intentionally documents current implementation reality, including conservative or fallback-derived fields. It does not treat legacy compatibility routes as canonical, and it does not list older non-v1 aliases except where needed for explanatory context.\n\nStatus honesty rules:\n- GET /api/v1/status is the preferred machine-readable amp status surface.\n- Status fields may be protocol-native, display-derived fallback, compatibility aliases, or current conservative placeholders depending on what the runtime actually knows.\n- GET /api/v1/telemetry remains useful for UI and fallback inspection, but it is not the authoritative automation contract when protocol-native status poll data is available.\n- GET /api/v1/alarms is still a phase 1 stub with an explicit stub flag.\n- The websocket status feed shares the same canonical status model but is described separately because OpenAPI does not model websocket message flow well."
+    "version": "0.3.0",
+    "description": "Trusted-LAN HTTP API for Expert Amp Server. The service is intended for local station networks and should not be exposed directly to the public internet. The canonical phase 1 surface lives under /api/v1. This spec intentionally documents current implementation reality, including conservative or fallback-derived fields. It does not treat legacy compatibility routes as canonical, and it does not list older non-v1 aliases except where needed for explanatory context.\n\nStatus honesty rules:\n- GET /api/v1/status is the preferred machine-readable amp status surface.\n- Status fields may be protocol-native, display-derived fallback, compatibility aliases, or current conservative placeholders depending on what the runtime actually knows.\n- GET /api/v1/telemetry remains useful for UI and fallback inspection, but it is not the authoritative automation contract when protocol-native status poll data is available.\n- GET /api/v1/alarms returns protocol-native warnings/alarms, configurable monitoring, and read-only state for the separately armed one-shot overtemperature standby controller.\n- Active standby requires fresh OPERATE and RX evidence before one documented OPERATE command; the write remains sent/unconfirmed because the protocol cannot correlate a later response.\n- The websocket status feed shares the same canonical status model but is described separately because OpenAPI does not model websocket message flow well."
   },
   "servers": [
     {
@@ -347,13 +347,89 @@
         "tags": [
           "Status"
         ],
-        "summary": "Get phase 1 alarms view",
-        "description": "Current implementation returns an honest stub with active: [] and stub: true.",
+        "summary": "Get active alarms and safety monitoring",
+        "description": "Returns protocol-native vendor warnings and alarms plus configurable temperature and TX-only SWR threshold evaluation. Monitoring is observational by default. A separate explicit arm flag permits one documented OPERATE command per latched overtemperature episode when fresh protocol-native status explicitly says OPERATE and RX. The write remains sent/unconfirmed because the toggle protocol has neither command acknowledgement nor request/response correlation. SWR never actuates. The GET handler only reports state.",
         "responses": {
           "200": {
             "$ref": "#/components/responses/AlarmsResponse"
           },
           "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/fan-policy": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get fan-policy and manual override state",
+        "description": "Returns automatic thresholds, manual override state, hottest protocol-native temperature observation, desired policy and source, last display-verified current policy with confidence/source, persistence status, safety gates, cooldown, and navigation receipt. GET is read-only. Active control requires polling mode both. Users are encouraged to test manual Fan Boost before enabling automatic control. Navigation starts only after protocol status and checksum-valid LCD flags report RX at a recognized home screen, then stops on any menu mismatch. If initially OPERATE, the controller obtains exclusive actuation ownership, requests STANDBY once, and requires newer protocol and LCD STANDBY evidence before SET. It restores OPERATE only after verified SAVE and return home, and only if it owned the original transition. TX pauses all writes and timeouts. Overtemperature safety preempts fan control and suppresses restoration.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/FanPolicyResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/fan-policy/override": {
+      "post": {
+        "tags": [
+          "Actions"
+        ],
+        "summary": "Set a verified fan-mode override",
+        "description": "Requests automatic temperature control, forced Normal, or forced CONTEST through the same fail-closed temporary-STANDBY display-verification transaction. Omitting durationMinutes keeps a Normal or CONTEST override active until another request changes it. Optional durationMinutes expires back to automatic control. The request is accepted before navigation completes; poll GET /api/v1/fan-policy for the verified result.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FanPolicyOverrideRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/FanPolicyResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "503": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/fan-policy/verify": {
+      "post": {
+        "tags": [
+          "Actions"
+        ],
+        "summary": "Verify the persisted amplifier fan mode",
+        "description": "Queues a safe menu transaction that reads the captured FAN MANAGEMENT value, follows the known SAVE path, and refreshes the server-owned verified receipt. Use after startup or a disconnected/manual change. A persisted receipt is stale until this transaction or a complete observed front-panel SAVE sequence refreshes it.",
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/FanPolicyResponse"
+          },
+          "409": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "405": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "503": {
             "$ref": "#/components/responses/ErrorResponse"
           }
         }
@@ -711,6 +787,16 @@
           }
         }
       },
+      "FanPolicyResponse": {
+        "description": "Automatic fan-policy decision envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResponseFanPolicy"
+            }
+          }
+        }
+      },
       "RuntimeStatusResponse": {
         "description": "Runtime polling view envelope",
         "content": {
@@ -932,6 +1018,22 @@
           },
           "data": {
             "$ref": "#/components/schemas/Alarms"
+          }
+        }
+      },
+      "ResponseFanPolicy": {
+        "type": "object",
+        "required": [
+          "success",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/FanPolicy"
           }
         }
       },
@@ -1257,7 +1359,7 @@
       },
       "LCDLEDs": {
         "type": "object",
-        "description": "Front-panel LED states decoded from checksum-valid LCD flags. operate, set, and tune were validated on live hardware; tx follows the adjacent flag bit and should be confirmed with a safe TX capture.",
+        "description": "Front-panel LED states decoded from checksum-valid LCD flags. operate, set, tune, and the 0x0800 tx bit were validated on live Expert 1.3K-FA hardware; other models still need their own confirmation.",
         "properties": {
           "tx": {
             "type": "boolean"
@@ -1348,10 +1450,20 @@
           },
           "temperatureC": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "description": "Canonical Celsius temperature. Unitless status-poll readings are converted using amplifierTemperatureUnit."
+          },
+          "temperatureUnit": {
+            "type": "string",
+            "enum": [
+              "C",
+              "F"
+            ],
+            "description": "Unit associated with temperatureDisplay and the amplifier's raw status-poll reading."
           },
           "temperatureDisplay": {
-            "type": "string"
+            "type": "string",
+            "description": "Operator display value in the amplifier's configured temperature unit."
           },
           "temperatureLowerC": {
             "type": "number",
@@ -1471,6 +1583,9 @@
         "type": "object",
         "required": [
           "active",
+          "warnings",
+          "recentContact",
+          "monitor",
           "stub"
         ],
         "properties": {
@@ -1480,12 +1595,562 @@
               "type": "string"
             }
           },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warningCode": {
+            "type": "string",
+            "description": "Raw protocol status warning code when available."
+          },
+          "alarmCode": {
+            "type": "string",
+            "description": "Raw protocol status alarm code when available."
+          },
           "source": {
             "type": "string"
           },
+          "recentContact": {
+            "type": "boolean"
+          },
+          "lastContactAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "monitor": {
+            "$ref": "#/components/schemas/SafetyMonitor"
+          },
           "stub": {
             "type": "boolean",
-            "example": true
+            "example": false
+          }
+        }
+      },
+      "SafetyMonitor": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "armed",
+          "dryRun",
+          "state",
+          "thresholds",
+          "observations",
+          "conditions",
+          "actionsTaken",
+          "latched",
+          "action"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "armed": {
+            "type": "boolean",
+            "description": "True only when one-shot overtemperature standby is explicitly armed."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "True when overtemperature standby is not armed. SWR remains observational even when false."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "unavailable",
+              "idle",
+              "normal",
+              "warning",
+              "trip"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/SafetyThresholds"
+          },
+          "observations": {
+            "$ref": "#/components/schemas/SafetyObservations"
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SafetyCondition"
+            }
+          },
+          "actionsTaken": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Contains the one guarded standby request description after it has been sent."
+          },
+          "latched": {
+            "type": "boolean",
+            "description": "Prevents another automatic write until temperature falls below the reset threshold."
+          },
+          "action": {
+            "$ref": "#/components/schemas/SafetyAction"
+          }
+        }
+      },
+      "FanPolicy": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "controlActive",
+          "state",
+          "thresholds",
+          "observations",
+          "desiredPolicy",
+          "currentPolicy",
+          "currentPolicyConfidence",
+          "manualOverride",
+          "verification",
+          "pending",
+          "actionAvailable",
+          "blockedBy",
+          "navigation"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether automatic temperature-based fan policy is enabled."
+          },
+          "controlActive": {
+            "type": "boolean",
+            "description": "True when automatic policy, a manual override, or an explicit verification request can drive the verified navigator."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "unavailable",
+              "normal",
+              "blocked",
+              "pending",
+              "navigating",
+              "paused",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "blockedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fail-closed action gates that are not currently satisfied."
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/FanPolicyThresholds"
+          },
+          "observations": {
+            "$ref": "#/components/schemas/FanPolicyObservations"
+          },
+          "desiredPolicy": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "normal",
+              "high-cooling"
+            ]
+          },
+          "desiredPolicySource": {
+            "type": "string",
+            "enum": [
+              "temperature",
+              "manual-override",
+              "verification"
+            ]
+          },
+          "currentPolicy": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "normal",
+              "high-cooling"
+            ],
+            "description": "The last policy verified after the controller's SET-on-SAVE write and a newer captured home screen. STORING DATA! is accepted when observed but can be shorter than one display-poll interval. A persisted value can be stale after restart until reverified."
+          },
+          "currentPolicyVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the last fully verified SAVE and return-home sequence."
+          },
+          "currentPolicyConfidence": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "persisted-stale",
+              "verified-live"
+            ]
+          },
+          "currentPolicySource": {
+            "type": "string",
+            "description": "Source of the verification receipt, such as automatic-temperature, manual-override, startup-verification, api-verification, or observed-front-panel-save."
+          },
+          "manualOverride": {
+            "$ref": "#/components/schemas/FanPolicyManualOverride"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/FanPolicyVerification"
+          },
+          "persistenceError": {
+            "type": "string",
+            "description": "Present when server-owned fan-policy state could not be persisted. Live verified state remains visible but will not survive restart."
+          },
+          "cooldownUntil": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When present, automatic Normal restoration is delayed until this time to limit persistent settings writes. Explicit manual Normal and high cooling are never delayed."
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "actionAvailable": {
+            "type": "boolean",
+            "description": "True when a live button transport exists. The transaction still requires recognized live display waypoints before each write."
+          },
+          "navigation": {
+            "$ref": "#/components/schemas/FanPolicyNavigation"
+          }
+        }
+      },
+      "FanPolicyManualOverride": {
+        "type": "object",
+        "required": [
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "high-cooling"
+            ]
+          },
+          "durationMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10080,
+            "description": "Present while a timed override is waiting for display verification. Its countdown has not started yet."
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Set after a timed override is display-verified and its countdown starts. If both durationMinutes and until are absent, the override remains active until explicitly changed."
+          }
+        }
+      },
+      "FanPolicyVerification": {
+        "type": "object",
+        "required": [
+          "requested"
+        ],
+        "properties": {
+          "requested": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "FanPolicyOverrideRequest": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "normal",
+              "contest"
+            ]
+          },
+          "durationMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10080,
+            "description": "Optional for Normal or CONTEST. The countdown begins after the requested mode is display-verified. Omit to keep the override active until explicitly changed."
+          }
+        }
+      },
+      "FanPolicyNavigation": {
+        "type": "object",
+        "required": [
+          "state",
+          "paused",
+          "actionsTaken"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Idle, failed, complete, or the exact expected display-navigation step."
+          },
+          "lastAction": {
+            "type": "string",
+            "enum": [
+              "operate",
+              "set",
+              "right"
+            ]
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "lastVerifiedScreen": {
+            "type": "string",
+            "description": "Last semantic LCD waypoint verified by the captured profile."
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "True while every menu write and the ordinary waypoint timeout are suspended for TX or missing checksum-valid LCD RX evidence."
+          },
+          "pauseReason": {
+            "type": "string",
+            "description": "Why navigation is paused and what RX evidence is required before the exact expected waypoint can resume it."
+          },
+          "mayBeInMenu": {
+            "type": "boolean",
+            "description": "Conservative flag indicating a SET write may have reached the amp and the server has not since verified the home screen."
+          },
+          "changedOperatingState": {
+            "type": "boolean",
+            "description": "True after this transaction has verified that its OPERATE command moved the amplifier into STANDBY."
+          },
+          "restoreOperatePending": {
+            "type": "boolean",
+            "description": "True when this transaction originally disabled OPERATE and restoration is still pending or requires operator recovery."
+          },
+          "recoveryState": {
+            "type": "string",
+            "enum": [
+              "not-needed",
+              "operator-required"
+            ],
+            "description": "Automatic menu recovery is disabled until a safe EXIT path is hardware-captured."
+          },
+          "recoveryInstructions": {
+            "type": "string",
+            "description": "Physical-front-panel recovery guidance when the amplifier may remain in a menu."
+          },
+          "actionsTaken": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "operate",
+                "set",
+                "right"
+              ]
+            }
+          }
+        }
+      },
+      "FanPolicyThresholds": {
+        "type": "object",
+        "required": [
+          "highTemperatureC",
+          "normalTemperatureC"
+        ],
+        "properties": {
+          "highTemperatureC": {
+            "type": "number",
+            "format": "double"
+          },
+          "normalTemperatureC": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "FanPolicyObservations": {
+        "type": "object",
+        "required": [
+          "recentContact"
+        ],
+        "properties": {
+          "maximumTemperatureC": {
+            "type": "number",
+            "format": "double"
+          },
+          "temperatureSensor": {
+            "type": "string",
+            "enum": [
+              "upper",
+              "lower",
+              "combiner"
+            ]
+          },
+          "operatingState": {
+            "type": "string"
+          },
+          "tx": {
+            "type": "boolean"
+          },
+          "recentContact": {
+            "type": "boolean"
+          },
+          "provenance": {
+            "type": "string"
+          },
+          "modelName": {
+            "type": "string"
+          }
+        }
+      },
+      "SafetyAction": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "pending",
+              "sent",
+              "unconfirmed",
+              "failed"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "enum": [
+              "standby"
+            ]
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": "string"
+          },
+          "observation": {
+            "type": "string",
+            "description": "Later status/contact evidence without claiming a protocol command acknowledgement."
+          }
+        }
+      },
+      "SafetyThresholds": {
+        "type": "object",
+        "properties": {
+          "temperatureWarningC": {
+            "type": "number",
+            "format": "double"
+          },
+          "temperatureTripC": {
+            "type": "number",
+            "format": "double"
+          },
+          "temperatureResetC": {
+            "type": "number",
+            "format": "double",
+            "description": "Latch reset threshold. When zero/unset, temperatureWarningC is used."
+          },
+          "swrWarning": {
+            "type": "number",
+            "format": "double"
+          },
+          "swrTrip": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "SafetyObservations": {
+        "type": "object",
+        "properties": {
+          "maximumTemperatureC": {
+            "type": "number",
+            "format": "double"
+          },
+          "temperatureSensor": {
+            "type": "string",
+            "enum": [
+              "upper",
+              "lower",
+              "combiner"
+            ]
+          },
+          "maximumSwr": {
+            "type": "number",
+            "format": "double"
+          },
+          "swrSource": {
+            "type": "string",
+            "enum": [
+              "atu",
+              "antenna"
+            ]
+          },
+          "tx": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SafetyCondition": {
+        "type": "object",
+        "required": [
+          "metric",
+          "state",
+          "warningThreshold",
+          "tripThreshold",
+          "evaluated"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string",
+            "enum": [
+              "temperatureC",
+              "swr"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "unavailable",
+              "idle",
+              "normal",
+              "warning",
+              "trip"
+            ]
+          },
+          "value": {
+            "type": "number",
+            "format": "double"
+          },
+          "warningThreshold": {
+            "type": "number",
+            "format": "double"
+          },
+          "tripThreshold": {
+            "type": "number",
+            "format": "double"
+          },
+          "evaluated": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
           }
         }
       },
@@ -1607,6 +2272,15 @@
           "statusPollingEnabled": {
             "type": "boolean"
           },
+          "amplifierTemperatureUnit": {
+            "type": "string",
+            "enum": [
+              "C",
+              "F"
+            ],
+            "default": "C",
+            "description": "Unit selected in the amplifier SET menu for unitless status-poll temperature values. API *C fields and all safety/fan thresholds remain Celsius."
+          },
           "serialBaudRate": {
             "type": "integer"
           },
@@ -1652,6 +2326,70 @@
               "type": "string"
             },
             "description": "Optional cosmetic labels for antenna ports keyed by antenna number as a string."
+          },
+          "safetyMonitoringEnabled": {
+            "type": "boolean",
+            "description": "Enables threshold evaluation. This alone remains observational."
+          },
+          "overtemperatureStandbyArmed": {
+            "type": "boolean",
+            "description": "Explicitly arms one guarded OPERATE-to-STANDBY request per overtemperature episode. Defaults false."
+          },
+          "temperatureWarningC": {
+            "type": "number",
+            "format": "double"
+          },
+          "temperatureTripC": {
+            "type": "number",
+            "format": "double"
+          },
+          "temperatureResetC": {
+            "type": "number",
+            "format": "double"
+          },
+          "swrWarning": {
+            "type": "number",
+            "format": "double"
+          },
+          "swrTrip": {
+            "type": "number",
+            "format": "double"
+          },
+          "automaticFanPolicyEnabled": {
+            "type": "boolean",
+            "description": "Enables the disabled-by-default display-verified automatic fan-policy controller. Manual Fan Boost testing is recommended first. Requires pollingMode both. If initially OPERATE, the controller temporarily enters and verifies STANDBY for the menu transaction, then restores OPERATE only after a verified save. Every write is RX-only and TX pauses navigation."
+          },
+          "fanHighTemperatureC": {
+            "type": "number",
+            "format": "double",
+            "default": 50,
+            "description": "Requests the model's verified high-cooling policy at or above this temperature."
+          },
+          "fanNormalTemperatureC": {
+            "type": "number",
+            "format": "double",
+            "default": 42,
+            "description": "Requests Normal fan policy at or below this temperature. Must be at least 5 C below fanHighTemperatureC; a verified high-cooling SAVE starts a 15-minute Normal-only restore cooldown."
+          },
+          "fanDisplayProfile": {
+            "type": "string",
+            "enum": [
+              "",
+              "expert-1.3k-fa-first-series-v1"
+            ],
+            "description": "Legacy compatibility field. The current experimental path is selected automatically and verifies observed screens at runtime."
+          },
+          "verifyFanModeOnStartup": {
+            "type": "boolean",
+            "default": false,
+            "description": "Queues one verified menu transaction after process startup so an EEPROM-backed fan mode changed while disconnected is not trusted from the persisted receipt alone."
+          },
+          "fanBoostDurationMinutes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10080,
+            "default": 0,
+            "description": "Built-in UI default for manual Fan Boost. Zero means until explicitly changed."
           }
         }
       },
@@ -1673,6 +2411,15 @@
           },
           "statusPollingEnabled": {
             "type": "boolean"
+          },
+          "amplifierTemperatureUnit": {
+            "type": "string",
+            "enum": [
+              "C",
+              "F"
+            ],
+            "default": "C",
+            "description": "Must match the amplifier SET-menu temperature unit. Takes effect on the next status frame; API *C fields and all safety/fan thresholds remain Celsius."
           },
           "serialBaudRate": {
             "type": "integer"
@@ -1727,6 +2474,78 @@
               "type": "string"
             },
             "description": "Optional cosmetic labels for antenna ports keyed by antenna number as a string."
+          },
+          "safetyMonitoringEnabled": {
+            "type": "boolean",
+            "description": "Enables threshold evaluation. At least one complete warning/trip pair is required when true."
+          },
+          "overtemperatureStandbyArmed": {
+            "type": "boolean",
+            "description": "Separately opts in to one guarded OPERATE-to-STANDBY request per latched overtemperature episode. Requires enabled monitoring and a complete temperature pair."
+          },
+          "temperatureWarningC": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "temperatureTripC": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "temperatureResetC": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "description": "Must be below temperatureTripC when set; zero uses temperatureWarningC."
+          },
+          "swrWarning": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "swrTrip": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "automaticFanPolicyEnabled": {
+            "type": "boolean",
+            "description": "Explicitly enables fan-policy evaluation. Defaults false and requires pollingMode both. Manual Fan Boost testing is recommended first. Navigation starts only for Expert-family model telemetry from a verified RX home screen, temporarily enters verified STANDBY when initially OPERATE, pauses all writes during TX, and restores OPERATE only after verified save completion."
+          },
+          "fanHighTemperatureC": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0.1,
+            "default": 50,
+            "description": "Must be at least 5 C greater than fanNormalTemperatureC and, when overtemperature standby is armed, lower than temperatureTripC."
+          },
+          "fanNormalTemperatureC": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0.1,
+            "default": 42,
+            "description": "Must be at least 5 C lower than fanHighTemperatureC. Normal restoration is held for 15 minutes after a verified high-cooling SAVE."
+          },
+          "fanDisplayProfile": {
+            "type": "string",
+            "enum": [
+              "",
+              "expert-1.3k-fa-first-series-v1"
+            ],
+            "description": "Legacy compatibility field; no longer required to use the experimental verified path."
+          },
+          "verifyFanModeOnStartup": {
+            "type": "boolean",
+            "default": false,
+            "description": "Requests a verified fan-mode read/save transaction after each process start. The last verified receipt is server-owned and is not accepted through the settings API."
+          },
+          "fanBoostDurationMinutes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10080,
+            "default": 0,
+            "description": "Built-in UI default for manual Fan Boost. Zero means until explicitly changed."
           }
         }
       },
@@ -1761,7 +2580,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Document-backed action name. Current supported names include input, band-, band+, antenna, l-, l+, c-, c+, tune, off, power, display, operate, cat, left, right, up, down, and set. back, on, and standby remain blocked on this endpoint; use POST /api/v1/actions/wake for the experimental wake path."
+            "description": "Document-backed action name. Current supported names include input, band-, band+, antenna, l-, l+, c-, c+, tune, off, power, display, operate, cat, left, right, up, down, set, backlight-on, and backlight-off. back, on, and standby remain blocked on this endpoint; use POST /api/v1/actions/wake for the experimental wake path."
           }
         }
       },

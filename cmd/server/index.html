@@ -184,6 +184,17 @@
     }
     .settings-status.ok  { color: #7ac97a; }
     .settings-status.err { color: #c97a7a; }
+    .settings-runtime {
+      background: #0f140f;
+      border: 1px solid #283628;
+      border-radius: 7px;
+      color: #93a693;
+      font-family: ui-monospace, monospace;
+      font-size: 0.74rem;
+      line-height: 1.5;
+      padding: 9px 11px;
+      white-space: pre-wrap;
+    }
     .local-badge {
       display: inline-block;
       font-size: 0.65rem;
@@ -643,6 +654,47 @@
       margin-bottom: 6px;
     }
     .operator-meter-value.dim { color: #536553; }
+    .operator-fan-mode {
+      margin-top: 6px;
+      padding: 4px 6px;
+      border: 1px solid #7d6524;
+      border-radius: 6px;
+      background: #211d10;
+      color: #f0cf72;
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    .operator-fan-mode.stale {
+      border-color: #4b5145;
+      background: #171a15;
+      color: #9da696;
+    }
+    .operator-fan-notice {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      padding: 8px 10px;
+      border: 1px solid #7d6524;
+      border-radius: 8px;
+      background: #211d10;
+      color: #f0d68d;
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+    .operator-fan-notice[hidden] { display: none; }
+    .operator-fan-notice button {
+      border: 0;
+      background: transparent;
+      color: #d3bb79;
+      font: inherit;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0 2px;
+      cursor: pointer;
+    }
     .operator-meter-rail {
       height: 7px;
       border-radius: 999px;
@@ -1208,6 +1260,10 @@
 
         <div class="operator-layout-grid">
           <div class="operator-column">
+            <div class="operator-fan-notice" id="operator-fan-notice" role="status" hidden>
+              <span id="operator-fan-notice-text"></span>
+              <button type="button" id="operator-fan-notice-close" aria-label="Dismiss fan-mode notice" onclick="dismissFanNotice()">×</button>
+            </div>
             <div class="operator-display-tier" id="operator-display-tier">
               <div class="operator-card operator-display-card" id="operator-display-card">
                 <div class="operator-display-toolbar">
@@ -1344,6 +1400,7 @@
                   <div class="operator-meter-label">Temp</div>
                   <div class="operator-meter-value dim" id="op-temp-main">–</div>
                   <div class="operator-meter-rail"><span class="operator-meter-fill" id="op-temp-main-fill" style="--meter-fill: 10%;"></span></div>
+                  <div class="operator-fan-mode" id="op-fan-mode" hidden></div>
                 </div>
                 <div class="operator-meter">
                   <div class="operator-meter-label">Lower temp</div>
@@ -1380,6 +1437,10 @@
                     <button class="operator-mock-btn" onclick="sendButton('c+')">C+</button>
                     <button class="operator-mock-btn" onclick="sendButton('display')">DSP</button>
                     <button class="operator-mock-btn" onclick="sendButton('cat')">CAT</button>
+                    <button class="operator-mock-btn" onclick="setFanOverride('contest')">Fan Boost</button>
+                    <button class="operator-mock-btn" onclick="setFanOverride('normal')">Fan Normal</button>
+                    <button class="operator-mock-btn" onclick="setFanOverride('automatic')">Fan Auto</button>
+                    <button class="operator-mock-btn" onclick="verifyFanMode()">Verify Fan Mode</button>
                   </div>
                   <div class="operator-lane-placeholder operator-help-only" style="margin-top:8px;">
                     These are document-backed transport mappings and still need physical confirmation on real hardware before we fully trust every mapped effect. On/wake is an experimental FTDI DTR/RTS wake path, not a normal front-panel action. Not available as normal front-panel actions: Back, Standby.
@@ -1489,7 +1550,7 @@
 
           <div class="settings-row">
             <label class="settings-label" for="s-panel-model-label">Panel model / callsign label</label>
-            <input id="s-panel-model-label" class="settings-input" type="text" maxlength="32" placeholder="auto, 1.5K-FA, AF5SH">
+            <input id="s-panel-model-label" class="settings-input" type="text" maxlength="32" placeholder="auto, 1.5K-FA, N0CALL">
           </div>
           <p class="settings-hint">Cosmetic label for the amp-shaped Front Panel corner. Blank uses detected model text. This does not change API status or protocol identity.</p>
 
@@ -1539,6 +1600,102 @@
         <p class="settings-hint">Restart asks this process to exit cleanly. It only comes back automatically when Expert Amp Server is being run under a supervisor such as systemd, launchd, Docker restart policy, or a similar service wrapper.</p>
       </div>
 
+      <!-- Safety Monitoring -->
+      <div class="settings-card">
+        <div class="settings-card-title">Safety Monitoring</div>
+        <p class="needs-restart-note">Evaluates protocol-native temperature and SWR readings. Monitoring is observational by default. Active standby requires a separate explicit opt-in and sends one state-gated OPERATE command; it never navigates menus, acts during TX, powers off, retries, or turns the amplifier back on.</p>
+
+        <div class="settings-section" style="margin-top:14px;">
+          <div class="settings-checkbox-row">
+            <input type="checkbox" id="s-safety-monitoring-enabled">
+            <label class="settings-checkbox-label" for="s-safety-monitoring-enabled">Enable safety monitoring</label>
+          </div>
+          <div class="settings-checkbox-row">
+            <input type="checkbox" id="s-overtemperature-standby-armed">
+            <label class="settings-checkbox-label" for="s-overtemperature-standby-armed">Arm one-shot overtemperature standby</label>
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-amplifier-temperature-unit">Amplifier temperature unit</label>
+            <select id="s-amplifier-temperature-unit" class="settings-input">
+              <option value="C">Celsius (°C)</option>
+              <option value="F">Fahrenheit (°F)</option>
+            </select>
+          </div>
+          <p class="settings-hint">Match the temperature unit selected in the amplifier's SET menu. The status protocol sends numbers without a unit. Safety and automatic fan thresholds below always remain Celsius.</p>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-temperature-warning">Temperature warning (°C)</label>
+            <input id="s-temperature-warning" class="settings-input" type="number" min="0" step="0.1" placeholder="unset">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-temperature-trip">Temperature trip (°C)</label>
+            <input id="s-temperature-trip" class="settings-input" type="number" min="0" step="0.1" placeholder="unset">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-temperature-reset">Temperature latch reset (°C)</label>
+            <input id="s-temperature-reset" class="settings-input" type="number" min="0" step="0.1" placeholder="warning threshold">
+          </div>
+          <p class="settings-hint">The warning value must be lower than the trip value. Reset must be below trip; when unset, warning is used. The hottest available upper, lower, or combiner sensor is evaluated. A trip requests STANDBY only when fresh protocol status explicitly reports OPERATE and RX. If automatic fan cooling is enabled, its high threshold must remain below this trip threshold. The toggle remains sent/unconfirmed because the protocol cannot correlate its response. It never retries or auto-wakes.</p>
+
+          <div class="settings-row">
+            <label class="settings-label" for="s-swr-warning">SWR warning</label>
+            <input id="s-swr-warning" class="settings-input" type="number" min="0" step="0.01" placeholder="unset">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-swr-trip">SWR trip</label>
+            <input id="s-swr-trip" class="settings-input" type="number" min="0" step="0.01" placeholder="unset">
+          </div>
+          <p class="settings-hint">SWR is evaluated only while TX is active, using the higher available ATU-side or antenna-side reading. SWR remains observational and never actuates the amplifier.</p>
+        </div>
+
+        <div class="settings-action-row">
+          <button class="settings-save-btn" id="save-safety-monitoring">Save Safety Monitoring</button>
+          <span class="settings-status" id="safety-monitoring-status"></span>
+        </div>
+      </div>
+
+      <!-- Automatic Fan Policy -->
+      <div class="settings-card">
+        <div class="settings-card-title">Automatic Fan Cooling</div>
+        <p class="needs-restart-note">Experimental and disabled by default. We recommend testing Fan Boost manually before enabling automatic fan cooling. The server verifies each observed menu waypoint and stops if your amplifier's screens do not match the known path. If the test fails, disable fan control and report your amplifier model and firmware version. During a transaction it waits for verified RX, temporarily changes OPERATE to STANDBY when necessary, and restores OPERATE only when it owned that change.</p>
+
+        <div class="settings-section" style="margin-top:14px;">
+          <div class="settings-checkbox-row">
+            <input type="checkbox" id="s-automatic-fan-policy-enabled">
+            <label class="settings-checkbox-label" for="s-automatic-fan-policy-enabled">Enable automatic fan-policy switching</label>
+          </div>
+          <div class="settings-checkbox-row">
+            <input type="checkbox" id="s-verify-fan-mode-on-startup">
+            <label class="settings-checkbox-label" for="s-verify-fan-mode-on-startup">Verify saved fan mode after server startup</label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-fan-boost-duration">Fan Boost duration</label>
+            <select id="s-fan-boost-duration" class="settings-input">
+              <option value="0">Until explicitly changed</option>
+              <option value="15">15 minutes after verification</option>
+              <option value="30">30 minutes after verification</option>
+              <option value="60">60 minutes after verification</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-fan-high-temperature">Switch to high cooling at or above (°C)</label>
+            <input id="s-fan-high-temperature" class="settings-input" type="number" min="0.1" step="0.1" value="50">
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="s-fan-normal-temperature">Return to Normal at or below (°C)</label>
+            <input id="s-fan-normal-temperature" class="settings-input" type="number" min="0.1" step="0.1" value="42">
+          </div>
+          <p class="settings-hint">Requires Polling mode Both and at least 5 °C between thresholds. We recommend testing Fan Boost before enabling automatic mode. Menu entry, fan changes, and SAVE are RX-only. Any unexpected screen or failed write stops the transaction; follow the runtime recovery instructions before trying again.</p>
+          <div class="settings-runtime" id="fan-policy-runtime">Runtime state not loaded.</div>
+        </div>
+
+        <div class="settings-action-row">
+          <button class="settings-save-btn" id="save-fan-policy">Save Fan Policy</button>
+          <span class="settings-status" id="fan-policy-status"></span>
+        </div>
+      </div>
+
       <!-- Advanced Serial (server config) -->
       <div class="settings-card">
         <div class="settings-card-title">
@@ -1554,6 +1711,7 @@
               <label class="settings-label" for="s-baud">Baud rate</label>
               <input id="s-baud" class="settings-input" type="number" min="300" value="115200">
             </div>
+            <p class="settings-hint">Model-specific: the field-tested 2K-FA setup uses 57600; the First Series 1.3K-FA setup uses 115200.</p>
 
             <div class="settings-row">
               <label class="settings-label" for="s-read-timeout">Read timeout (ms)</label>
@@ -1600,7 +1758,10 @@
             <div class="api-row"><span class="api-path">/api/v1/display/frame</span><span class="api-desc">raw frame metadata</span></div>
             <div class="api-row"><span class="api-path">/api/v1/status</span><span class="api-desc">preferred automation status surface, backed by the documented status poll where available and conservative about unknowns</span></div>
             <div class="api-row"><span class="api-path">/api/v1/telemetry</span><span class="api-desc">phase-1 telemetry: model, state, band/input/antenna, CAT, output, SWR, temperature, and known unknowns</span></div>
-            <div class="api-row"><span class="api-path">/api/v1/alarms</span><span class="api-desc">active alarms (stub in phase 1)</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/alarms</span><span class="api-desc">protocol-native warnings/alarms, safety evaluation, and one-shot overtemperature standby state</span></div>
+            <div class="api-row"><span class="api-path">/api/v1/fan-policy</span><span class="api-desc">read-only automatic fan-policy decision, thresholds, observations, and availability</span></div>
+            <div class="api-row"><span class="api-path">POST /api/v1/fan-policy/override</span><span class="api-desc">request automatic, Normal, or CONTEST mode through verified navigation</span></div>
+            <div class="api-row"><span class="api-path">POST /api/v1/fan-policy/verify</span><span class="api-desc">verify the EEPROM-backed fan mode through the captured menu path</span></div>
             <div class="api-row"><span class="api-path">/api/v1/runtime/snapshot</span><span class="api-desc">full runtime snapshot</span></div>
             <div class="api-row"><span class="api-path">/api/v1/runtime/ingest</span><span class="api-desc">serial ingest diagnostics</span></div>
             <div class="api-row"><span class="api-path">/api/v1/runtime</span><span class="api-desc">runtime settings view</span></div>
@@ -1855,7 +2016,7 @@
       const inputButtonText = inputText;
       const powerButtonText = powerText;
 
-      const mainTempText = typeof data.temperatureC === 'number' ? data.temperatureC.toFixed(0) + ' °C' : data.temperatureDisplay;
+      const mainTempText = data.temperatureDisplay || (typeof data.temperatureC === 'number' ? data.temperatureC.toFixed(0) + ' °C' : null);
       setTelemValue('op-temp-main', mainTempText);
       setTelemValue('op-band', band ? 'Band ' + band : null);
       setTelemValue('op-power-out', powerWatts || data.outputLevel);
@@ -1863,8 +2024,8 @@
       setTelemValue('op-atu-swr', atuSwrText);
       setTelemValue('op-volts', paVoltsText);
       setTelemValue('op-amps', paCurrentText);
-      setTelemValue('op-temp-lower', lowerTempText || data.temperatureDisplay);
-      setTelemValue('op-temp-combiner', combinerTempText || data.temperatureDisplay);
+      setTelemValue('op-temp-lower', data.temperatureLowerDisplay || lowerTempText || data.temperatureDisplay);
+      setTelemValue('op-temp-combiner', data.temperatureCombinerDisplay || combinerTempText || data.temperatureDisplay);
       setTelemValue('op-tx', txState || opState ? (txState || opState) : 'Receive / transmit state unavailable');
 
       const bank = document.getElementById('op-antenna-bank');
@@ -2008,6 +2169,10 @@
     let displayPollingEnabled = true;
     let lastDisplaySequence = 0;
     let stationLabels = { panelModelLabel: '', inputLabels: {}, antennaLabels: {} };
+    let latestFanPolicy = null;
+    let fanNoticeTimer = null;
+    let lastFanNoticeKey = '';
+    let dismissedFanNoticeKey = '';
 
     function cleanLabel(value) {
       if (value === null || value === undefined) return '';
@@ -2089,6 +2254,8 @@
     function applySettingsFromResponse(data) {
       if (!data || !data.settings) return;
       applyStationLabels(data.settings);
+      populateSafetyMonitoringFields(data.settings);
+      populateFanPolicyFields(data.settings);
       if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(latestStatus);
       renderOperatorStatus(latestStatus);
     }
@@ -2380,12 +2547,76 @@
     }
     window.sendWake = sendWake;
 
+    async function setFanOverride(mode) {
+      const layout = currentLayout();
+      const feedback = layoutFeedbackEls[layout] || layoutFeedbackEls[DEFAULT_LAYOUT] || feedbackPanel;
+      const payload = { mode };
+      if (mode === 'contest') {
+        const duration = document.getElementById('s-fan-boost-duration');
+        if (duration && Number(duration.value) > 0) payload.durationMinutes = Number(duration.value);
+      }
+      feedback.textContent = 'Requesting ' + (mode === 'contest' ? 'Fan Boost' : mode === 'normal' ? 'Normal fans' : 'automatic fan control') + '…';
+      feedback.className = 'action-feedback info';
+      try {
+        const res = await fetch('/api/v1/fan-policy/override', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.success) throw new Error(body.error || 'fan override failed');
+        feedback.textContent = '✓ Fan request accepted; waiting for verified RX navigation';
+        feedback.className = 'action-feedback ok';
+        if (body.data) {
+          renderFanPolicyRuntime(body.data);
+          renderOperatorFanPolicy(body.data);
+        }
+      } catch (err) {
+        feedback.textContent = '✗ ' + err.message;
+        feedback.className = 'action-feedback err';
+      } finally {
+        setTimeout(() => {
+          feedback.textContent = '';
+          feedback.className = 'action-feedback info';
+        }, 6000);
+      }
+    }
+    window.setFanOverride = setFanOverride;
+
+    async function verifyFanMode() {
+      const layout = currentLayout();
+      const feedback = layoutFeedbackEls[layout] || layoutFeedbackEls[DEFAULT_LAYOUT] || feedbackPanel;
+      feedback.textContent = 'Requesting fan-mode verification…';
+      feedback.className = 'action-feedback info';
+      try {
+        const res = await fetch('/api/v1/fan-policy/verify', { method: 'POST' });
+        const body = await res.json();
+        if (!body.success) throw new Error(body.error || 'fan-mode verification failed');
+        feedback.textContent = '✓ Verification accepted; waiting for verified RX navigation';
+        feedback.className = 'action-feedback ok';
+        if (body.data) {
+          renderFanPolicyRuntime(body.data);
+          renderOperatorFanPolicy(body.data);
+        }
+      } catch (err) {
+        feedback.textContent = '✗ ' + err.message;
+        feedback.className = 'action-feedback err';
+      } finally {
+        setTimeout(() => {
+          feedback.textContent = '';
+          feedback.className = 'action-feedback info';
+        }, 6000);
+      }
+    }
+    window.verifyFanMode = verifyFanMode;
+
     // ─── Settings page ────────────────────────────────────────────────────────
     //
     // Sections:
     //   1. Display Preferences — browser-local only (layout, scale, LCD polarity)
     //   2. Connection Settings — server config (serial port, listen addr, polling)
-    //   3. Advanced Serial     — server config (baud, timeout, poll frame, DTR/RTS)
+    //   3. Safety Monitoring   — server config (thresholds and optional one-shot standby)
+    //   4. Advanced Serial     — server config (baud, timeout, poll frame, DTR/RTS)
     //
 
     function setStatus(id, msg, cls) {
@@ -2450,6 +2681,144 @@
       if (el) el.value = value ? 'true' : 'false';
     }
 
+    function populateSafetyMonitoringFields(settings) {
+      const s = settings || {};
+      document.getElementById('s-safety-monitoring-enabled').checked = !!s.safetyMonitoringEnabled;
+      document.getElementById('s-overtemperature-standby-armed').checked = !!s.overtemperatureStandbyArmed;
+      document.getElementById('s-amplifier-temperature-unit').value = s.amplifierTemperatureUnit || 'C';
+      document.getElementById('s-temperature-warning').value = s.temperatureWarningC || '';
+      document.getElementById('s-temperature-trip').value = s.temperatureTripC || '';
+      document.getElementById('s-temperature-reset').value = s.temperatureResetC || '';
+      document.getElementById('s-swr-warning').value = s.swrWarning || '';
+      document.getElementById('s-swr-trip').value = s.swrTrip || '';
+    }
+
+    function populateFanPolicyFields(settings) {
+      const s = settings || {};
+      document.getElementById('s-automatic-fan-policy-enabled').checked = !!s.automaticFanPolicyEnabled;
+      document.getElementById('s-verify-fan-mode-on-startup').checked = !!s.verifyFanModeOnStartup;
+      document.getElementById('s-fan-high-temperature').value = s.fanHighTemperatureC || 50;
+      document.getElementById('s-fan-normal-temperature').value = s.fanNormalTemperatureC || 42;
+      document.getElementById('s-fan-boost-duration').value = String(s.fanBoostDurationMinutes || 0);
+    }
+
+    function dismissFanNotice() {
+      const notice = document.getElementById('operator-fan-notice');
+      if (notice) notice.hidden = true;
+      dismissedFanNoticeKey = lastFanNoticeKey;
+      if (fanNoticeTimer) {
+        clearTimeout(fanNoticeTimer);
+        fanNoticeTimer = null;
+      }
+    }
+    window.dismissFanNotice = dismissFanNotice;
+
+    function fanPolicyLabel(policy) {
+      if (policy === 'high-cooling') return 'CONTEST fans';
+      if (policy === 'normal') return 'Normal fans';
+      return 'Fan mode unknown';
+    }
+
+    function renderOperatorFanPolicy(data) {
+      latestFanPolicy = data || {};
+      const d = latestFanPolicy;
+      const mode = document.getElementById('op-fan-mode');
+      if (mode) {
+        const isHigh = d.currentPolicy === 'high-cooling';
+        const stale = d.currentPolicyConfidence === 'persisted-stale';
+        mode.hidden = !isHigh;
+        mode.classList.toggle('stale', stale);
+        mode.textContent = isHigh
+          ? (stale ? 'CONTEST fans — last verified before restart' : 'CONTEST fans active')
+          : '';
+      }
+
+      const key = d.currentPolicy === 'high-cooling' &&
+        d.currentPolicyConfidence === 'verified-live' &&
+        d.currentPolicyVerifiedAt
+        ? d.currentPolicy + ':' + d.currentPolicyVerifiedAt
+        : '';
+      if (!key) {
+        const notice = document.getElementById('operator-fan-notice');
+        if (notice) notice.hidden = true;
+        if (fanNoticeTimer) {
+          clearTimeout(fanNoticeTimer);
+          fanNoticeTimer = null;
+        }
+        return;
+      }
+      if (key === lastFanNoticeKey || key === dismissedFanNoticeKey) return;
+      lastFanNoticeKey = key;
+      const verifiedAt = Date.parse(d.currentPolicyVerifiedAt);
+      const age = Number.isFinite(verifiedAt) ? Date.now() - verifiedAt : 0;
+      const remaining = 180000 - Math.max(0, age);
+      if (remaining <= 0) return;
+
+      const notice = document.getElementById('operator-fan-notice');
+      const text = document.getElementById('operator-fan-notice-text');
+      if (!notice || !text) return;
+      const temp = d.observations && typeof d.observations.maximumTemperatureC === 'number'
+        ? d.observations.maximumTemperatureC.toFixed(0) + ' °C'
+        : '';
+      const manual = d.currentPolicySource === 'manual-override';
+      text.textContent = manual
+        ? 'High-speed CONTEST fan mode enabled by manual override.'
+        : 'High-speed CONTEST fan mode enabled' + (temp ? ' at ' + temp : '') + ' to improve cooling.';
+      notice.hidden = false;
+      if (fanNoticeTimer) clearTimeout(fanNoticeTimer);
+      fanNoticeTimer = setTimeout(dismissFanNotice, remaining);
+    }
+
+    function renderFanPolicyRuntime(data) {
+      const el = document.getElementById('fan-policy-runtime');
+      if (!el) return;
+      const d = data || {};
+      const nav = d.navigation || {};
+      const lines = [
+        'State: ' + (d.state || 'unknown') + (d.reason ? ' — ' + d.reason : ''),
+        'Desired / verified current: ' + (d.desiredPolicy || 'unknown') + ' / ' + (d.currentPolicy || 'unknown'),
+        'Current confidence / source: ' + (d.currentPolicyConfidence || 'unknown') + ' / ' + (d.currentPolicySource || 'unknown'),
+        'Current verified at: ' + (d.currentPolicyVerifiedAt || 'not verified'),
+        'Manual override: ' + (d.manualOverride && d.manualOverride.active
+          ? fanPolicyLabel(d.manualOverride.policy) +
+            (d.manualOverride.until
+              ? ' until ' + d.manualOverride.until
+              : d.manualOverride.durationMinutes
+                ? ' for ' + d.manualOverride.durationMinutes + ' minutes after verification'
+                : ' until disabled')
+          : 'automatic'),
+        'Verification requested: ' + (d.verification && d.verification.requested ? 'yes — ' + (d.verification.reason || 'requested') : 'no'),
+        'Blocked by: ' + ((d.blockedBy || []).join(', ') || 'none'),
+        'Cooldown until: ' + (d.cooldownUntil || 'not active'),
+        'Navigation: ' + (nav.state || 'idle') + (nav.lastError ? ' — ' + nav.lastError : ''),
+        'Operating state changed / restore pending: ' + (nav.changedOperatingState ? 'yes' : 'no') + ' / ' + (nav.restoreOperatePending ? 'yes' : 'no'),
+        'TX pause: ' + (nav.paused ? 'active — ' + (nav.pauseReason || 'waiting for fresh RX evidence') : 'not active'),
+        'Recovery: ' + (nav.recoveryState || 'not-needed') + (nav.recoveryInstructions ? ' — ' + nav.recoveryInstructions : ''),
+      ];
+      el.textContent = lines.join('\n');
+    }
+
+    async function loadFanPolicyStatus() {
+      try {
+        const res = await fetch('/api/v1/fan-policy');
+        const body = await res.json();
+        if (!body.success) throw new Error(body.error || 'fan-policy status unavailable');
+        renderFanPolicyRuntime(body.data);
+        renderOperatorFanPolicy(body.data);
+      } catch (err) {
+        renderFanPolicyRuntime({ state: 'unavailable', reason: err.message });
+      }
+    }
+
+    setInterval(() => {
+      loadFanPolicyStatus();
+    }, 1000);
+
+    function numberOrZero(id) {
+      const value = document.getElementById(id).value.trim();
+      return value === '' ? 0 : Number(value);
+    }
+
     // Load settings from server and populate all settings fields
     async function loadSettingsPage() {
       try {
@@ -2479,6 +2848,8 @@
         document.getElementById('s-status-poll-interval').value = s.statusPollIntervalMs || s.pollIntervalMs || 125;
         document.getElementById('s-assert-dtr').checked = !!s.serialAssertDTR;
         document.getElementById('s-assert-rts').checked = !!s.serialAssertRTS;
+        populateSafetyMonitoringFields(s);
+        populateFanPolicyFields(s);
 
         // First-run banner in Watch tab
         setupCard.classList.toggle('hidden', !snap.needsSetup);
@@ -2497,6 +2868,7 @@
 
       // Refresh serial port picker
       loadSerialPorts();
+      loadFanPolicyStatus();
     }
 
     // Save display preferences (browser-local)
@@ -2564,6 +2936,64 @@
         setStatus('connection-status', body.message || 'Restart requested', 'ok');
       } catch (err) {
         setStatus('connection-status', err.message, 'err');
+      }
+    });
+
+    document.getElementById('save-safety-monitoring').addEventListener('click', async () => {
+      setStatus('safety-monitoring-status', 'Saving…');
+      const payload = {
+        safetyMonitoringEnabled: document.getElementById('s-safety-monitoring-enabled').checked,
+        overtemperatureStandbyArmed: document.getElementById('s-overtemperature-standby-armed').checked,
+        amplifierTemperatureUnit: document.getElementById('s-amplifier-temperature-unit').value,
+        temperatureWarningC: numberOrZero('s-temperature-warning'),
+        temperatureTripC: numberOrZero('s-temperature-trip'),
+        temperatureResetC: numberOrZero('s-temperature-reset'),
+        swrWarning: numberOrZero('s-swr-warning'),
+        swrTrip: numberOrZero('s-swr-trip'),
+      };
+      try {
+        const res = await fetch('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.success) {
+          setStatus('safety-monitoring-status', body.error || 'Save failed', 'err');
+          return;
+        }
+        setStatus('safety-monitoring-status', payload.overtemperatureStandbyArmed ? 'Saved; overtemperature standby armed' : 'Saved; monitoring is observational', 'ok');
+        if (body.data) applySettingsFromResponse(body.data);
+      } catch (err) {
+        setStatus('safety-monitoring-status', err.message, 'err');
+      }
+    });
+
+    document.getElementById('save-fan-policy').addEventListener('click', async () => {
+      setStatus('fan-policy-status', 'Saving…');
+      const payload = {
+        automaticFanPolicyEnabled: document.getElementById('s-automatic-fan-policy-enabled').checked,
+        verifyFanModeOnStartup: document.getElementById('s-verify-fan-mode-on-startup').checked,
+        fanHighTemperatureC: numberOrZero('s-fan-high-temperature'),
+        fanNormalTemperatureC: numberOrZero('s-fan-normal-temperature'),
+        fanBoostDurationMinutes: Number(document.getElementById('s-fan-boost-duration').value || 0),
+      };
+      try {
+        const res = await fetch('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.success) {
+          setStatus('fan-policy-status', body.error || 'Save failed', 'err');
+          return;
+        }
+        setStatus('fan-policy-status', payload.automaticFanPolicyEnabled ? 'Saved; automatic fan policy enabled with verified temporary-STANDBY navigation' : 'Saved; automatic fan policy disabled', 'ok');
+        if (body.data) applySettingsFromResponse(body.data);
+        loadFanPolicyStatus();
+      } catch (err) {
+        setStatus('fan-policy-status', err.message, 'err');
       }
     });
 

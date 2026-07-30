@@ -36,6 +36,20 @@ func (s *StatusState) CurrentProtocolNative() api.Status {
 	return s.protocolNative
 }
 
+// CurrentProtocolNativeWithContact returns only the protocol-native snapshot
+// with freshness recalculated at read time. It intentionally does not merge
+// display-derived fallback fields.
+func (s *StatusState) CurrentProtocolNativeWithContact() api.Status {
+	if s == nil {
+		return api.Status{}
+	}
+	s.mu.RLock()
+	status := s.protocolNative
+	protocolAt := s.lastProtocolAt
+	s.mu.RUnlock()
+	return applyContactMetadata(status, time.Time{}, protocolAt)
+}
+
 func (s *StatusState) UpdateProtocolNative(status api.Status) {
 	if s == nil {
 		return

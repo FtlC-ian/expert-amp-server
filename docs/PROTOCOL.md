@@ -77,6 +77,8 @@ STANDBY
 - warnings and alarms preserve raw status codes and also expose decoded text fields (`warningsText`, `alarmsText`)
 - documented status meter fields should surface as first-class API fields instead of leaking through `notes`, using raw-plus-decoded or parsed-plus-display pairs where the guide/current captures justify them
 
+The documented status response supplies temperature numbers without a unit marker. `amplifierTemperatureUnit` must match the amplifier's SET-menu selection. The serial ingest boundary converts those readings to canonical Celsius for `temperatureC`, lower/combiner `*C` fields, safety monitoring, and fan thresholds. Operator-facing display fields retain the configured amplifier unit.
+
 **Where it lives:** `internal/api/types.go`, `internal/protocol/status.go`, `internal/runtime/status_state.go`, the HTTP handlers serving `/api/v1/status`, and the OpenAPI artifact served from `/api/v1/openapi.json`.
 
 ---
@@ -87,11 +89,15 @@ STANDBY
 
 **Current status:** `POST /api/v1/actions/button` is the canonical route for documented front-panel button commands, with `POST /api/actions/button` retained as a compatibility alias. Separately, `POST /api/v1/actions/wake` is the canonical route for the experimental amp wake/power-on path that toggles DTR/RTS on the FTDI serial control lines. More broadly, the canonical REST surface for machine-readable clients now lives under `/api/v1/...`; older non-v1 routes are compatibility aliases or legacy debug helpers. Supported document-backed button names are encoded and written to the live serial transport when one is configured. If no live button transport is available, the server returns `503` with `button transport unavailable`. Actions that remain intentionally blocked on the button endpoint (such as `back`, `on`, and `standby`) return `400`; `on` stays blocked there because wake is not honest to model as a normal front-panel button.
 
-**What we know (hypothesis):** The amp almost certainly accepts button commands over the same USB/serial connection that display frames arrive on. The framing format for outbound commands has not been reverse-engineered yet.
+The safety controller has one deliberately narrow active path. When monitoring and `overtemperatureStandbyArmed` are enabled, fresh protocol-native status says OPERATE and RX, and the hottest sensor reaches the trip threshold, it sends the documented OPERATE command exactly once to request STANDBY. The write is reported sent/unconfirmed. It never acts during TX, retries automatically, powers off, or wakes the amplifier.
+
+Fan-policy control is separate and disabled by default. Manual Normal or CONTEST requests and automatic hysteresis use the same display-verified transaction. When necessary the controller requests STANDBY and verifies newer protocol and LCD evidence before entering the menu. It verifies every TEMP/FANS and SAVE waypoint, pauses all writes and the ordinary waypoint timeout during TX, and restores OPERATE only after verified completion when it owned the transition. An unexpected screen or stale state fails closed. This path is hardware-confirmed on a First Series Expert 1.3K-FA; other models remain experimental.
+
+Vendor-documented backlight commands `0x82` and `0x83` are exposed as `backlight-on` and `backlight-off`. Their user-visible effects still need broader model testing.
 
 **Where it lives:** `internal/api/types.go`, `internal/transport/buttons.go`, `internal/runtime/serial_source.go`, `internal/server/server.go`, `cmd/server/main.go`.
 
-**Open question:** What is the wire format for button press commands? What are the valid button names and their byte values? Are there safety constraints (e.g., should TUNE only be sendable in specific states)?
+**Open question:** Which documented direct-button effects and fan-menu waypoints vary across models and firmware?
 
 ---
 
@@ -147,7 +153,7 @@ Andrew G0RVM reported that the flag word includes front-panel LED state. Live ca
 | OP / operate | `0x1000` | Captured standby → operate; only this bit changed. |
 | SET / setup menu | `0x2000` | Captured standby → setup menu; only this bit changed. |
 | TUNE | `0x4000` | Captured burst during tune timeout; only this bit changed. |
-| TX | `0x0800` | Adjacent reported flag bit; still needs a safe live TX capture. |
+| TX | `0x0800` | Confirmed through repeated checksum-valid RX → TX → RX captures on a First Series Expert 1.3K-FA. |
 
 These LED bits are intended for the amp-shaped Front Panel template because they mirror the physical panel indicators more directly than status fields. They are not a replacement for the richer `/api/v1/status` data.
 
@@ -230,11 +236,11 @@ Each is decoded via `protocol.LoadFixtureState`. If decoding fails, the fixture 
 
 These are things we do not yet know. Do not paper over them with assumptions.
 
-1. **LCD TX flag validation.** The LCD flag word now exposes validated OP, SET, and TUNE LED states. TX is mapped to the adjacent reported bit but still needs a safe live TX capture before treating it as fully confirmed across documentation and UI screenshots.
+1. **Cross-model LCD TX flag validation.** The LCD `0x0800` TX bit is confirmed on a First Series Expert 1.3K-FA. Other amplifier models still need their own confirmation.
 
 2. **Additional structured frames beyond the documented status poll.** We know the vendor-documented status poll exists. What we do not yet know is whether the amp also sends other structured non-display frames over the same serial connection that are worth decoding separately.
 
-3. **Button command format.** What byte sequence does the amp expect for a button press? What framing wraps it?
+3. **Button effects across models.** The command table and framing are implemented, but broader model-by-model confirmation remains useful.
 
 4. **Glyph mapping accuracy.** The bundled SPE-style LCD font table and any project-authored glyph handling should continue to be checked against real hardware captures.
 
