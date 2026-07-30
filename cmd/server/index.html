@@ -1711,7 +1711,7 @@
               <label class="settings-label" for="s-baud">Baud rate</label>
               <input id="s-baud" class="settings-input" type="number" min="300" value="115200">
             </div>
-            <p class="settings-hint">Model-specific: the field-tested 2K-FA setup uses 57600; the First Series 1.3K-FA setup uses 115200.</p>
+            <p class="settings-hint">SPE documents 115200 with automatic adaptation to lower speeds. If communication fails, 57600 is a confirmed troubleshooting fallback on one field-tested 2K-FA, not a model-wide requirement.</p>
 
             <div class="settings-row">
               <label class="settings-label" for="s-read-timeout">Read timeout (ms)</label>

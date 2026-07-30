@@ -135,6 +135,7 @@ set, left, right, up, down, display
 input, antenna, band-, band+
 l-, l+, c-, c+
 tune, off, power, operate, cat
+backlight-on, backlight-off
 ```
 
 **Intentionally blocked** (not in current command table or not safely confirmed):

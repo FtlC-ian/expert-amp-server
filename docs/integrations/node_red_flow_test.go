@@ -64,12 +64,16 @@ func TestMeterFanOutWiresEveryDocumentedWidget(t *testing.T) {
 
 func TestBacklightButtonsUseDirectDocumentedActions(t *testing.T) {
 	nodes := loadFlowNodes(t)
+	router := nodes["24961f1d1d05eacd"]
 	for id, action := range map[string]string{
 		"002c386a7ad4efbf": "backlight-off",
 		"1a752b7206921eb4": "backlight-on",
 	} {
 		if !strings.Contains(nodes[id].Format, "payload: '"+action+"'") {
 			t.Fatalf("%s does not send %s", nodes[id].Name, action)
+		}
+		if !strings.Contains(router.Func, "'"+action+"'") {
+			t.Fatalf("%s is not allowed through the action router", action)
 		}
 	}
 }

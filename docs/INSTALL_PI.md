@@ -138,7 +138,7 @@ Common gotchas from the first radio-host smoke test:
 
 - If another manually-started `expert-amp-server` process is already listening on `:8088`, stop it before enabling the systemd unit.
 - Preserve or copy the known-good config into `/var/lib/expert-amp-server/config.json`; otherwise the service may start in setup/fixture mode instead of talking to the amp.
-- Match `serialBaudRate` to the amplifier model. The field-tested 2K-FA setup uses `57600`; the First Series 1.3K-FA setup uses `115200`.
+- Leave `serialBaudRate` at the server's `115200` default—the vendor-documented maximum—unless communication fails. One field-tested 2K-FA installation only communicated reliably at `57600`, so that is a confirmed troubleshooting fallback rather than a model-wide requirement.
 - Match `amplifierTemperatureUnit` to the amplifier SET menu before enabling temperature monitoring or fan automation. The protocol sends unitless numbers, while all server thresholds are canonical Celsius.
 - Make sure the service user can open the FTDI serial device. If status stays fixture-derived or serial contact is false, check group membership and the `/dev/serial/by-id/...` path first.
 - `RestartSec=5` means a clean restart request is not instant. Give systemd a few seconds before deciding the service failed.

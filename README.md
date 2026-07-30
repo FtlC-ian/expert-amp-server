@@ -16,7 +16,7 @@ It is meant for radio-side computers like a Raspberry Pi, an Apache Labs ANAN G2
 
 ## What you need
 
-- An SPE Expert amplifier. Development and fan-control hardware testing use a First Series Expert 1.3K-FA. Users have also reported the server working on Expert 1.5K-FA and 2K-FA amplifiers; the reported 2K-FA setup uses 57600 baud.
+- An SPE Expert amplifier. Development and fan-control hardware testing use a First Series Expert 1.3K-FA. Users have also reported the server working on Expert 1.5K-FA and 2K-FA amplifiers; one 2K-FA installation uses the confirmed 57600 troubleshooting fallback.
 - A Raspberry Pi or other small Linux computer near the amp.
 - A USB cable from that computer to the amp's built-in USB Type-B control port. Do not use the separate CAT radio serial ports for Expert Amp Server.
 - A trusted station LAN so your browser, Node-RED host, logger, or radio-control computer can reach the server.
@@ -95,7 +95,7 @@ Automatic fan cooling is disabled by default. Optional overtemperature standby i
 
 Important upgrade note: the amplifier status protocol sends temperature numbers without a unit. Before enabling temperature monitoring or fan automation, set `amplifierTemperatureUnit` to match the amplifier SET menu (`C` or `F`). All thresholds and API fields ending in `C` remain canonical Celsius.
 
-The serial rate is also model-specific. The field-reported 2K-FA setup uses `serialBaudRate: 57600`; the First Series 1.3K-FA installation uses `115200`.
+SPE documents a maximum rate of `115200` with automatic adaptation to lower speeds, so that remains the server default. One field-tested 2K-FA installation only communicated reliably at `57600`; use that as a troubleshooting fallback, not as a model-wide requirement.
 
 ## Documentation
 
