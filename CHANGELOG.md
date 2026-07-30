@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.1 - 2026-07-30
+
+Corrective documentation and Node-RED integration release.
+
+### Fixed
+
+- Allowed the checked-in Node-RED Backlight On/Off tiles through the shared action router instead of silently rejecting their documented action names.
+- Corrected serial guidance: `115200` remains the server default and vendor-documented maximum; `57600` is a confirmed troubleshooting fallback on one field-tested 2K-FA, not a model-wide requirement.
+
 ## v0.3.0 - 2026-07-30
 
 Fan control, temperature safety, and cross-model field-test release.
@@ -19,7 +28,7 @@ Fan control, temperature safety, and cross-model field-test release.
 
 - Fan transactions temporarily enter verified STANDBY when required, pause all writes during TX, and restore OPERATE only when the controller owned the transition.
 - Serial button and wake fallbacks now honor the configured baud rate.
-- The 2K-FA is documented as field-confirmed for core server operation at 57600 baud; fan-menu compatibility remains experimental.
+- One 2K-FA installation is documented as field-confirmed for core server operation at the `57600` troubleshooting fallback; fan-menu compatibility remains experimental.
 - The OpenAPI document now reflects the v0.3.0 API surface.
 
 ### Fixed
