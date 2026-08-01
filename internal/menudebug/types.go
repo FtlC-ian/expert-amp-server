@@ -70,16 +70,19 @@ type Prerequisites struct {
 // RuntimeSnapshot is the latest server-owned protocol and display evidence.
 // It deliberately contains no host, network, or serial-device identity.
 type RuntimeSnapshot struct {
-	Status            api.Status
-	StatusGeneration  uint64
-	StatusObservedAt  time.Time
-	DisplayState      display.State
-	DisplayGeneration uint64
-	DisplayObservedAt time.Time
-	ChecksumValid     bool
-	DisplayTX         *bool
-	DisplayOperate    *bool
-	Screen            ScreenObservation
+	Status                         api.Status
+	StatusGeneration               uint64
+	StatusObservedAt               time.Time
+	SerialSessionGeneration        uint64
+	StatusSerialSessionGeneration  uint64
+	DisplayState                   display.State
+	DisplayGeneration              uint64
+	DisplayObservedAt              time.Time
+	DisplaySerialSessionGeneration uint64
+	ChecksumValid                  bool
+	DisplayTX                      *bool
+	DisplayOperate                 *bool
+	Screen                         ScreenObservation
 }
 
 type Evidence struct {
@@ -112,22 +115,24 @@ type Step struct {
 }
 
 type Plan struct {
-	Profile                 string     `json:"profile"`
-	ExpectedModel           string     `json:"-"`
-	Capability              Capability `json:"capability"`
-	OriginalValue           string     `json:"originalValue"`
-	CandidateValue          string     `json:"candidateValue"`
-	DiscoverySetupWaypoints []string   `json:"-"`
-	DiscoverySetupTopology  string     `json:"-"`
-	Apply                   []Step     `json:"apply"`
-	Restore                 []Step     `json:"restore"`
+	Profile                         string     `json:"profile"`
+	ExpectedModel                   string     `json:"-"`
+	ExpectedSerialSessionGeneration uint64     `json:"-"`
+	Capability                      Capability `json:"capability"`
+	OriginalValue                   string     `json:"originalValue"`
+	CandidateValue                  string     `json:"candidateValue"`
+	DiscoverySetupWaypoints         []string   `json:"-"`
+	DiscoverySetupTopology          string     `json:"-"`
+	Apply                           []Step     `json:"apply"`
+	Restore                         []Step     `json:"restore"`
 }
 
 type ActionAuthorization struct {
-	Action        Action
-	Purpose       Purpose
-	Revision      uint64
-	ExpectedModel string
+	Action                          Action
+	Purpose                         Purpose
+	Revision                        uint64
+	ExpectedModel                   string
+	ExpectedSerialSessionGeneration uint64
 }
 
 type SessionView struct {

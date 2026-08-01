@@ -8,7 +8,8 @@ Menu Debug identity-binding corrective release.
 
 - Frozen reviewed Menu Debug plans now retain the exact amplifier model that selected the profile.
 - Plan installation, apply/restore entry, and every planned action authorization fail closed if the live model changes after discovery.
-- A final model check immediately before serial dispatch closes the reconnect window between controller authorization and the physical write.
+- Protocol status and checksum-valid LCD evidence are bound to the live serial session that produced them; reconnects invalidate both until the replacement session supplies fresh evidence.
+- Reviewed plans and one-write authorizations freeze that session generation, and the transport atomically refuses a different or status-unconfirmed port.
 - Sanitized reports now include the optional reviewed `setupTopology` classification used for candidate-profile selection.
 
 ## v0.4.1 - 2026-08-01

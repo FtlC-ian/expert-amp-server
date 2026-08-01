@@ -34,7 +34,8 @@ func newDeterministicController(l *fakeLease) (*Controller, *time.Time) {
 	c := NewController(l)
 	c.now = func() time.Time { return now }
 	c.newToken = func() (string, error) { return "test-token", nil }
-	c.runtime.Status = api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}
+	c.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 1)
+	c.runtime.DisplaySerialSessionGeneration = 1
 	return c, &now
 }
 
@@ -289,7 +290,7 @@ func simplePlan(capability Capability, original, candidate string) Plan {
 	if capability == CapabilityBank {
 		profile = "expert-1.3k-fa-first-series-bank-ab-v1"
 	}
-	return Plan{Profile: profile, ExpectedModel: "EXPERT 1.3K-FA", Capability: capability, OriginalValue: original, CandidateValue: candidate,
+	return Plan{Profile: profile, ExpectedModel: "EXPERT 1.3K-FA", ExpectedSerialSessionGeneration: 1, Capability: capability, OriginalValue: original, CandidateValue: candidate,
 		Apply: []Step{
 			{Action: ActionSet, Purpose: PurposeChangeValue, FromFingerprint: "apply-from", ExpectedFingerprint: "apply-changed"},
 			{Action: ActionSet, Purpose: PurposeSave, FromFingerprint: "apply-changed", ExpectedFingerprint: "", ExpectedKind: ScreenHome, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
@@ -342,6 +343,38 @@ func TestPlannedActionRejectsChangedAmplifierModel(t *testing.T) {
 	c.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 10)
 	if _, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false)); err == nil || !strings.Contains(err.Error(), "model changed") {
 		t.Fatalf("changed-model authorization error = %v", err)
+	}
+}
+
+func TestPlannedActionRejectsChangedSerialSessionWithSameModel(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	plan := simplePlan(CapabilityFan, "normal", "contest")
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := c.session.lastEvidenceGen
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.ObserveDiscoveryResult(token, auth.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.InstallPlan(token, v.Revision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.BeginApply(token, v.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ObserveSerialSession(2)
+	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 2, 2)
+	if _, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false)); err == nil || !strings.Contains(err.Error(), "serial session changed") {
+		t.Fatalf("changed-session authorization error = %v", err)
 	}
 }
 

@@ -1034,7 +1034,7 @@ func TestReviewedMenuDebugPlansAreServerOwnedAndExact(t *testing.T) {
 		state.SetAttr(3, col, 1)
 	}
 	screen := menudebug.Analyze(state)
-	runtime := menudebug.RuntimeSnapshot{Status: api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", TX: &rx}}, DisplayState: state, ChecksumValid: true, DisplayTX: &rx, DisplayOperate: &operate, Screen: screen}
+	runtime := menudebug.RuntimeSnapshot{Status: api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", TX: &rx}}, SerialSessionGeneration: 1, StatusSerialSessionGeneration: 1, DisplaySerialSessionGeneration: 1, DisplayState: state, ChecksumValid: true, DisplayTX: &rx, DisplayOperate: &operate, Screen: screen}
 	if _, ok := reviewedMenuDebugDiscoveryAction(runtime, menudebug.CapabilityFan); ok {
 		t.Fatal("FAN MANAGEMENT must not receive a discovery selector move")
 	}
@@ -1207,6 +1207,9 @@ func TestMenuDebugUploaderFailureDoesNotCrashAndCanRetry(t *testing.T) {
 	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
 	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
 	controller := menudebug.NewController(lease)
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}, RecentContact: true}, 1)
+	rx, operate := false, false
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
 	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true, ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true, DisplayGeneration: 1, StatusGeneration: 1})
 	if err != nil {
 		t.Fatal(err)

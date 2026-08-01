@@ -17,6 +17,12 @@ type ButtonTransport interface {
 	SendButton(ctx context.Context, action api.ButtonAction) (api.ActionResult, error)
 }
 
+// SerialSessionButtonTransport atomically binds a button write to the live
+// serial session that supplied its prerequisite status evidence.
+type SerialSessionButtonTransport interface {
+	SendButtonForSerialSession(ctx context.Context, action api.ButtonAction, sessionGeneration uint64) (api.ActionResult, error)
+}
+
 type WakeTransport interface {
 	SendWake(ctx context.Context) (api.ActionResult, error)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
+	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
 const menuDebugTokenHeader = "X-Menu-Debug-Token"
@@ -541,7 +542,21 @@ func (m *menuDebugAPI) sendAuthorized(ctx context.Context, token string, authori
 	if authorization.ExpectedModel != "" && !strings.EqualFold(strings.TrimSpace(authorization.ExpectedModel), strings.TrimSpace(m.opts.MenuDebug.Runtime().Status.ModelName)) {
 		return errors.New("connected amplifier model changed before the authorized write")
 	}
-	result, err := m.opts.MenuDebugTransport.SendButton(ctx, api.ButtonAction{Name: string(authorization.Action)})
+	runtimeSnapshot := m.opts.MenuDebug.Runtime()
+	if authorization.ExpectedSerialSessionGeneration == 0 || runtimeSnapshot.SerialSessionGeneration != authorization.ExpectedSerialSessionGeneration || runtimeSnapshot.StatusSerialSessionGeneration != authorization.ExpectedSerialSessionGeneration || runtimeSnapshot.DisplaySerialSessionGeneration != authorization.ExpectedSerialSessionGeneration {
+		return errors.New("serial session changed or lacks fresh status before the authorized write")
+	}
+	action := api.ButtonAction{Name: string(authorization.Action)}
+	var result api.ActionResult
+	if m.opts.SerialSource != nil {
+		sessionTransport, ok := m.opts.MenuDebugTransport.(transport.SerialSessionButtonTransport)
+		if !ok {
+			return errors.New("menu-debug transport cannot bind writes to a serial session")
+		}
+		result, err = sessionTransport.SendButtonForSerialSession(ctx, action, authorization.ExpectedSerialSessionGeneration)
+	} else {
+		result, err = m.opts.MenuDebugTransport.SendButton(ctx, action)
+	}
 	if err != nil {
 		return err
 	}
@@ -581,6 +596,10 @@ func (m *menuDebugAPI) prerequisites() (menudebug.Prerequisites, menuDebugPrereq
 	}
 	const evidenceWindow = 5 * time.Second
 	recent := runtime.Status.RecentContact && observationIsFresh(runtime.StatusObservedAt, evidenceWindow)
+	if m.opts.SerialSource != nil {
+		session := m.opts.SerialSource.SerialSessionEvidence()
+		recent = recent && session.Active && session.Generation != 0 && session.Generation == session.StatusGeneration && runtime.SerialSessionGeneration == session.Generation && runtime.StatusSerialSessionGeneration == session.Generation && runtime.DisplaySerialSessionGeneration == session.Generation
+	}
 	displayRecent := observationIsFresh(runtime.DisplayObservedAt, evidenceWindow)
 	standby := strings.EqualFold(runtime.Status.OperatingState, "standby")
 	rx := boolIs(runtime.Status.TX, false)
@@ -775,8 +794,12 @@ func setupWaypointStep(action menudebug.Action, waypoint string) menudebug.Step 
 }
 
 func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudebug.Capability) (menudebug.Plan, error) {
+	sessionGeneration, err := reviewedSerialSessionGeneration(runtime)
+	if err != nil {
+		return menudebug.Plan{}, err
+	}
 	if capability == menudebug.CapabilityBank {
-		return reviewedFirstSeriesBankPlan(runtime)
+		return reviewedFirstSeriesBankPlan(runtime, sessionGeneration)
 	}
 	profile, profileOK := reviewedFanProfileFor(runtime)
 	if capability != menudebug.CapabilityFan || !profileOK {
@@ -813,10 +836,17 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 		menudebug.Step{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: original, ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
 		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
 	)
-	return menudebug.Plan{Profile: profile.ID, ExpectedModel: profile.Model, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), DiscoverySetupTopology: profile.SetupTopology, Apply: apply, Restore: restore}, nil
+	return menudebug.Plan{Profile: profile.ID, ExpectedModel: profile.Model, ExpectedSerialSessionGeneration: sessionGeneration, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), DiscoverySetupTopology: profile.SetupTopology, Apply: apply, Restore: restore}, nil
 }
 
-func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot) (menudebug.Plan, error) {
+func reviewedSerialSessionGeneration(runtime menudebug.RuntimeSnapshot) (uint64, error) {
+	if runtime.SerialSessionGeneration == 0 || runtime.StatusSerialSessionGeneration != runtime.SerialSessionGeneration || runtime.DisplaySerialSessionGeneration != runtime.SerialSessionGeneration {
+		return 0, errors.New("fresh protocol status and display evidence from the active serial session are required before installing a reviewed plan")
+	}
+	return runtime.SerialSessionGeneration, nil
+}
+
+func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot, sessionGeneration uint64) (menudebug.Plan, error) {
 	screen := runtime.Screen
 	if screen.Kind != menudebug.ScreenBank || !strings.EqualFold(strings.TrimSpace(runtime.Status.ModelName), "EXPERT 1.3K-FA") ||
 		len(screen.Values) != 2 || screen.Values[0] != "A" || screen.Values[1] != "B" || screen.SelectedText != "[ ] BNK A" || screen.SelectedValue != "A" || screen.ActiveValue != "A" ||
@@ -853,7 +883,7 @@ func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot) (menudebug.P
 		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: bank, ExpectedCapability: capability, ExpectedValue: "A", ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
 		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedValue: "A", ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
 	}
-	return menudebug.Plan{Profile: "expert-1.3k-fa-first-series-bank-ab-v1", ExpectedModel: "EXPERT 1.3K-FA", Capability: capability, OriginalValue: "A", CandidateValue: "B", Apply: apply, Restore: restore}, nil
+	return menudebug.Plan{Profile: "expert-1.3k-fa-first-series-bank-ab-v1", ExpectedModel: "EXPERT 1.3K-FA", ExpectedSerialSessionGeneration: sessionGeneration, Capability: capability, OriginalValue: "A", CandidateValue: "B", Apply: apply, Restore: restore}, nil
 }
 
 func boolIs(value *bool, want bool) bool { return value != nil && *value == want }

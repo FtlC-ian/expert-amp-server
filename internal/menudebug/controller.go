@@ -78,22 +78,87 @@ func (c *Controller) ObserveStatus(status api.Status, generation uint64) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.runtime.SerialSessionGeneration == 0 {
+		c.runtime.SerialSessionGeneration = 1
+	}
 	if generation < c.runtime.StatusGeneration {
 		return
 	}
 	c.runtime.Status = status
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
+	c.runtime.StatusSerialSessionGeneration = c.runtime.SerialSessionGeneration
 }
 
-// ObserveDisplay records checksum/display evidence and closes a pending
-// controller receipt only after a newer fingerprinted display arrives.
-func (c *Controller) ObserveDisplay(state display.State, generation uint64, checksumValid bool, tx, operate *bool) {
+// ObserveSerialSession invalidates cached protocol evidence as soon as a new
+// live serial port becomes active. A later status frame from that exact
+// session must restore the evidence before another write can be authorized.
+func (c *Controller) ObserveSerialSession(generation uint64) {
 	if c == nil || generation == 0 {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if generation <= c.runtime.SerialSessionGeneration {
+		return
+	}
+	c.runtime.SerialSessionGeneration = generation
+	c.runtime.StatusObservedAt = time.Time{}
+	c.runtime.Status.RecentContact = false
+	c.runtime.DisplayObservedAt = time.Time{}
+	c.runtime.DisplaySerialSessionGeneration = 0
+	c.runtime.ChecksumValid = false
+	c.runtime.DisplayTX = nil
+	c.runtime.DisplayOperate = nil
+	c.runtime.Screen = ScreenObservation{}
+}
+
+// ObserveStatusFromSerialSession records protocol evidence only when it came
+// from the currently active live serial session.
+func (c *Controller) ObserveStatusFromSerialSession(status api.Status, generation, serialSessionGeneration uint64) {
+	if c == nil || generation == 0 || serialSessionGeneration == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if serialSessionGeneration != c.runtime.SerialSessionGeneration || generation < c.runtime.StatusGeneration {
+		return
+	}
+	c.runtime.Status = status
+	c.runtime.StatusGeneration = generation
+	c.runtime.StatusObservedAt = c.now()
+	c.runtime.StatusSerialSessionGeneration = serialSessionGeneration
+}
+
+// ObserveDisplay records checksum/display evidence and closes a pending
+// controller receipt only after a newer fingerprinted display arrives.
+func (c *Controller) ObserveDisplay(state display.State, generation uint64, checksumValid bool, tx, operate *bool) {
+	c.observeDisplay(state, generation, checksumValid, tx, operate, 0)
+}
+
+// ObserveDisplayFromSerialSession accepts LCD evidence only from the currently
+// active live serial session.
+func (c *Controller) ObserveDisplayFromSerialSession(state display.State, generation uint64, checksumValid bool, tx, operate *bool, serialSessionGeneration uint64) {
+	if serialSessionGeneration == 0 {
+		return
+	}
+	c.observeDisplay(state, generation, checksumValid, tx, operate, serialSessionGeneration)
+}
+
+func (c *Controller) observeDisplay(state display.State, generation uint64, checksumValid bool, tx, operate *bool, serialSessionGeneration uint64) {
+	if c == nil || generation == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if serialSessionGeneration == 0 {
+		if c.runtime.SerialSessionGeneration == 0 {
+			c.runtime.SerialSessionGeneration = 1
+		}
+		serialSessionGeneration = c.runtime.SerialSessionGeneration
+	} else if serialSessionGeneration != c.runtime.SerialSessionGeneration {
+		return
+	}
 	if generation < c.runtime.DisplayGeneration {
 		return
 	}
@@ -117,6 +182,7 @@ func (c *Controller) ObserveDisplay(state display.State, generation uint64, chec
 	c.runtime.DisplayState = state
 	c.runtime.DisplayGeneration = generation
 	c.runtime.DisplayObservedAt = c.now()
+	c.runtime.DisplaySerialSessionGeneration = serialSessionGeneration
 	c.runtime.ChecksumValid = checksumValid
 	c.runtime.DisplayTX = cloneBool(tx)
 	c.runtime.DisplayOperate = cloneBool(operate)
@@ -499,6 +565,9 @@ func (c *Controller) InstallPlan(token string, revision uint64, plan Plan) (Sess
 	if !modelMatches(plan.ExpectedModel, c.runtime.Status.ModelName) {
 		return c.viewLocked(), c.failLocked("reviewed plan model does not match the connected amplifier")
 	}
+	if !c.serialSessionMatchesLocked(plan.ExpectedSerialSessionGeneration) {
+		return c.viewLocked(), c.failLocked("reviewed plan status does not belong to the active serial session")
+	}
 	if len(c.session.evidence) == 0 {
 		return c.viewLocked(), c.failLocked("plan requires server-derived capability evidence")
 	}
@@ -561,7 +630,7 @@ func validatePlan(p Plan) error {
 		"expert-1.5k-fa-second-series-fan-v1":    {CapabilityFan, "EXPERT 1.5K-FA"},
 		"expert-1.3k-fa-first-series-bank-ab-v1": {CapabilityBank, "EXPERT 1.3K-FA"},
 	}[p.Profile]
-	if profile.capability == "" || profile.capability != p.Capability || !modelMatches(profile.model, p.ExpectedModel) {
+	if profile.capability == "" || profile.capability != p.Capability || !modelMatches(profile.model, p.ExpectedModel) || p.ExpectedSerialSessionGeneration == 0 {
 		return errors.New("plan does not use a reviewed server profile")
 	}
 	if strings.TrimSpace(p.OriginalValue) == "" || strings.TrimSpace(p.CandidateValue) == "" || p.OriginalValue == p.CandidateValue {
@@ -621,6 +690,9 @@ func (c *Controller) beginPlan(token string, revision uint64, from, to Phase) (S
 	if !modelMatches(c.session.plan.ExpectedModel, c.runtime.Status.ModelName) {
 		return c.viewLocked(), c.failLocked("connected amplifier model changed after plan discovery")
 	}
+	if !c.serialSessionMatchesLocked(c.session.plan.ExpectedSerialSessionGeneration) {
+		return c.viewLocked(), c.failLocked("serial session changed after plan discovery")
+	}
 	if to == PhaseRestoring && !c.session.applyVerified {
 		return c.viewLocked(), errors.New("applied change has not been user verified")
 	}
@@ -660,6 +732,9 @@ func (c *Controller) AuthorizeNext(token string, revision uint64, evidence Evide
 	}
 	if !modelMatches(c.session.plan.ExpectedModel, c.runtime.Status.ModelName) {
 		return ActionAuthorization{}, c.failLocked("connected amplifier model changed after plan discovery")
+	}
+	if !c.serialSessionMatchesLocked(c.session.plan.ExpectedSerialSessionGeneration) {
+		return ActionAuthorization{}, c.failLocked("serial session changed after plan discovery")
 	}
 	if err := c.verifyCurrentEvidenceLocked(evidence); err != nil {
 		return ActionAuthorization{}, c.failLocked(err.Error())
@@ -853,6 +928,9 @@ func (c *Controller) consumeActionLocked(action Action, purpose Purpose) (Action
 	if c.lease != nil && c.lease.SafetyHold() {
 		return ActionAuthorization{}, c.failLocked("overtemperature safety preempted menu debug")
 	}
+	if !c.serialSessionMatchesLocked(c.runtime.StatusSerialSessionGeneration) {
+		return ActionAuthorization{}, c.failLocked("fresh status from the active serial session is required")
+	}
 	c.session.actionsAttempted++
 	if c.session.actionsAttempted > c.session.actionBudget {
 		return ActionAuthorization{}, c.failLocked("menu-debug action budget exhausted")
@@ -860,7 +938,11 @@ func (c *Controller) consumeActionLocked(action Action, purpose Purpose) (Action
 	c.session.actions = append(c.session.actions, action)
 	c.session.actionReceipts = append(c.session.actionReceipts, ActionReceipt{Action: action, Purpose: purpose, At: c.now().UTC()})
 	c.bumpLocked()
-	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision, ExpectedModel: c.session.plan.ExpectedModel}, nil
+	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision, ExpectedModel: c.session.plan.ExpectedModel, ExpectedSerialSessionGeneration: c.runtime.StatusSerialSessionGeneration}, nil
+}
+
+func (c *Controller) serialSessionMatchesLocked(expected uint64) bool {
+	return expected != 0 && c.runtime.SerialSessionGeneration == expected && c.runtime.StatusSerialSessionGeneration == expected && c.runtime.DisplaySerialSessionGeneration == expected
 }
 
 func modelMatches(expected, actual string) bool {

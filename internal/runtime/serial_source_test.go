@@ -669,6 +669,59 @@ func TestSerialSourceFeedsMenuDebugStatusAndDisplayEvidence(t *testing.T) {
 	}
 }
 
+func TestSerialSourceBindsMenuDebugStatusAndWritesToOneSession(t *testing.T) {
+	statusFrame := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	displayFrame, err := os.ReadFile("../../fixtures/real_home_status_frame.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPort := &mockSerialPort{}
+	secondPort := &mockSerialPort{}
+	controller := menudebug.NewController(nil)
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0", ReadTimeout: 25 * time.Millisecond}, &mockSerialOpener{port: firstPort}, Update{})
+	src.ConfigureMenuDebugController(controller)
+	firstGeneration, _ := src.beginSession(firstPort)
+	src.applyStatusFrameFromSession(statusFrame, firstGeneration)
+	src.applyFrameFromSession(displayFrame, firstGeneration)
+
+	if evidence := src.SerialSessionEvidence(); !evidence.Active || evidence.Generation != firstGeneration || evidence.StatusGeneration != firstGeneration {
+		t.Fatalf("first-session evidence = %+v", evidence)
+	}
+	if runtime := controller.Runtime(); runtime.SerialSessionGeneration != firstGeneration || runtime.StatusSerialSessionGeneration != firstGeneration || runtime.DisplaySerialSessionGeneration != firstGeneration {
+		t.Fatalf("first controller session evidence = %+v", runtime)
+	}
+
+	secondGeneration, _ := src.beginSession(secondPort)
+	if evidence := src.SerialSessionEvidence(); !evidence.Active || evidence.Generation != secondGeneration || evidence.StatusGeneration != 0 {
+		t.Fatalf("replacement session retained status evidence: %+v", evidence)
+	}
+	if runtime := controller.Runtime(); runtime.SerialSessionGeneration != secondGeneration || runtime.StatusSerialSessionGeneration != firstGeneration || runtime.DisplaySerialSessionGeneration != 0 || !runtime.StatusObservedAt.IsZero() || !runtime.DisplayObservedAt.IsZero() || runtime.ChecksumValid {
+		t.Fatalf("replacement session did not invalidate controller status: %+v", runtime)
+	}
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, firstGeneration); err == nil || !strings.Contains(err.Error(), "serial session changed") {
+		t.Fatalf("stale-session write error = %v", err)
+	}
+	if len(secondPort.writtenSnapshot()) != 0 {
+		t.Fatalf("stale authorization wrote to replacement port: %v", secondPort.writtenSnapshot())
+	}
+
+	src.applyStatusFrameFromSession(statusFrame, firstGeneration)
+	if evidence := src.SerialSessionEvidence(); evidence.StatusGeneration != 0 {
+		t.Fatalf("retired session refreshed status evidence: %+v", evidence)
+	}
+	src.applyStatusFrameFromSession(statusFrame, secondGeneration)
+	if runtime := controller.Runtime(); runtime.StatusSerialSessionGeneration != secondGeneration || runtime.DisplaySerialSessionGeneration != 0 || !runtime.DisplayObservedAt.IsZero() {
+		t.Fatalf("status-only replacement session reused display evidence: %+v", runtime)
+	}
+	src.applyFrameFromSession(displayFrame, secondGeneration)
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, secondGeneration); err != nil {
+		t.Fatalf("current-session write: %v", err)
+	}
+	if len(secondPort.writtenSnapshot()) != 1 {
+		t.Fatalf("current-session writes = %v", secondPort.writtenSnapshot())
+	}
+}
+
 func TestSerialSourceUsesSeparateDisplayAndStatusPollFrames(t *testing.T) {
 	mockPort := &mockSerialPort{}
 	src := NewSerialSource(SerialSourceConfig{
