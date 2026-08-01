@@ -38,6 +38,10 @@ type Controller struct {
 	session  session
 	reports  []CapabilityReport
 	runtime  RuntimeSnapshot
+	// lastObservedModel retains the most recent non-empty model identity for
+	// the active serial session. An undecodable status frame must not erase the
+	// identity baseline used to protect in-flight work and retained reports.
+	lastObservedModel string
 }
 
 type session struct {
@@ -70,30 +74,152 @@ func NewController(l lease) *Controller {
 	return &Controller{lease: l, now: time.Now, newToken: randomToken, lifetime: defaultLifetime, budget: defaultBudget, session: session{phase: PhaseIdle}}
 }
 
-// ObserveStatus records protocol-native status evidence. It never changes a
-// session phase or sends an amplifier command.
+// ObserveStatus records protocol-native status evidence. A model change fails
+// any active transaction and invalidates retained report evidence; it never
+// sends an amplifier command.
 func (c *Controller) ObserveStatus(status api.Status, generation uint64) {
 	if c == nil || generation == 0 {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.runtime.SerialSessionGeneration == 0 {
+		c.runtime.SerialSessionGeneration = 1
+	}
 	if generation < c.runtime.StatusGeneration {
 		return
 	}
+	c.invalidateForModelChangeLocked(status.Telemetry.ModelName)
+	c.preserveObservedModelLocked(&status)
 	c.runtime.Status = status
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
+	c.runtime.StatusSerialSessionGeneration = c.runtime.SerialSessionGeneration
 }
 
-// ObserveDisplay records checksum/display evidence and closes a pending
-// controller receipt only after a newer fingerprinted display arrives.
-func (c *Controller) ObserveDisplay(state display.State, generation uint64, checksumValid bool, tx, operate *bool) {
+// ObserveSerialSession invalidates cached protocol evidence as soon as a new
+// live serial port becomes active. A later status frame from that exact
+// session must restore the evidence before another write can be authorized.
+// Any armed transaction fails closed because its accumulated evidence belongs
+// to the prior amplifier session. Completed capability reports are discarded so
+// a replacement amplifier cannot relabel or receive prior-session evidence.
+func (c *Controller) ObserveSerialSession(generation uint64) {
 	if c == nil || generation == 0 {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if generation <= c.runtime.SerialSessionGeneration {
+		return
+	}
+	c.runtime.SerialSessionGeneration = generation
+	c.lastObservedModel = ""
+	c.runtime.StatusObservedAt = time.Time{}
+	c.runtime.Status.RecentContact = false
+	c.runtime.DisplayObservedAt = time.Time{}
+	c.runtime.DisplaySerialSessionGeneration = 0
+	c.runtime.ChecksumValid = false
+	c.runtime.DisplayTX = nil
+	c.runtime.DisplayOperate = nil
+	c.runtime.Screen = ScreenObservation{}
+	hasReportEvidence := len(c.reports) > 0
+	if c.activeLocked() || hasReportEvidence {
+		c.reports = nil
+		_ = c.invalidateForSerialSessionChangeLocked()
+	}
+}
+
+func (c *Controller) invalidateForSerialSessionChangeLocked() error {
+	reason := "serial session changed; menu-debug session and report evidence were invalidated"
+	c.session.phase = PhaseFailed
+	c.session.failure = reason
+	c.releaseLocked()
+	c.bumpLocked()
+	return errors.New(reason)
+}
+
+// ObserveStatusFromSerialSession records protocol evidence only when it came
+// from the currently active live serial session. A model change within that
+// session invalidates any transaction or report bound to the prior model.
+func (c *Controller) ObserveStatusFromSerialSession(status api.Status, generation, serialSessionGeneration uint64) {
+	if c == nil || generation == 0 || serialSessionGeneration == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if serialSessionGeneration != c.runtime.SerialSessionGeneration || generation < c.runtime.StatusGeneration {
+		return
+	}
+	c.invalidateForModelChangeLocked(status.Telemetry.ModelName)
+	c.preserveObservedModelLocked(&status)
+	c.runtime.Status = status
+	c.runtime.StatusGeneration = generation
+	c.runtime.StatusObservedAt = c.now()
+	c.runtime.StatusSerialSessionGeneration = serialSessionGeneration
+}
+
+func (c *Controller) invalidateForModelChangeLocked(observedModel string) {
+	observedModel = strings.TrimSpace(observedModel)
+	if observedModel == "" {
+		return
+	}
+	previousModel := strings.TrimSpace(c.lastObservedModel)
+	c.lastObservedModel = observedModel
+	if previousModel == "" || strings.EqualFold(previousModel, observedModel) {
+		return
+	}
+	if !c.activeLocked() && len(c.reports) == 0 {
+		return
+	}
+	c.reports = nil
+	reason := "amplifier model changed; menu-debug session and report evidence were invalidated"
+	c.session.phase = PhaseFailed
+	c.session.failure = reason
+	c.releaseLocked()
+	c.bumpLocked()
+}
+
+// preserveObservedModelLocked keeps controller/report identity stable when an
+// otherwise accepted status frame carries an empty or unknown model identifier.
+// The live serial transport deliberately does not use this retained value: it
+// records the current frame's model independently and therefore still rejects
+// writes until a later status frame identifies the expected model again.
+func (c *Controller) preserveObservedModelLocked(status *api.Status) {
+	if status == nil || strings.TrimSpace(status.Telemetry.ModelName) != "" {
+		return
+	}
+	status.Telemetry.ModelName = c.lastObservedModel
+}
+
+// ObserveDisplay records checksum/display evidence and closes a pending
+// controller receipt only after a newer fingerprinted display arrives.
+func (c *Controller) ObserveDisplay(state display.State, generation uint64, checksumValid bool, tx, operate *bool) {
+	c.observeDisplay(state, generation, checksumValid, tx, operate, 0)
+}
+
+// ObserveDisplayFromSerialSession accepts LCD evidence only from the currently
+// active live serial session.
+func (c *Controller) ObserveDisplayFromSerialSession(state display.State, generation uint64, checksumValid bool, tx, operate *bool, serialSessionGeneration uint64) {
+	if serialSessionGeneration == 0 {
+		return
+	}
+	c.observeDisplay(state, generation, checksumValid, tx, operate, serialSessionGeneration)
+}
+
+func (c *Controller) observeDisplay(state display.State, generation uint64, checksumValid bool, tx, operate *bool, serialSessionGeneration uint64) {
+	if c == nil || generation == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if serialSessionGeneration == 0 {
+		if c.runtime.SerialSessionGeneration == 0 {
+			c.runtime.SerialSessionGeneration = 1
+		}
+		serialSessionGeneration = c.runtime.SerialSessionGeneration
+	} else if serialSessionGeneration != c.runtime.SerialSessionGeneration {
+		return
+	}
 	if generation < c.runtime.DisplayGeneration {
 		return
 	}
@@ -117,6 +243,7 @@ func (c *Controller) ObserveDisplay(state display.State, generation uint64, chec
 	c.runtime.DisplayState = state
 	c.runtime.DisplayGeneration = generation
 	c.runtime.DisplayObservedAt = c.now()
+	c.runtime.DisplaySerialSessionGeneration = serialSessionGeneration
 	c.runtime.ChecksumValid = checksumValid
 	c.runtime.DisplayTX = cloneBool(tx)
 	c.runtime.DisplayOperate = cloneBool(operate)
@@ -390,7 +517,7 @@ func (c *Controller) Begin(token string, revision uint64, capability Capability)
 
 // AuthorizeDiscovery permits only bounded selector movement, plus SET when the
 // current server-derived evidence identifies the requested candidate menu.
-func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Action, evidence Evidence) (ActionAuthorization, error) {
+func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Action, expectedModel string, evidence Evidence) (ActionAuthorization, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.authorizeLocked(token, revision); err != nil {
@@ -401,6 +528,9 @@ func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Ac
 	}
 	if c.session.discoveryPending {
 		return ActionAuthorization{}, errors.New("previous discovery action still awaits display verification")
+	}
+	if !modelMatches(expectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("connected amplifier model changed while authorizing discovery")
 	}
 	if err := c.verifyCurrentEvidenceLocked(evidence); err != nil {
 		return ActionAuthorization{}, c.failLocked(err.Error())
@@ -419,7 +549,7 @@ func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Ac
 	} else if action != ActionRight {
 		return ActionAuthorization{}, c.failLocked("unsupported discovery action")
 	}
-	authorization, err := c.consumeActionLocked(action, purpose)
+	authorization, err := c.consumeActionLocked(action, purpose, expectedModel)
 	if err == nil {
 		c.session.discoveryPending = true
 		c.session.discoveryPurpose = purpose
@@ -431,7 +561,7 @@ func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Ac
 // exit after read-only discovery. The caller must independently restrict this
 // to a hardware profile where DISPLAY has been confirmed to return home
 // without committing menu values.
-func (c *Controller) AuthorizeTopologyExit(token string, revision uint64, evidence Evidence) (ActionAuthorization, error) {
+func (c *Controller) AuthorizeTopologyExit(token string, revision uint64, expectedModel string, evidence Evidence) (ActionAuthorization, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.authorizeLocked(token, revision); err != nil {
@@ -440,13 +570,16 @@ func (c *Controller) AuthorizeTopologyExit(token string, revision uint64, eviden
 	if c.session.phase != PhaseDiscovering || c.session.discoveryPending {
 		return ActionAuthorization{}, errors.New("topology exit requires completed discovery evidence")
 	}
+	if !modelMatches(expectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("connected amplifier model changed while authorizing topology exit")
+	}
 	if err := c.verifyCurrentEvidenceLocked(evidence); err != nil {
 		return ActionAuthorization{}, c.failLocked(err.Error())
 	}
 	if evidence.Candidate != c.session.capability || (evidence.Kind != ScreenFan && evidence.Kind != ScreenBank) {
 		return ActionAuthorization{}, c.failLocked("DISPLAY no-save exit requires a classified active capability screen")
 	}
-	authorization, err := c.consumeActionLocked(ActionDisplay, PurposeExitWithoutSave)
+	authorization, err := c.consumeActionLocked(ActionDisplay, PurposeExitWithoutSave, expectedModel)
 	if err == nil {
 		c.session.discoveryPending = true
 		c.session.discoveryPurpose = PurposeExitWithoutSave
@@ -495,6 +628,12 @@ func (c *Controller) InstallPlan(token string, revision uint64, plan Plan) (Sess
 	}
 	if err := validatePlan(plan); err != nil {
 		return c.viewLocked(), c.failLocked(err.Error())
+	}
+	if !modelMatches(plan.ExpectedModel, c.runtime.Status.ModelName) {
+		return c.viewLocked(), c.failLocked("reviewed plan model does not match the connected amplifier")
+	}
+	if !c.serialSessionMatchesLocked(plan.ExpectedSerialSessionGeneration) {
+		return c.viewLocked(), c.failLocked("reviewed plan status does not belong to the active serial session")
 	}
 	if len(c.session.evidence) == 0 {
 		return c.viewLocked(), c.failLocked("plan requires server-derived capability evidence")
@@ -549,12 +688,16 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 }
 
 func validatePlan(p Plan) error {
-	profileCapability := map[string]Capability{
-		"expert-1.3k-fa-first-series-fan-v1":     CapabilityFan,
-		"expert-1.5k-fa-second-series-fan-v1":    CapabilityFan,
-		"expert-1.3k-fa-first-series-bank-ab-v1": CapabilityBank,
+	type reviewedProfile struct {
+		capability Capability
+		model      string
+	}
+	profile := map[string]reviewedProfile{
+		"expert-1.3k-fa-first-series-fan-v1":     {CapabilityFan, "EXPERT 1.3K-FA"},
+		"expert-1.5k-fa-second-series-fan-v1":    {CapabilityFan, "EXPERT 1.5K-FA"},
+		"expert-1.3k-fa-first-series-bank-ab-v1": {CapabilityBank, "EXPERT 1.3K-FA"},
 	}[p.Profile]
-	if profileCapability == "" || profileCapability != p.Capability {
+	if profile.capability == "" || profile.capability != p.Capability || !modelMatches(profile.model, p.ExpectedModel) || p.ExpectedSerialSessionGeneration == 0 {
 		return errors.New("plan does not use a reviewed server profile")
 	}
 	if strings.TrimSpace(p.OriginalValue) == "" || strings.TrimSpace(p.CandidateValue) == "" || p.OriginalValue == p.CandidateValue {
@@ -611,6 +754,12 @@ func (c *Controller) beginPlan(token string, revision uint64, from, to Phase) (S
 	if c.session.phase != from {
 		return c.viewLocked(), fmt.Errorf("session is not ready for %s", to)
 	}
+	if !modelMatches(c.session.plan.ExpectedModel, c.runtime.Status.ModelName) {
+		return c.viewLocked(), c.failLocked("connected amplifier model changed after plan discovery")
+	}
+	if !c.serialSessionMatchesLocked(c.session.plan.ExpectedSerialSessionGeneration) {
+		return c.viewLocked(), c.failLocked("serial session changed after plan discovery")
+	}
 	if to == PhaseRestoring && !c.session.applyVerified {
 		return c.viewLocked(), errors.New("applied change has not been user verified")
 	}
@@ -648,6 +797,12 @@ func (c *Controller) AuthorizeNext(token string, revision uint64, evidence Evide
 	if c.session.stepIndex >= len(steps) {
 		return ActionAuthorization{}, errors.New("all planned actions are complete")
 	}
+	if !modelMatches(c.session.plan.ExpectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("connected amplifier model changed after plan discovery")
+	}
+	if !c.serialSessionMatchesLocked(c.session.plan.ExpectedSerialSessionGeneration) {
+		return ActionAuthorization{}, c.failLocked("serial session changed after plan discovery")
+	}
 	if err := c.verifyCurrentEvidenceLocked(evidence); err != nil {
 		return ActionAuthorization{}, c.failLocked(err.Error())
 	}
@@ -672,7 +827,7 @@ func (c *Controller) AuthorizeNext(token string, revision uint64, evidence Evide
 	if step.Action == ActionSet {
 		c.session.mayBeInMenu = true
 	}
-	return c.consumeActionLocked(step.Action, step.Purpose)
+	return c.consumeActionLocked(step.Action, step.Purpose, c.session.plan.ExpectedModel)
 }
 
 func (c *Controller) ObserveActionResult(token string, revision uint64, evidence Evidence) (SessionView, error) {
@@ -836,9 +991,16 @@ func (c *Controller) Fail(token string, revision uint64, reason string) (Session
 	return c.viewLocked(), c.failLocked(strings.TrimSpace(reason))
 }
 
-func (c *Controller) consumeActionLocked(action Action, purpose Purpose) (ActionAuthorization, error) {
+func (c *Controller) consumeActionLocked(action Action, purpose Purpose, expectedModel string) (ActionAuthorization, error) {
 	if c.lease != nil && c.lease.SafetyHold() {
 		return ActionAuthorization{}, c.failLocked("overtemperature safety preempted menu debug")
+	}
+	if !c.serialSessionMatchesLocked(c.runtime.StatusSerialSessionGeneration) {
+		return ActionAuthorization{}, c.failLocked("fresh status from the active serial session is required")
+	}
+	expectedModel = strings.TrimSpace(expectedModel)
+	if expectedModel == "" || !modelMatches(expectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("fresh identified amplifier model is required")
 	}
 	c.session.actionsAttempted++
 	if c.session.actionsAttempted > c.session.actionBudget {
@@ -847,7 +1009,17 @@ func (c *Controller) consumeActionLocked(action Action, purpose Purpose) (Action
 	c.session.actions = append(c.session.actions, action)
 	c.session.actionReceipts = append(c.session.actionReceipts, ActionReceipt{Action: action, Purpose: purpose, At: c.now().UTC()})
 	c.bumpLocked()
-	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision}, nil
+	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision, ExpectedModel: expectedModel, ExpectedSerialSessionGeneration: c.runtime.StatusSerialSessionGeneration}, nil
+}
+
+func (c *Controller) serialSessionMatchesLocked(expected uint64) bool {
+	return expected != 0 && c.runtime.SerialSessionGeneration == expected && c.runtime.StatusSerialSessionGeneration == expected && c.runtime.DisplaySerialSessionGeneration == expected
+}
+
+func modelMatches(expected, actual string) bool {
+	expected = strings.TrimSpace(expected)
+	actual = strings.TrimSpace(actual)
+	return expected != "" && strings.EqualFold(expected, actual)
 }
 
 func (c *Controller) verifyCurrentEvidenceLocked(evidence Evidence) error {

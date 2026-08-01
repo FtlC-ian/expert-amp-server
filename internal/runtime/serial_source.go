@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -116,12 +117,17 @@ type SerialSource struct {
 	lastErr            string
 	transportErrActive bool
 
-	portMu         sync.RWMutex
-	port           serial.Port
-	portGeneration uint64
-	portDone       chan struct{}
-	lifecycleMu    sync.Mutex
-	reconnectNow   chan struct{}
+	portMu               sync.RWMutex
+	port                 serial.Port
+	portGeneration       uint64
+	statusPortGeneration uint64
+	statusModel          string
+	statusOperatingState string
+	statusTX             bool
+	statusTXKnown        bool
+	portDone             chan struct{}
+	lifecycleMu          sync.Mutex
+	reconnectNow         chan struct{}
 
 	writeMu          sync.Mutex
 	specs            map[string]transport.ButtonSpec
@@ -211,6 +217,26 @@ func (s *SerialSource) ConfigureMenuDebugController(controller *menudebug.Contro
 	s.mu.Lock()
 	s.menuDebug = controller
 	s.mu.Unlock()
+	if evidence := s.SerialSessionEvidence(); controller != nil && evidence.Active {
+		controller.ObserveSerialSession(evidence.Generation)
+	}
+}
+
+// SerialSessionEvidence identifies the active live port and the session that
+// supplied the latest accepted protocol status frame.
+type SerialSessionEvidence struct {
+	Generation       uint64
+	StatusGeneration uint64
+	Active           bool
+}
+
+func (s *SerialSource) SerialSessionEvidence() SerialSessionEvidence {
+	if s == nil {
+		return SerialSessionEvidence{}
+	}
+	s.portMu.RLock()
+	defer s.portMu.RUnlock()
+	return SerialSessionEvidence{Generation: s.portGeneration, StatusGeneration: s.statusPortGeneration, Active: s.port != nil}
 }
 
 // Diagnostics returns the current ingest diagnostics snapshot.
@@ -242,13 +268,27 @@ func (s *SerialSource) Diagnostics() IngestDiagnostics {
 
 // SendButton writes a safe action frame through the currently held live serial port.
 func (s *SerialSource) SendButton(ctx context.Context, action api.ButtonAction) (api.ActionResult, error) {
+	return s.sendButton(ctx, action, transport.SerialSessionWriteAuthorization{})
+}
+
+// SendButtonForSerialSession captures and verifies the current port under the
+// same write lock used for dispatch, so a reconnect can never redirect an
+// authorized command to a replacement amplifier.
+func (s *SerialSource) SendButtonForSerialSession(ctx context.Context, action api.ButtonAction, authorization transport.SerialSessionWriteAuthorization) (api.ActionResult, error) {
+	if authorization.SessionGeneration == 0 || strings.TrimSpace(authorization.Model) == "" {
+		return api.ActionResult{Name: action.Name}, errors.New("serial session and model are required")
+	}
+	return s.sendButton(ctx, action, authorization)
+}
+
+func (s *SerialSource) sendButton(ctx context.Context, action api.ButtonAction, authorization transport.SerialSessionWriteAuthorization) (api.ActionResult, error) {
 	action = action.Normalized()
 	spec, ok := s.specs[action.Name]
 	if !ok || !spec.Safe || spec.Code == nil {
 		return api.ActionResult{Name: action.Name, Queued: false, Sent: false, Transport: "serial-live"}, transport.InvalidButtonActionError(action.Name)
 	}
 	frame := []byte{0x55, 0x55, 0x55, 0x01, *spec.Code, *spec.Code}
-	if err := s.writeFrame(ctx, frame); err != nil {
+	if err := s.writeFrameForSerialSession(ctx, frame, authorization); err != nil {
 		return api.ActionResult{Name: action.Name, Queued: false, Sent: false, Transport: "serial-live", FrameHex: hex.EncodeToString(frame)}, err
 	}
 	return api.ActionResult{Name: action.Name, Queued: false, Sent: true, Transport: "serial-live", FrameHex: hex.EncodeToString(frame)}, nil
@@ -333,7 +373,7 @@ func (s *SerialSource) readLoop(ctx context.Context) {
 				MaxBuffer:   s.cfg.MaxBuffer,
 			})
 			statusDecoder := protocol.NewStatusStreamDecoder()
-			err = s.readFromPort(ctx, port, serialCfg, decoder, statusDecoder, displayPollFrame, statusPollFrame)
+			err = s.readFromPort(ctx, port, generation, serialCfg, decoder, statusDecoder, displayPollFrame, statusPollFrame)
 			s.endSession(generation, done)
 		}
 		if err == nil {
@@ -355,7 +395,7 @@ func (s *SerialSource) readLoop(ctx context.Context) {
 	}
 }
 
-func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg serial.Config, decoder *protocol.DisplayStreamDecoder, statusDecoder *protocol.StatusStreamDecoder, displayPollFrame []byte, statusPollFrame []byte) error {
+func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, sessionGeneration uint64, cfg serial.Config, decoder *protocol.DisplayStreamDecoder, statusDecoder *protocol.StatusStreamDecoder, displayPollFrame []byte, statusPollFrame []byte) error {
 	defer port.Close()
 
 	if err := port.SetReadTimeout(cfg.ReadTimeout); err != nil {
@@ -399,10 +439,10 @@ func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg s
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
 			for _, frame := range statusDecoder.Push(chunk) {
-				s.applyStatusFrame(frame)
+				s.applyStatusFrameFromSession(frame, sessionGeneration)
 			}
 			for _, frame := range decoder.Push(chunk) {
-				s.applyFrame(frame)
+				s.applyFrameFromSession(frame, sessionGeneration)
 			}
 		}
 		if err != nil {
@@ -415,15 +455,30 @@ func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg s
 }
 
 func (s *SerialSource) writeFrame(ctx context.Context, frame []byte) error {
+	return s.writeFrameForSerialSession(ctx, frame, transport.SerialSessionWriteAuthorization{})
+}
+
+func (s *SerialSource) writeFrameForSerialSession(ctx context.Context, frame []byte, authorization transport.SerialSessionWriteAuthorization) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("button send canceled: %w", err)
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	port := s.currentPort()
+	s.portMu.RLock()
+	port := s.port
+	currentGeneration := s.portGeneration
+	statusGeneration := s.statusPortGeneration
+	statusModel := s.statusModel
+	statusOperatingState := s.statusOperatingState
+	statusTX := s.statusTX
+	statusTXKnown := s.statusTXKnown
+	s.portMu.RUnlock()
 	if port == nil {
 		return transport.TransportUnavailableError()
+	}
+	if authorization.SessionGeneration != 0 && (currentGeneration != authorization.SessionGeneration || statusGeneration != authorization.SessionGeneration || !strings.EqualFold(strings.TrimSpace(statusModel), strings.TrimSpace(authorization.Model)) || !strings.EqualFold(strings.TrimSpace(statusOperatingState), "standby") || !statusTXKnown || statusTX) {
+		return errors.New("serial session, amplifier model, or STANDBY/RX status changed before button write")
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, s.ioTimeout())
 	defer cancel()
@@ -475,10 +530,21 @@ func (s *SerialSource) beginSession(port serial.Port) (uint64, chan struct{}) {
 	s.portMu.Lock()
 	s.portGeneration++
 	generation := s.portGeneration
+	s.statusPortGeneration = 0
+	s.statusModel = ""
+	s.statusOperatingState = ""
+	s.statusTX = false
+	s.statusTXKnown = false
 	done := make(chan struct{})
 	s.port = port
 	s.portDone = done
 	s.portMu.Unlock()
+	s.mu.RLock()
+	menuDebug := s.menuDebug
+	s.mu.RUnlock()
+	if menuDebug != nil {
+		menuDebug.ObserveSerialSession(generation)
+	}
 	return generation, done
 }
 
@@ -542,11 +608,23 @@ func (s *SerialSource) signalReconnect() {
 }
 
 func (s *SerialSource) applyFrame(frame []byte) {
+	s.applyFrameFromSession(frame, 0)
+}
+
+func (s *SerialSource) applyFrameFromSession(frame []byte, sessionGeneration uint64) {
 	state, err := protocol.StateFromFrame(frame)
 	if err != nil {
 		s.decodeErrors.Add(1)
 		s.setErr(fmt.Sprintf("decode frame: %v", err))
 		return
+	}
+	if sessionGeneration != 0 {
+		s.portMu.RLock()
+		current := s.port != nil && s.portGeneration == sessionGeneration
+		s.portMu.RUnlock()
+		if !current {
+			return
+		}
 	}
 	s.markHealthy()
 
@@ -606,7 +684,11 @@ func (s *SerialSource) applyFrame(frame []byte) {
 	}
 	if menuDebug != nil {
 		checksumValid := meta.LCDFlags != nil && meta.LCDFlags.ChecksumPresent && meta.LCDFlags.ChecksumValid
-		menuDebug.ObserveDisplay(state, generation, checksumValid, displayTX, displayOperate)
+		if sessionGeneration == 0 {
+			menuDebug.ObserveDisplay(state, generation, checksumValid, displayTX, displayOperate)
+		} else {
+			menuDebug.ObserveDisplayFromSerialSession(state, generation, checksumValid, displayTX, displayOperate, sessionGeneration)
+		}
 	}
 }
 
@@ -662,6 +744,10 @@ func apiLCDFlags(flags *protocol.LCDFlags) *api.LCDFlags {
 }
 
 func (s *SerialSource) applyStatusFrame(frame []byte) {
+	s.applyStatusFrameFromSession(frame, 0)
+}
+
+func (s *SerialSource) applyStatusFrameFromSession(frame []byte, sessionGeneration uint64) {
 	temperatureUnit := tempunit.Celsius
 	if s.cfg.TemperatureUnitFn != nil {
 		temperatureUnit = s.cfg.TemperatureUnitFn()
@@ -671,6 +757,25 @@ func (s *SerialSource) applyStatusFrame(frame []byte) {
 		s.decodeErrors.Add(1)
 		s.setErr(fmt.Sprintf("decode status frame: %v", err))
 		return
+	}
+	if sessionGeneration != 0 {
+		s.writeMu.Lock()
+		s.portMu.Lock()
+		if s.port == nil || s.portGeneration != sessionGeneration {
+			s.portMu.Unlock()
+			s.writeMu.Unlock()
+			return
+		}
+		s.statusPortGeneration = sessionGeneration
+		// A newly accepted status frame invalidates the prior identity before
+		// any other observer can see the update. Dispatch uses writeMu too, so
+		// either the prior authorized write finishes first or it fails closed.
+		s.statusModel = ""
+		s.statusOperatingState = ""
+		s.statusTX = false
+		s.statusTXKnown = false
+		s.portMu.Unlock()
+		s.writeMu.Unlock()
 	}
 	s.markHealthy()
 
@@ -694,7 +799,24 @@ func (s *SerialSource) applyStatusFrame(frame []byte) {
 		fanController.Observe(controllerStatus, fanSettings())
 	}
 	if menuDebug != nil {
-		menuDebug.ObserveStatus(controllerStatus, s.menuStatusGen.Add(1))
+		statusGeneration := s.menuStatusGen.Add(1)
+		if sessionGeneration == 0 {
+			menuDebug.ObserveStatus(controllerStatus, statusGeneration)
+		} else {
+			menuDebug.ObserveStatusFromSerialSession(controllerStatus, statusGeneration, sessionGeneration)
+			s.writeMu.Lock()
+			s.portMu.Lock()
+			if s.port != nil && s.portGeneration == sessionGeneration {
+				s.statusModel = strings.TrimSpace(controllerStatus.ModelName)
+				s.statusOperatingState = strings.TrimSpace(controllerStatus.OperatingState)
+				if controllerStatus.TX != nil {
+					s.statusTX = *controllerStatus.TX
+					s.statusTXKnown = true
+				}
+			}
+			s.portMu.Unlock()
+			s.writeMu.Unlock()
+		}
 	}
 }
 

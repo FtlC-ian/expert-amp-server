@@ -100,7 +100,7 @@ SPE documents a maximum rate of `115200` with automatic adaptation to lower spee
 
 ## Menu Debug & Reporting
 
-The advanced Menu Debug wizard is disabled by default and intended for supervised compatibility testing. Arming requires the exact acknowledgement, fresh protocol STANDBY/RX, a checksum-valid STANDBY home display, inactive fan control, disarmed overtemperature standby, and an exclusive actuation lease. Each accepted step sends at most one reviewed command and then waits for newer verified display evidence.
+The advanced Menu Debug wizard is disabled by default and intended for supervised compatibility testing. Arming requires the exact acknowledgement, fresh protocol STANDBY/RX, a checksum-valid STANDBY home display, inactive fan control, disarmed overtemperature standby, and an exclusive actuation lease. Each accepted step sends at most one reviewed command and then waits for newer verified display evidence. A serial reconnect or an observed change to a different identified model invalidates the entire active session and discards any accumulated report evidence, so different hardware cannot continue or relabel it.
 
 The reviewed First Series Expert 1.3K-FA profile may propose reversible fan and two-bank A/B tests. An evidence-backed Expert 1.5K-FA Second Series fan profile follows its captured CONFIG-first topology, but remains candidate-only until apply and restoration are physically verified. Unknown models and F-KFA NORMAL/QUIET layouts remain topology-only; QUIET is never treated as high cooling. TX, stale evidence, an unexpected screen, timeout, or safety preemption stops the session fail-closed; the wizard never restores OPERATE or performs blind menu recovery.
 

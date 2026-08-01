@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.2 - 2026-08-01
+
+Menu Debug identity-binding corrective release.
+
+### Safety hardening and fixes
+
+- Frozen reviewed Menu Debug plans now retain the exact amplifier model that selected the profile.
+- Plan installation, apply/restore entry, and every planned action authorization fail closed if the live model changes after discovery.
+- Protocol status and checksum-valid LCD evidence are bound to the live serial session that produced them; reconnects invalidate both until the replacement session supplies fresh evidence.
+- Reviewed plans and one-write authorizations freeze that session generation, and the transport atomically refuses a different or status-unconfirmed port.
+- A reconnect now invalidates every active Menu Debug session and any retained capability report, so replacement-session evidence cannot complete, contaminate, download, upload, or relabel prior-amplifier evidence.
+- Sanitized reports now include the optional reviewed `setupTopology` classification used for candidate-profile selection.
+
 ## v0.4.1 - 2026-08-01
 
 Evidence-selected fan-profile and topology-binding release.

@@ -8,12 +8,19 @@ import (
 )
 
 type recordingActuator struct {
-	actions []string
-	wakes   int
+	actions        []string
+	authorizations []SerialSessionWriteAuthorization
+	wakes          int
 }
 
 func (r *recordingActuator) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
 	r.actions = append(r.actions, action.Name)
+	return api.ActionResult{Name: action.Name, Sent: true}, nil
+}
+
+func (r *recordingActuator) SendButtonForSerialSession(_ context.Context, action api.ButtonAction, authorization SerialSessionWriteAuthorization) (api.ActionResult, error) {
+	r.actions = append(r.actions, action.Name)
+	r.authorizations = append(r.authorizations, authorization)
 	return api.ActionResult{Name: action.Name, Sent: true}, nil
 }
 
@@ -98,5 +105,24 @@ func TestActuationCoordinatorRejectsWakeDuringAutomaticLease(t *testing.T) {
 	}
 	if raw.wakes != 1 {
 		t.Fatalf("wake count = %d, want 1", raw.wakes)
+	}
+}
+
+func TestOwnedActuationForwardsSerialSessionBinding(t *testing.T) {
+	raw := &recordingActuator{}
+	menu := NewActuationCoordinator(raw).Owner(ActuationOwnerMenuDebug, false)
+	if !menu.Acquire() {
+		t.Fatal("menu-debug lease was not acquired")
+	}
+	sessionTransport, ok := menu.(SerialSessionButtonTransport)
+	if !ok {
+		t.Fatal("owned transport does not preserve serial-session binding")
+	}
+	authorization := SerialSessionWriteAuthorization{SessionGeneration: 7, Model: "EXPERT 1.3K-FA"}
+	if _, err := sessionTransport.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.actions) != 1 || raw.actions[0] != "set" || len(raw.authorizations) != 1 || raw.authorizations[0] != authorization {
+		t.Fatalf("forwarded actions=%v authorizations=%v", raw.actions, raw.authorizations)
 	}
 }

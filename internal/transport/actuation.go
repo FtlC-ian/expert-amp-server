@@ -143,6 +143,23 @@ func (t *ownedButtonTransport) SendButton(ctx context.Context, action api.Button
 	return c.transport.SendButton(ctx, action)
 }
 
+func (t *ownedButtonTransport) SendButtonForSerialSession(ctx context.Context, action api.ButtonAction, authorization SerialSessionWriteAuthorization) (api.ActionResult, error) {
+	if t == nil || t.coordinator == nil || t.coordinator.transport == nil {
+		return api.ActionResult{Name: action.Name}, TransportUnavailableError()
+	}
+	c := t.coordinator
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.owner != t.owner || (!t.safety && c.safetyHold) {
+		return api.ActionResult{Name: action.Name}, ActuationBusyError(c.owner)
+	}
+	transport, ok := c.transport.(SerialSessionButtonTransport)
+	if !ok {
+		return api.ActionResult{Name: action.Name}, TransportUnavailableError()
+	}
+	return transport.SendButtonForSerialSession(ctx, action, authorization)
+}
+
 func (t *gatedWakeTransport) SendWake(ctx context.Context) (api.ActionResult, error) {
 	if t == nil || t.coordinator == nil || t.transport == nil {
 		return api.ActionResult{Name: "wake"}, WakeTransportUnavailableError()
