@@ -373,8 +373,15 @@ func TestPlannedActionRejectsChangedSerialSessionWithSameModel(t *testing.T) {
 	}
 	c.ObserveSerialSession(2)
 	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 2, 2)
-	if _, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false)); err == nil || !strings.Contains(err.Error(), "serial session changed") {
-		t.Fatalf("changed-session authorization error = %v", err)
+	v, err = c.Current(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Phase != PhaseFailed || !strings.Contains(v.Failure, "serial session changed") {
+		t.Fatalf("changed session did not immediately fail transaction: %+v", v)
+	}
+	if _, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false)); err == nil {
+		t.Fatal("changed-session transaction remained actionable")
 	}
 }
 
@@ -452,6 +459,132 @@ func TestPendingPlannedActionFailsClosedOnSerialSessionChange(t *testing.T) {
 	c.ObserveDisplayFromSerialSession(replacement, base+3, true, nil, nil, 2)
 	if c.session.phase != PhaseFailed || len(c.session.evidence) != evidenceCount || c.session.revision != auth.Revision+1 {
 		t.Fatalf("replacement-session display altered failed planned action: %+v", c.session)
+	}
+}
+
+func TestSerialSessionChangeInvalidatesCompletedCapabilityEvidence(t *testing.T) {
+	l := &fakeLease{}
+	c, _ := newDeterministicController(l)
+	v, token := arm(t, c)
+	v = completeCapability(t, c, token, v, simplePlan(CapabilityFan, "NORMAL", "CONTEST"))
+	if v.Phase != PhaseArmed || len(c.reports) != 1 || l.acquired != 1 || l.released != 1 {
+		t.Fatalf("completed capability state: view=%+v reports=%+v lease=%+v", v, c.reports, l)
+	}
+	previousRevision := v.Revision
+
+	c.ObserveSerialSession(2)
+
+	v, err := c.Current(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Phase != PhaseFailed || !strings.Contains(v.Failure, "serial session changed") || v.Revision != previousRevision+1 {
+		t.Fatalf("reconnect did not invalidate active session: %+v", v)
+	}
+	if len(c.Report("EXPERT 9K-FA", "replacement", "test").Capabilities) != 0 {
+		t.Fatalf("replacement model received prior capability evidence: %+v", c.reports)
+	}
+	if l.released != 1 {
+		t.Fatalf("reconnect released an already released lease: %+v", l)
+	}
+	if _, err = c.Begin(token, v.Revision, CapabilityBank); err == nil {
+		t.Fatal("invalidated session continued with another capability")
+	}
+}
+
+func TestSerialSessionChangeInvalidatesCompletedSessionReport(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	v = completeCapability(t, c, token, v, simplePlan(CapabilityFan, "NORMAL", "CONTEST"))
+	v, err := c.Complete(token, v.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Phase != PhaseComplete || len(c.reports) != 1 {
+		t.Fatalf("completed session state: view=%+v reports=%+v", v, c.reports)
+	}
+	previousRevision := v.Revision
+
+	c.ObserveSerialSession(2)
+
+	v, err = c.Current(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Phase != PhaseFailed || v.Revision != previousRevision+1 || len(c.reports) != 0 {
+		t.Fatalf("completed report survived reconnect: view=%+v reports=%+v", v, c.reports)
+	}
+}
+
+func TestSerialSessionChangeInvalidatesReportsRetainedByTerminalSessions(t *testing.T) {
+	tests := []struct {
+		name      string
+		terminate func(*testing.T, *Controller, *time.Time, string, SessionView) SessionView
+	}{
+		{
+			name: "failed",
+			terminate: func(t *testing.T, c *Controller, _ *time.Time, token string, v SessionView) SessionView {
+				t.Helper()
+				if _, err := c.Fail(token, v.Revision, "test failure"); err == nil {
+					t.Fatal("Fail returned no error")
+				}
+				view, err := c.Current(token)
+				if err != nil || view.Phase != PhaseFailed {
+					t.Fatalf("Current after Fail: view=%+v err=%v", view, err)
+				}
+				return view
+			},
+		},
+		{
+			name: "aborted",
+			terminate: func(t *testing.T, c *Controller, _ *time.Time, token string, v SessionView) SessionView {
+				t.Helper()
+				view, err := c.Abort(token, v.Revision, true)
+				if err != nil || view.Phase != PhaseAborted {
+					t.Fatalf("Abort: view=%+v err=%v", view, err)
+				}
+				return view
+			},
+		},
+		{
+			name: "expired",
+			terminate: func(t *testing.T, c *Controller, now *time.Time, _ string, _ SessionView) SessionView {
+				t.Helper()
+				*now = now.Add(c.lifetime)
+				view := c.Tick(*now)
+				if view.Phase != PhaseExpired {
+					t.Fatalf("Tick: view=%+v", view)
+				}
+				return view
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, now := newDeterministicController(&fakeLease{})
+			v, token := arm(t, c)
+			v = completeCapability(t, c, token, v, simplePlan(CapabilityFan, "NORMAL", "CONTEST"))
+			v = tc.terminate(t, c, now, token, v)
+			if len(c.reports) != 1 {
+				t.Fatalf("terminal session did not retain setup report: %+v", c.reports)
+			}
+			previousRevision := v.Revision
+
+			c.ObserveSerialSession(2)
+
+			if c.session.phase != PhaseFailed || !strings.Contains(c.session.failure, "serial session changed") || c.session.revision != previousRevision+1 || len(c.reports) != 0 {
+				t.Fatalf("terminal report survived reconnect: session=%+v reports=%+v", c.session, c.reports)
+			}
+		})
+	}
+}
+
+func TestSerialSessionChangePreservesIdleControllerWithoutReports(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	c.ObserveSerialSession(2)
+	if c.session.phase != PhaseIdle || c.session.revision != 0 || len(c.reports) != 0 {
+		t.Fatalf("idle controller changed on reconnect: session=%+v reports=%+v", c.session, c.reports)
 	}
 }
 

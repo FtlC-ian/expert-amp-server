@@ -93,8 +93,9 @@ func (c *Controller) ObserveStatus(status api.Status, generation uint64) {
 // ObserveSerialSession invalidates cached protocol evidence as soon as a new
 // live serial port becomes active. A later status frame from that exact
 // session must restore the evidence before another write can be authorized.
-// If a write is already waiting for its display receipt, the transaction fails
-// closed because a replacement session cannot prove the prior write's result.
+// Any armed transaction fails closed because its accumulated evidence belongs
+// to the prior amplifier session. Completed capability reports are discarded so
+// a replacement amplifier cannot relabel or receive prior-session evidence.
 func (c *Controller) ObserveSerialSession(generation uint64) {
 	if c == nil || generation == 0 {
 		return
@@ -113,11 +114,20 @@ func (c *Controller) ObserveSerialSession(generation uint64) {
 	c.runtime.DisplayTX = nil
 	c.runtime.DisplayOperate = nil
 	c.runtime.Screen = ScreenObservation{}
-	discoveryAwaitingReceipt := c.session.phase == PhaseDiscovering && c.session.discoveryPending
-	plannedActionAwaitingReceipt := (c.session.phase == PhaseApplying || c.session.phase == PhaseRestoring) && c.session.pending != nil
-	if discoveryAwaitingReceipt || plannedActionAwaitingReceipt {
-		_ = c.failLocked("serial session changed while an action awaited display verification")
+	hasReportEvidence := len(c.reports) > 0
+	if c.activeLocked() || hasReportEvidence {
+		c.reports = nil
+		_ = c.invalidateForSerialSessionChangeLocked()
 	}
+}
+
+func (c *Controller) invalidateForSerialSessionChangeLocked() error {
+	reason := "serial session changed; menu-debug session and report evidence were invalidated"
+	c.session.phase = PhaseFailed
+	c.session.failure = reason
+	c.releaseLocked()
+	c.bumpLocked()
+	return errors.New(reason)
 }
 
 // ObserveStatusFromSerialSession records protocol evidence only when it came

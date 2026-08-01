@@ -1251,6 +1251,77 @@ func TestMenuDebugUploaderFailureDoesNotCrashAndCanRetry(t *testing.T) {
 	}
 }
 
+func TestMenuDebugReconnectBlocksCompletedReportAccess(t *testing.T) {
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true, ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true, DisplayGeneration: 1, StatusGeneration: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityBank)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, menudebug.Evidence{Generation: 2, Fingerprint: "home", Kind: menudebug.ScreenHome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.ObserveDiscoveryResult(token, auth.Revision, menudebug.Evidence{Generation: 3, Fingerprint: "bank", Kind: menudebug.ScreenBank, Candidate: menudebug.CapabilityBank, Value: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.CompleteTopology(token, view.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Complete(token, view.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	uploader := &stubMenuDebugUploader{}
+	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, MenuDebugUploader: uploader, Version: VersionInfo{Version: "test"}}, firmware: "1.2.3"}
+	controller.ObserveSerialSession(2)
+	view, err = controller.Current(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Phase != menudebug.PhaseFailed {
+		t.Fatalf("reconnect phase = %s", view.Phase)
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "preview", path: "/api/v1/menu-debug/report", call: menuAPI.report},
+		{name: "download", path: "/api/v1/menu-debug/report.json", call: menuAPI.download},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set(menuDebugTokenHeader, token)
+			tc.call(rec, req)
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/report/upload", strings.NewReader(fmt.Sprintf(`{"expectedRevision":%d,"consent":true}`, view.Revision)))
+	uploadReq.Header.Set(menuDebugTokenHeader, token)
+	menuAPI.upload(rec, uploadReq)
+	if rec.Code != http.StatusConflict || uploader.calls != 0 {
+		t.Fatalf("upload status=%d calls=%d body=%s", rec.Code, uploader.calls, rec.Body.String())
+	}
+}
+
 func TestTopologyOnlyCaptureEndsSessionBeforeAnotherCapability(t *testing.T) {
 	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
 	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)

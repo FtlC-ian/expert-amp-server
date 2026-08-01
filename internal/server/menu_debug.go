@@ -673,7 +673,12 @@ func (m *menuDebugAPI) authorizedReport(w http.ResponseWriter, r *http.Request) 
 		m.writeConflict(w, view, err)
 		return menudebug.Report{}, false
 	}
-	return m.currentReport(), true
+	report := m.currentReport()
+	if len(report.Capabilities) == 0 {
+		m.writeConflict(w, view, errors.New("menu-debug report has no completed capability evidence"))
+		return menudebug.Report{}, false
+	}
+	return report, true
 }
 
 func (m *menuDebugAPI) nextCapability(completed []menudebug.Capability) (menudebug.Capability, bool) {
