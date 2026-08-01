@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.4.1 - 2026-08-01
+
+Evidence-selected fan-profile and topology-binding release.
+
+### Added
+
+- A candidate Expert 1.5K-FA Second Series Menu Debug profile based on its captured CONFIG-first SET-menu topology.
+- Profile identity, setup topology, supported fan values, and production/candidate capabilities in Menu Debug reports and API responses.
+- Cross-family regression coverage and a production First Series discovery-to-plan test.
+
+### Safety hardening
+
+- Production fan writes now require both the reported model and the exact promoted SET-menu topology; model names or similar labels alone cannot authorize a write.
+- Only the hardware-verified First Series Expert 1.3K-FA profile is promoted for production fan control.
+- The Second Series 1.5K-FA profile remains candidate-only until an operator physically verifies both NORMAL to CONTEST apply and restoration to NORMAL.
+- Unknown, ambiguous, cross-paired, and F-KFA NORMAL/QUIET layouts remain topology-only and cannot change a value or SAVE; QUIET is never interpreted as high cooling.
+- Setup-family identity and ordered waypoints remain bound through the complete reviewed transaction.
+
+### Validation
+
+- The First Series 1.3K-FA completed display-verified Menu Debug and production override NORMAL to CONTEST to NORMAL cycles, returning to STANDBY/RX with fan automation and manual override disabled.
+
 ## v0.4.0 - 2026-07-31
 
 Guarded menu discovery, compatibility reporting, and serial recovery release.
