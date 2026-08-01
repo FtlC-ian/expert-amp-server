@@ -97,6 +97,8 @@ Menu Debug & Reporting is a separate disabled-by-default discovery boundary. Arm
 
 Reviewed reversible fan-test profiles cover the First Series Expert 1.3K-FA and the captured CONFIG-first Expert 1.5K-FA Second Series topology. The 1.5K profile remains candidate-only until both apply and restoration are physically verified, and it does not enable production fan control. Unknown models and F-KFA NORMAL/QUIET layouts remain topology-only; QUIET is never interpreted as high cooling.
 
+An accepted same-session status frame whose model identifier is empty or unknown preserves the controller's last identified model solely for in-flight receipt and report attribution. The live transport tracks that frame's current identity independently and rejects every new write until a later protocol status identifies the expected model again.
+
 Only reviewed server-owned action profiles may propose a reversible value change and SAVE. Unknown models and layouts are topology-only. Any mismatch, TX observation, stale evidence, timeout, abort, or safety preemption stops fail-closed, releases ownership, and leaves physical-panel recovery to the operator. The wizard never restores OPERATE. A completed report contains normalized display evidence, fingerprints, action/transition receipts, and operator verification while excluding host, network, callsign, session-token, and serial-device identity. Upload is explicit and one-shot; reports are candidate evidence for maintainer review, never automatic permission to change production behavior.
 
 Vendor-documented backlight commands `0x82` and `0x83` are exposed as `backlight-on` and `backlight-off`. Their user-visible effects still need broader model testing.

@@ -190,6 +190,22 @@ func statusFrameWithState(t *testing.T, frame []byte, operatingCode, txrxCode by
 	return out
 }
 
+func statusFrameWithPAIdentifier(t *testing.T, frame []byte, identifier string) []byte {
+	t.Helper()
+	if len(frame) != 76 || len(identifier) != 3 || frame[4] != ',' || frame[8] != ',' {
+		t.Fatalf("unexpected status fixture shape or identifier %q", identifier)
+	}
+	out := append([]byte(nil), frame...)
+	copy(out[5:8], identifier)
+	sum := 0
+	for _, value := range out[4:71] {
+		sum += int(value)
+	}
+	out[71] = byte(sum % 256)
+	out[72] = byte(sum / 256)
+	return out
+}
+
 func displayStreamChunk(t *testing.T) []byte {
 	t.Helper()
 	rawFrame, err := os.ReadFile("../../fixtures/real_home_status_frame.bin")
@@ -823,6 +839,37 @@ func TestSerialSourceAllowsNewerSameModelStatusForAuthorizedWrite(t *testing.T) 
 	}
 	if writes := port.writtenSnapshot(); len(writes) != 1 {
 		t.Fatalf("same-model authorization writes = %v", writes)
+	}
+}
+
+func TestSerialSourceRejectsUnknownModelUntilSameModelRecovery(t *testing.T) {
+	status13K := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	unknownModel := statusFrameWithPAIdentifier(t, status13K, "ZZZ")
+	port := &mockSerialPort{}
+	controller := menudebug.NewController(nil)
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0", ReadTimeout: 25 * time.Millisecond}, &mockSerialOpener{port: port}, Update{})
+	src.ConfigureMenuDebugController(controller)
+	sessionGeneration, _ := src.beginSession(port)
+	src.applyStatusFrameFromSession(status13K, sessionGeneration)
+	authorization := transport.SerialSessionWriteAuthorization{SessionGeneration: sessionGeneration, Model: "EXPERT 1.3K-FA"}
+
+	src.applyStatusFrameFromSession(unknownModel, sessionGeneration)
+	if got := controller.Runtime().Status.ModelName; got != "EXPERT 1.3K-FA" {
+		t.Fatalf("controller attribution after unknown model = %q", got)
+	}
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization); err == nil || !strings.Contains(err.Error(), "amplifier model") {
+		t.Fatalf("unknown-model authorization error = %v", err)
+	}
+	if writes := port.writtenSnapshot(); len(writes) != 0 {
+		t.Fatalf("unknown-model frame allowed write: %v", writes)
+	}
+
+	src.applyStatusFrameFromSession(status13K, sessionGeneration)
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization); err != nil {
+		t.Fatalf("same-model recovery rejected write: %v", err)
+	}
+	if writes := port.writtenSnapshot(); len(writes) != 1 {
+		t.Fatalf("same-model recovery writes = %v", writes)
 	}
 }
 

@@ -1375,6 +1375,58 @@ func TestMenuDebugReconnectBlocksCompletedReportAccess(t *testing.T) {
 	}
 }
 
+func TestMenuDebugUnknownModelStatusPreservesCompletedReportAttributionAndAccess(t *testing.T) {
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true, ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true, DisplayGeneration: 1, StatusGeneration: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityBank)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, "EXPERT 1.3K-FA", menudebug.Evidence{Generation: 2, Fingerprint: "home", Kind: menudebug.ScreenHome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.ObserveDiscoveryResult(token, auth.Revision, menudebug.Evidence{Generation: 3, Fingerprint: "bank", Kind: menudebug.ScreenBank, Candidate: menudebug.CapabilityBank, Value: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.CompleteTopology(token, view.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Complete(token, view.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{OperatingState: "standby", TX: &rx}, RecentContact: true}, 2)
+	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, Version: VersionInfo{Version: "test"}}, firmware: "1.2.3"}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/menu-debug/report", nil)
+	req.Header.Set(menuDebugTokenHeader, token)
+	menuAPI.report(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("report status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data menudebug.Report `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.Model != "EXPERT 1.3K-FA" || len(body.Data.Capabilities) != 1 {
+		t.Fatalf("report attribution after unknown model = %+v", body.Data)
+	}
+}
+
 func TestTopologyOnlyCaptureEndsSessionBeforeAnotherCapability(t *testing.T) {
 	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
 	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)

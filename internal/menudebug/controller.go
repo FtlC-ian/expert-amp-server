@@ -90,6 +90,7 @@ func (c *Controller) ObserveStatus(status api.Status, generation uint64) {
 		return
 	}
 	c.invalidateForModelChangeLocked(status.Telemetry.ModelName)
+	c.preserveObservedModelLocked(&status)
 	c.runtime.Status = status
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
@@ -150,6 +151,7 @@ func (c *Controller) ObserveStatusFromSerialSession(status api.Status, generatio
 		return
 	}
 	c.invalidateForModelChangeLocked(status.Telemetry.ModelName)
+	c.preserveObservedModelLocked(&status)
 	c.runtime.Status = status
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
@@ -175,6 +177,18 @@ func (c *Controller) invalidateForModelChangeLocked(observedModel string) {
 	c.session.failure = reason
 	c.releaseLocked()
 	c.bumpLocked()
+}
+
+// preserveObservedModelLocked keeps controller/report identity stable when an
+// otherwise accepted status frame carries an empty or unknown model identifier.
+// The live serial transport deliberately does not use this retained value: it
+// records the current frame's model independently and therefore still rejects
+// writes until a later status frame identifies the expected model again.
+func (c *Controller) preserveObservedModelLocked(status *api.Status) {
+	if status == nil || strings.TrimSpace(status.Telemetry.ModelName) != "" {
+		return
+	}
+	status.Telemetry.ModelName = c.lastObservedModel
 }
 
 // ObserveDisplay records checksum/display evidence and closes a pending

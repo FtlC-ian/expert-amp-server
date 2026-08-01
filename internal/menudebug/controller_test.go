@@ -806,6 +806,36 @@ func TestModelObservationPreservesControllersWithoutBoundEvidence(t *testing.T) 
 }
 
 func TestEmptyModelObservationPreservesActiveSessionAndRetainedReport(t *testing.T) {
+	t.Run("pending receipt completion attribution", func(t *testing.T) {
+		c, _ := newDeterministicController(&fakeLease{})
+		v, token := arm(t, c)
+		v, err := c.Begin(token, v.Revision, CapabilityBank)
+		if err != nil {
+			t.Fatal(err)
+		}
+		auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: "home", Kind: ScreenHome})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{}}, 2, 1)
+		if got := c.Runtime().Status.ModelName; got != "EXPERT 1.3K-FA" {
+			t.Fatalf("pending receipt model = %q, want retained model", got)
+		}
+		v, err = c.ObserveDiscoveryResult(token, auth.Revision, Evidence{Generation: 6, Fingerprint: "bank", Kind: ScreenBank, Candidate: CapabilityBank, Value: "A"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err = c.CompleteTopology(token, v.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		report := c.Report(c.Runtime().Status.ModelName, "unknown", "test")
+		if report.Model != "EXPERT 1.3K-FA" || len(report.Capabilities) != 1 {
+			t.Fatalf("completed receipt report attribution = %+v", report)
+		}
+	})
+
 	t.Run("active session", func(t *testing.T) {
 		l := &fakeLease{}
 		c, _ := newDeterministicController(l)
@@ -819,7 +849,7 @@ func TestEmptyModelObservationPreservesActiveSessionAndRetainedReport(t *testing
 		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{}}, 2, 1)
 
 		v, err = c.Current(token)
-		if err != nil || v.Phase != PhaseDiscovering || v.Revision != previousRevision || l.released != 0 {
+		if err != nil || v.Phase != PhaseDiscovering || v.Revision != previousRevision || l.released != 0 || c.Runtime().Status.ModelName != "EXPERT 1.3K-FA" {
 			t.Fatalf("empty model invalidated active session: view=%+v err=%v lease=%+v", v, err, l)
 		}
 
@@ -849,7 +879,7 @@ func TestEmptyModelObservationPreservesActiveSessionAndRetainedReport(t *testing
 		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{}}, 2, 1)
 
 		v, err = c.Current(token)
-		if err != nil || v.Phase != PhaseComplete || v.Revision != previousRevision || len(c.reports) != 1 {
+		if err != nil || v.Phase != PhaseComplete || v.Revision != previousRevision || len(c.reports) != 1 || c.Runtime().Status.ModelName != "EXPERT 1.3K-FA" {
 			t.Fatalf("empty model invalidated retained report: view=%+v err=%v reports=%+v", v, err, c.reports)
 		}
 
