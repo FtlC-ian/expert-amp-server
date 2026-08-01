@@ -378,6 +378,83 @@ func TestPlannedActionRejectsChangedSerialSessionWithSameModel(t *testing.T) {
 	}
 }
 
+func TestPendingDiscoveryFailsClosedOnSerialSessionChange(t *testing.T) {
+	l := &fakeLease{}
+	c, _ := newDeterministicController(l)
+	v, token := arm(t, c)
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := display.NewState()
+	before.SetRow(0, "BEFORE")
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, Evidence{Generation: 5, Fingerprint: Analyze(before).Fingerprint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceCount := len(c.session.evidence)
+
+	c.ObserveSerialSession(2)
+	if c.session.phase != PhaseFailed || !strings.Contains(c.session.failure, "serial session changed") || l.released != 1 {
+		t.Fatalf("reconnect did not fail pending discovery: session=%+v lease=%+v", c.session, l)
+	}
+
+	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 2, 2)
+	after := display.NewState()
+	after.SetRow(0, "AFTER")
+	c.ObserveDisplayFromSerialSession(after, 6, true, nil, nil, 2)
+	if c.session.phase != PhaseFailed || len(c.session.evidence) != evidenceCount || c.session.revision != auth.Revision+1 {
+		t.Fatalf("replacement-session display altered failed discovery: %+v", c.session)
+	}
+}
+
+func TestPendingPlannedActionFailsClosedOnSerialSessionChange(t *testing.T) {
+	l := &fakeLease{}
+	c, _ := newDeterministicController(l)
+	v, token := arm(t, c)
+	plan := simplePlan(CapabilityFan, "NORMAL", "CONTEST")
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := c.session.lastEvidenceGen
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.ObserveDiscoveryResult(token, auth.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.InstallPlan(token, v.Revision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.BeginApply(token, v.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceCount := len(c.session.evidence)
+
+	c.ObserveSerialSession(2)
+	if c.session.phase != PhaseFailed || !strings.Contains(c.session.failure, "serial session changed") || l.released != 1 {
+		t.Fatalf("reconnect did not fail pending planned action: session=%+v lease=%+v", c.session, l)
+	}
+
+	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 2, 2)
+	replacement := display.NewState()
+	replacement.SetRow(0, "REPLACEMENT")
+	c.ObserveDisplayFromSerialSession(replacement, base+3, true, nil, nil, 2)
+	if c.session.phase != PhaseFailed || len(c.session.evidence) != evidenceCount || c.session.revision != auth.Revision+1 {
+		t.Fatalf("replacement-session display altered failed planned action: %+v", c.session)
+	}
+}
+
 func TestReviewedPlanDiscoveryTopologyMustMatchExactly(t *testing.T) {
 	evidence := []Evidence{
 		{Kind: ScreenHome},
