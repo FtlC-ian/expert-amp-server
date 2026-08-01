@@ -538,6 +538,9 @@ func (m *menuDebugAPI) sendAuthorized(ctx context.Context, token string, authori
 	if view.Revision != authorization.Revision {
 		return errors.New("menu-debug session changed before the authorized write")
 	}
+	if authorization.ExpectedModel != "" && !strings.EqualFold(strings.TrimSpace(authorization.ExpectedModel), strings.TrimSpace(m.opts.MenuDebug.Runtime().Status.ModelName)) {
+		return errors.New("connected amplifier model changed before the authorized write")
+	}
 	result, err := m.opts.MenuDebugTransport.SendButton(ctx, api.ButtonAction{Name: string(authorization.Action)})
 	if err != nil {
 		return err
@@ -810,7 +813,7 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 		menudebug.Step{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: original, ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
 		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
 	)
-	return menudebug.Plan{Profile: profile.ID, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), DiscoverySetupTopology: profile.SetupTopology, Apply: apply, Restore: restore}, nil
+	return menudebug.Plan{Profile: profile.ID, ExpectedModel: profile.Model, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), DiscoverySetupTopology: profile.SetupTopology, Apply: apply, Restore: restore}, nil
 }
 
 func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot) (menudebug.Plan, error) {
@@ -850,7 +853,7 @@ func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot) (menudebug.P
 		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: bank, ExpectedCapability: capability, ExpectedValue: "A", ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
 		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedValue: "A", ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
 	}
-	return menudebug.Plan{Profile: "expert-1.3k-fa-first-series-bank-ab-v1", Capability: capability, OriginalValue: "A", CandidateValue: "B", Apply: apply, Restore: restore}, nil
+	return menudebug.Plan{Profile: "expert-1.3k-fa-first-series-bank-ab-v1", ExpectedModel: "EXPERT 1.3K-FA", Capability: capability, OriginalValue: "A", CandidateValue: "B", Apply: apply, Restore: restore}, nil
 }
 
 func boolIs(value *bool, want bool) bool { return value != nil && *value == want }

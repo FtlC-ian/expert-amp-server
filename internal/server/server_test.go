@@ -684,6 +684,36 @@ func TestMenuDebugSessionArmsAndRechecksSafetyBeforeEveryWrite(t *testing.T) {
 	}
 }
 
+func TestMenuDebugAuthorizedWriteRechecksFrozenModel(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err = mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true, ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true, DisplayGeneration: 1, StatusGeneration: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	menuAPI := &menuDebugAPI{opts: Options{Config: mgr, MenuDebug: controller, MenuDebugTransport: lease}}
+	err = menuAPI.sendAuthorized(context.Background(), token, menudebug.ActionAuthorization{Action: menudebug.ActionSet, Revision: view.Revision, ExpectedModel: "EXPERT 1.3K-FA"}, true)
+	if err == nil || !strings.Contains(err.Error(), "model changed") {
+		t.Fatalf("changed-model write error = %v", err)
+	}
+	if raw.calls != 0 {
+		t.Fatalf("model-mismatched write reached transport %d times", raw.calls)
+	}
+}
+
 func TestMenuDebugArmAutoClearsOnlySafeCompletedNormalOverride(t *testing.T) {
 	tests := []struct {
 		name          string

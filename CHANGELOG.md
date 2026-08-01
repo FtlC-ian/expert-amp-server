@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.2 - 2026-08-01
+
+Menu Debug identity-binding corrective release.
+
+### Safety hardening and fixes
+
+- Frozen reviewed Menu Debug plans now retain the exact amplifier model that selected the profile.
+- Plan installation, apply/restore entry, and every planned action authorization fail closed if the live model changes after discovery.
+- A final model check immediately before serial dispatch closes the reconnect window between controller authorization and the physical write.
+- Sanitized reports now include the optional reviewed `setupTopology` classification used for candidate-profile selection.
+
 ## v0.4.1 - 2026-08-01
 
 Evidence-selected fan-profile and topology-binding release.

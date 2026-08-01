@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 )
 
@@ -33,6 +34,7 @@ func newDeterministicController(l *fakeLease) (*Controller, *time.Time) {
 	c := NewController(l)
 	c.now = func() time.Time { return now }
 	c.newToken = func() (string, error) { return "test-token", nil }
+	c.runtime.Status = api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}
 	return c, &now
 }
 
@@ -287,7 +289,7 @@ func simplePlan(capability Capability, original, candidate string) Plan {
 	if capability == CapabilityBank {
 		profile = "expert-1.3k-fa-first-series-bank-ab-v1"
 	}
-	return Plan{Profile: profile, Capability: capability, OriginalValue: original, CandidateValue: candidate,
+	return Plan{Profile: profile, ExpectedModel: "EXPERT 1.3K-FA", Capability: capability, OriginalValue: original, CandidateValue: candidate,
 		Apply: []Step{
 			{Action: ActionSet, Purpose: PurposeChangeValue, FromFingerprint: "apply-from", ExpectedFingerprint: "apply-changed"},
 			{Action: ActionSet, Purpose: PurposeSave, FromFingerprint: "apply-changed", ExpectedFingerprint: "", ExpectedKind: ScreenHome, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
@@ -309,6 +311,37 @@ func TestReviewedPlanProfilesAreCapabilityBound(t *testing.T) {
 	plan.Capability = CapabilityFan
 	if err := validatePlan(plan); err == nil || !strings.Contains(err.Error(), "reviewed server profile") {
 		t.Fatalf("bank profile accepted for fan: %v", err)
+	}
+}
+
+func TestPlannedActionRejectsChangedAmplifierModel(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	plan := simplePlan(CapabilityFan, "normal", "contest")
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := c.session.lastEvidenceGen
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.ObserveDiscoveryResult(token, auth.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.InstallPlan(token, v.Revision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.BeginApply(token, v.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 10)
+	if _, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false)); err == nil || !strings.Contains(err.Error(), "model changed") {
+		t.Fatalf("changed-model authorization error = %v", err)
 	}
 }
 
@@ -570,6 +603,7 @@ func TestReportJSONHasNoPrivateHostOrSessionFields(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	v, token := arm(t, c)
 	_ = completeCapability(t, c, token, v, simplePlan(CapabilityFan, "NORMAL", "CONTEST"))
+	c.reports[0].Evidence[0].SetupTopology = SetupTopologyFirstSeries
 	b, err := json.Marshal(c.Report("EXPERT 1.5K-FA", "fw", "server"))
 	if err != nil {
 		t.Fatal(err)
@@ -582,5 +616,8 @@ func TestReportJSONHasNoPrivateHostOrSessionFields(t *testing.T) {
 	}
 	if !strings.Contains(jsonText, ReportSchemaVersion) {
 		t.Fatalf("missing schema version: %s", jsonText)
+	}
+	if !strings.Contains(jsonText, `"setupTopology":"expert-first-series-setup-v1"`) {
+		t.Fatalf("missing setup topology: %s", jsonText)
 	}
 }

@@ -496,6 +496,9 @@ func (c *Controller) InstallPlan(token string, revision uint64, plan Plan) (Sess
 	if err := validatePlan(plan); err != nil {
 		return c.viewLocked(), c.failLocked(err.Error())
 	}
+	if !modelMatches(plan.ExpectedModel, c.runtime.Status.ModelName) {
+		return c.viewLocked(), c.failLocked("reviewed plan model does not match the connected amplifier")
+	}
 	if len(c.session.evidence) == 0 {
 		return c.viewLocked(), c.failLocked("plan requires server-derived capability evidence")
 	}
@@ -549,12 +552,16 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 }
 
 func validatePlan(p Plan) error {
-	profileCapability := map[string]Capability{
-		"expert-1.3k-fa-first-series-fan-v1":     CapabilityFan,
-		"expert-1.5k-fa-second-series-fan-v1":    CapabilityFan,
-		"expert-1.3k-fa-first-series-bank-ab-v1": CapabilityBank,
+	type reviewedProfile struct {
+		capability Capability
+		model      string
+	}
+	profile := map[string]reviewedProfile{
+		"expert-1.3k-fa-first-series-fan-v1":     {CapabilityFan, "EXPERT 1.3K-FA"},
+		"expert-1.5k-fa-second-series-fan-v1":    {CapabilityFan, "EXPERT 1.5K-FA"},
+		"expert-1.3k-fa-first-series-bank-ab-v1": {CapabilityBank, "EXPERT 1.3K-FA"},
 	}[p.Profile]
-	if profileCapability == "" || profileCapability != p.Capability {
+	if profile.capability == "" || profile.capability != p.Capability || !modelMatches(profile.model, p.ExpectedModel) {
 		return errors.New("plan does not use a reviewed server profile")
 	}
 	if strings.TrimSpace(p.OriginalValue) == "" || strings.TrimSpace(p.CandidateValue) == "" || p.OriginalValue == p.CandidateValue {
@@ -611,6 +618,9 @@ func (c *Controller) beginPlan(token string, revision uint64, from, to Phase) (S
 	if c.session.phase != from {
 		return c.viewLocked(), fmt.Errorf("session is not ready for %s", to)
 	}
+	if !modelMatches(c.session.plan.ExpectedModel, c.runtime.Status.ModelName) {
+		return c.viewLocked(), c.failLocked("connected amplifier model changed after plan discovery")
+	}
 	if to == PhaseRestoring && !c.session.applyVerified {
 		return c.viewLocked(), errors.New("applied change has not been user verified")
 	}
@@ -647,6 +657,9 @@ func (c *Controller) AuthorizeNext(token string, revision uint64, evidence Evide
 	}
 	if c.session.stepIndex >= len(steps) {
 		return ActionAuthorization{}, errors.New("all planned actions are complete")
+	}
+	if !modelMatches(c.session.plan.ExpectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("connected amplifier model changed after plan discovery")
 	}
 	if err := c.verifyCurrentEvidenceLocked(evidence); err != nil {
 		return ActionAuthorization{}, c.failLocked(err.Error())
@@ -847,7 +860,13 @@ func (c *Controller) consumeActionLocked(action Action, purpose Purpose) (Action
 	c.session.actions = append(c.session.actions, action)
 	c.session.actionReceipts = append(c.session.actionReceipts, ActionReceipt{Action: action, Purpose: purpose, At: c.now().UTC()})
 	c.bumpLocked()
-	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision}, nil
+	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision, ExpectedModel: c.session.plan.ExpectedModel}, nil
+}
+
+func modelMatches(expected, actual string) bool {
+	expected = strings.TrimSpace(expected)
+	actual = strings.TrimSpace(actual)
+	return expected != "" && strings.EqualFold(expected, actual)
 }
 
 func (c *Controller) verifyCurrentEvidenceLocked(evidence Evidence) error {

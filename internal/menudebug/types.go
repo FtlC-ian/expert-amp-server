@@ -93,7 +93,7 @@ type Evidence struct {
 	SaveVisible   bool       `json:"saveVisible,omitempty"`
 	StandbyHome   bool       `json:"standbyHome,omitempty"`
 	ObservedAt    time.Time  `json:"observedAt"`
-	SetupTopology string     `json:"-"`
+	SetupTopology string     `json:"setupTopology,omitempty"`
 }
 
 type Step struct {
@@ -113,6 +113,7 @@ type Step struct {
 
 type Plan struct {
 	Profile                 string     `json:"profile"`
+	ExpectedModel           string     `json:"-"`
 	Capability              Capability `json:"capability"`
 	OriginalValue           string     `json:"originalValue"`
 	CandidateValue          string     `json:"candidateValue"`
@@ -123,9 +124,10 @@ type Plan struct {
 }
 
 type ActionAuthorization struct {
-	Action   Action
-	Purpose  Purpose
-	Revision uint64
+	Action        Action
+	Purpose       Purpose
+	Revision      uint64
+	ExpectedModel string
 }
 
 type SessionView struct {
