@@ -1993,10 +1993,9 @@
           "profile": {
             "type": "string",
             "enum": [
-              "expert-1.3k-fa-first-series-v1",
-              "expert-1.5k-fa-second-series-v1"
+              "expert-1.3k-fa-first-series-v1"
             ],
-            "description": "Evidence-selected fan navigation profile. It appears only after the reported model and first verified SET-menu topology agree."
+            "description": "Promoted production fan-navigation profile selected after the reported model and first verified SET-menu topology agree. Candidate Menu Debug profiles are reported separately and never appear here."
           },
           "lastAction": {
             "type": "string",

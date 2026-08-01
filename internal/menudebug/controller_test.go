@@ -321,7 +321,7 @@ func TestReviewedPlanDiscoveryTopologyMustMatchExactly(t *testing.T) {
 		{Kind: ScreenFan, Selection: "FAN MANAGEMENT"},
 	}
 	expected := []string{"CONFIG", "ANTENNA", "~BEEP"}
-	if !matchesDiscoverySetupWaypoints(evidence, expected) {
+	if !matchesDiscoverySetupWaypoints(evidence, "", expected) {
 		t.Fatal("captured setup topology did not match")
 	}
 	for _, nearMatch := range [][]string{
@@ -329,9 +329,19 @@ func TestReviewedPlanDiscoveryTopologyMustMatchExactly(t *testing.T) {
 		{"CONFIG", "ANTENNA"},
 		{"CONFIG", "ANTENNA", "~START"},
 	} {
-		if matchesDiscoverySetupWaypoints(evidence, nearMatch) {
+		if matchesDiscoverySetupWaypoints(evidence, "", nearMatch) {
 			t.Fatalf("near-match topology was accepted: %v", nearMatch)
 		}
+	}
+}
+
+func TestReviewedPlanDiscoveryTopologyRejectsCrossFamilySelections(t *testing.T) {
+	evidence := []Evidence{
+		{Kind: ScreenSetup, Selection: "ANTENNA", SetupTopology: SetupTopologySecondSeries},
+		{Kind: ScreenSetup, Selection: "CAT", SetupTopology: SetupTopologySecondSeries},
+	}
+	if matchesDiscoverySetupWaypoints(evidence, SetupTopologyFirstSeries, []string{"ANTENNA", "CAT"}) {
+		t.Fatal("matching labels from the wrong setup family were accepted")
 	}
 }
 

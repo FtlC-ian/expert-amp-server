@@ -34,7 +34,13 @@ type ScreenObservation struct {
 	SaveVisible   bool       `json:"saveVisible"`
 	Fingerprint   string     `json:"fingerprint"`
 	CandidateOnly bool       `json:"candidateOnly"`
+	SetupTopology string     `json:"-"`
 }
+
+const (
+	SetupTopologyFirstSeries  = "expert-first-series-setup-v1"
+	SetupTopologySecondSeries = "expert-second-series-setup-v1"
+)
 
 var bankValuePattern = regexp.MustCompile(`(?i)\bBNK\s+([A-Z0-9]+)\b`)
 
@@ -56,6 +62,7 @@ func Analyze(state display.State) ScreenObservation {
 		result.Kind = ScreenStoring
 	case strings.Contains(joined, "SETUP OPTIONS"):
 		result.Kind = ScreenSetup
+		result.SetupTopology = setupTopology(rows)
 		if strings.Contains(joined, "FAN") || strings.Contains(joined, "TEMP") {
 			result.Capability = "fan"
 		}
@@ -84,6 +91,25 @@ func Analyze(state display.State) ScreenObservation {
 
 	result.Fingerprint = fingerprintState(state, result)
 	return result
+}
+
+func setupTopology(rows [display.Rows]string) string {
+	normalized := func(row int) string { return strings.Join(strings.Fields(rows[row]), " ") }
+	if normalized(0) == "SETUP OPTIONS vs. INPUT 1" &&
+		normalized(1) == "CONFIG DISPLAY ALARMS LOG" &&
+		(normalized(2) == "ANTENNA BEEP Off TUN ANT" || normalized(2) == "ANTENNA BEEP On TUN ANT") &&
+		(normalized(3) == "CAT START Stby RX ANT" || normalized(3) == "CAT START Oper RX ANT") &&
+		normalized(4) == "MANUAL TUNE TEMP/FANS EXIT" {
+		return SetupTopologySecondSeries
+	}
+	if strings.HasPrefix(normalized(0), "SETUP OPTIONS vs. INPUT ") &&
+		normalized(3) == "MANUAL TUNE TEMP/FANS BANK" &&
+		strings.HasPrefix(normalized(1), "ANTENNA BEEP ") && strings.HasSuffix(normalized(1), "TUN ANT") &&
+		strings.HasPrefix(normalized(2), "CAT START ") && strings.HasSuffix(normalized(2), "RX ANT") &&
+		normalized(4) == "DISPLAY ALARMS LOG EXIT" {
+		return SetupTopologyFirstSeries
+	}
+	return ""
 }
 
 func decodeRows(state display.State) [display.Rows]string {

@@ -835,7 +835,7 @@ func completedFanOverrideControllerWithPersistence(t *testing.T, status api.Stat
 	settings := fanpolicy.Settings{DisplayProfile: fanpolicy.SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
 	controller.Observe(status, settings)
 	fanScreen := menuDebugTestFanScreen("FAN MANAGEMENT", policy)
-	if selected, observedPolicy, ok := fanpolicy.FirstSeriesFanScreen(fanScreen); !ok {
+	if selected, observedPolicy, ok := fanpolicy.NormalContestFanScreen(fanScreen); !ok {
 		t.Fatalf("fan fixture was not recognized: selected=%q policy=%q", selected, observedPolicy)
 	}
 	controller.ObserveDisplay(fanpolicy.DisplayObservation{State: fanScreen, Generation: 1, TX: rx, Operate: operate})
@@ -869,7 +869,11 @@ func menuDebugTestFanScreen(selected, policy string) display.State {
 	state.SetRow(2, "   TEMPERATURE SCALE   CELSIUS")
 	state.SetRow(3, "   FAN MANAGEMENT      "+displayPolicy)
 	state.SetRow(4, "                                  SAVE")
-	if selected == "FAN MANAGEMENT" {
+	if selected == "TEMPERATURE SCALE" {
+		for col := 2; col < 21; col++ {
+			state.SetAttr(2, col, 1)
+		}
+	} else if selected == "FAN MANAGEMENT" {
 		for col := 2; col < 18; col++ {
 			state.SetAttr(3, col, 1)
 		}
@@ -877,6 +881,30 @@ func menuDebugTestFanScreen(selected, policy string) display.State {
 		for col := 32; col < 39; col++ {
 			state.SetAttr(4, col, 1)
 		}
+	}
+	return state
+}
+
+func menuDebugFirstSeriesSetupScreen(selected string) display.State {
+	state := menuDebugTestBlankScreen()
+	state.SetRow(0, "       SETUP OPTIONS vs. INPUT 2")
+	state.SetRow(1, " ANTENNA       BEEP    On     TUN ANT")
+	state.SetRow(2, " CAT           START   Stby   RX  ANT")
+	state.SetRow(3, " MANUAL TUNE   TEMP/FANS      BANK")
+	state.SetRow(4, " DISPLAY       ALARMS LOG     EXIT")
+	state.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	positions := map[string][3]int{
+		"ANTENNA":     {1, 0, 13},
+		"CAT":         {2, 0, 13},
+		"MANUAL TUNE": {3, 0, 13},
+		"DISPLAY":     {4, 0, 13},
+		"BEEP":        {1, 14, 28},
+		"START":       {2, 14, 28},
+		"TEMP/FANS":   {3, 14, 28},
+	}
+	position := positions[selected]
+	for col := position[1]; col < position[2]; col++ {
+		state.SetAttr(position[0], col, 1)
 	}
 	return state
 }
@@ -1081,6 +1109,67 @@ func TestReviewedMenuDebugPlansAreServerOwnedAndExact(t *testing.T) {
 	runtime.Screen = menudebug.Analyze(temperatureScale)
 	if _, ok := reviewedMenuDebugDiscoveryAction(runtime, menudebug.CapabilityFan); ok {
 		t.Fatal("near-match layout received a reviewed selector move")
+	}
+}
+
+func TestMenuDebugFirstSeriesDiscoveryInstallsTopologyBoundPlan(t *testing.T) {
+	rx, operate := false, false
+	buttons := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(buttons).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	status := api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}
+	controller.ObserveStatus(status, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := uint64(2)
+	discover := func(action menudebug.Action, next display.State) {
+		t.Helper()
+		authorization, authErr := controller.AuthorizeDiscovery(token, view.Revision, action, menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan))
+		if authErr != nil {
+			t.Fatal(authErr)
+		}
+		controller.ObserveDisplay(next, generation, true, &rx, &operate)
+		generation++
+		view, authErr = controller.Current(token)
+		if authErr != nil {
+			t.Fatal(authErr)
+		}
+		if view.Revision <= authorization.Revision {
+			t.Fatalf("display receipt did not advance revision: authorization=%d view=%d", authorization.Revision, view.Revision)
+		}
+	}
+
+	discover(menudebug.ActionSet, menuDebugFirstSeriesSetupScreen("ANTENNA"))
+	for _, selected := range []string{"CAT", "MANUAL TUNE", "DISPLAY", "BEEP", "START", "TEMP/FANS"} {
+		discover(menudebug.ActionRight, menuDebugFirstSeriesSetupScreen(selected))
+	}
+	discover(menudebug.ActionSet, menuDebugTestFanScreen("TEMPERATURE SCALE", fanpolicy.PolicyNormal))
+	action, ok := reviewedMenuDebugDiscoveryAction(controller.Runtime(), menudebug.CapabilityFan)
+	if !ok || action != menudebug.ActionRight {
+		t.Fatalf("reviewed selector action = %q, %v", action, ok)
+	}
+	discover(action, menuDebugTestFanScreen("FAN MANAGEMENT", fanpolicy.PolicyNormal))
+	plan, err := reviewedMenuDebugPlan(controller.Runtime(), menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.InstallPlan(token, view.Revision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Phase != menudebug.PhasePlanReady || view.PlanProfile != "expert-1.3k-fa-first-series-fan-v1" {
+		t.Fatalf("reviewed plan was not installed: %+v", view)
 	}
 }
 

@@ -824,7 +824,7 @@ func (c *Controller) advanceProfileSetupLocked(observation DisplayObservation, k
 		return c.unexpectedLocked(observation.State)
 	}
 	expected := profile.setupKeys[c.nav.setupIndex]
-	if key != expected || !matchesSetupSelection(observation.State, expected) {
+	if key != expected || !matchesProfileSetupSelection(observation.State, profile.id, expected) {
 		return c.unexpectedLocked(observation.State)
 	}
 	c.lastVerifiedScreen = key

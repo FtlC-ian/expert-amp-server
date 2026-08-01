@@ -64,6 +64,28 @@ func TestAnalyzeSetupFindsFanAndBankCandidatesWithoutAuthorizing(t *testing.T) {
 	}
 }
 
+func TestAnalyzeSetupTopologyDistinguishesScreenFamilies(t *testing.T) {
+	first := display.NewState()
+	first.SetRow(0, "       SETUP OPTIONS vs. INPUT 2")
+	first.SetRow(1, " ANTENNA       BEEP    On     TUN ANT")
+	first.SetRow(2, " CAT           START   Stby   RX  ANT")
+	first.SetRow(3, " MANUAL TUNE   TEMP/FANS      BANK")
+	first.SetRow(4, " DISPLAY       ALARMS LOG     EXIT")
+	if got := Analyze(first).SetupTopology; got != SetupTopologyFirstSeries {
+		t.Fatalf("First Series topology = %q", got)
+	}
+
+	second := display.NewState()
+	second.SetRow(0, "       SETUP OPTIONS vs. INPUT 1")
+	second.SetRow(1, " CONFIG       DISPLAY       ALARMS LOG")
+	second.SetRow(2, " ANTENNA      BEEP    Off   TUN ANT")
+	second.SetRow(3, " CAT          START   Stby  RX ANT")
+	second.SetRow(4, " MANUAL TUNE  TEMP/FANS     EXIT")
+	if got := Analyze(second).SetupTopology; got != SetupTopologySecondSeries {
+		t.Fatalf("Second Series topology = %q", got)
+	}
+}
+
 func TestAnalyzeRecognizesFirstSeriesStoringReceipt(t *testing.T) {
 	state := display.NewState()
 	state.SetRow(0, "TEMPERATURE AND FANS")

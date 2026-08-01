@@ -715,12 +715,13 @@ func menuDebugEvidence(runtime menudebug.RuntimeSnapshot, capability menudebug.C
 	if runtime.Screen.ActiveValue != "" {
 		value = runtime.Screen.ActiveValue
 	}
-	return menudebug.Evidence{Generation: runtime.DisplayGeneration, Fingerprint: runtime.Screen.Fingerprint, Kind: runtime.Screen.Kind, Rows: rows, Selection: runtime.Screen.SelectedText, Candidate: candidate, Value: value, SaveVisible: runtime.Screen.SaveVisible, StandbyHome: standbyHome, ObservedAt: runtime.DisplayObservedAt}
+	return menudebug.Evidence{Generation: runtime.DisplayGeneration, Fingerprint: runtime.Screen.Fingerprint, Kind: runtime.Screen.Kind, Rows: rows, Selection: runtime.Screen.SelectedText, Candidate: candidate, Value: value, SaveVisible: runtime.Screen.SaveVisible, StandbyHome: standbyHome, ObservedAt: runtime.DisplayObservedAt, SetupTopology: runtime.Screen.SetupTopology}
 }
 
 type reviewedFanProfile struct {
 	ID                    string
 	Model                 string
+	SetupTopology         string
 	RestoreSetupWaypoints []string
 }
 
@@ -728,11 +729,13 @@ var reviewedFanProfiles = []reviewedFanProfile{
 	{
 		ID:                    "expert-1.3k-fa-first-series-fan-v1",
 		Model:                 "EXPERT 1.3K-FA",
+		SetupTopology:         menudebug.SetupTopologyFirstSeries,
 		RestoreSetupWaypoints: []string{"ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP", "~START", "TEMP/FANS"},
 	},
 	{
 		ID:                    "expert-1.5k-fa-second-series-fan-v1",
 		Model:                 "EXPERT 1.5K-FA",
+		SetupTopology:         menudebug.SetupTopologySecondSeries,
 		RestoreSetupWaypoints: []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP", "~START", "TEMP/FANS"},
 	},
 }
@@ -807,7 +810,7 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 		menudebug.Step{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: original, ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
 		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
 	)
-	return menudebug.Plan{Profile: profile.ID, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), Apply: apply, Restore: restore}, nil
+	return menudebug.Plan{Profile: profile.ID, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), DiscoverySetupTopology: profile.SetupTopology, Apply: apply, Restore: restore}, nil
 }
 
 func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot) (menudebug.Plan, error) {

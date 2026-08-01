@@ -161,7 +161,7 @@ func TestControllerRejectsModelAndInitialSetupTopologyCrossPairs(t *testing.T) {
 		model      string
 		setupState display.State
 	}{
-		{name: "1.3 model with second-series setup", model: "EXPERT 1.3K-FA", setupState: secondSeriesSetupScreen("CONFIG")},
+		{name: "1.3 model with same-label second-series setup", model: "EXPERT 1.3K-FA", setupState: secondSeriesSetupScreen("ANTENNA")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			buttons := &recordingButtons{}
@@ -178,6 +178,19 @@ func TestControllerRejectsModelAndInitialSetupTopologyCrossPairs(t *testing.T) {
 				t.Fatalf("cross-pair did not fail before selector movement: result=%+v actions=%v", result, buttons.actions)
 			}
 		})
+	}
+}
+
+func TestControllerRejectsWrongSetupFamilyAfterProfileSelection(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	controller.Observe(statusAt(81, "standby", false), settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	controller.ObserveDisplay(rxObservation(setupScreen("ANTENNA"), 2))
+	result := controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen("CAT"), 3))
+	if result.State != StateFailed || len(buttons.actions) != 2 || strings.Join(buttons.actions, ",") != "set,right" {
+		t.Fatalf("wrong setup family advanced navigation: result=%+v actions=%v", result, buttons.actions)
 	}
 }
 

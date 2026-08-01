@@ -206,8 +206,19 @@ func setupSelectionKey(state display.State) (string, bool) {
 	return secondSeriesSetupSelectionKey(state)
 }
 
-func matchesSetupSelection(state display.State, key string) bool {
-	actual, ok := setupSelectionKey(state)
+func setupSelectionKeyForProfile(state display.State, profileID string) (string, bool) {
+	switch profileID {
+	case FirstSeriesDisplayProfile:
+		return firstSeriesSetupSelectionKey(state)
+	case SecondSeriesDisplayProfile:
+		return secondSeriesSetupSelectionKey(state)
+	default:
+		return "", false
+	}
+}
+
+func matchesProfileSetupSelection(state display.State, profileID, key string) bool {
+	actual, ok := setupSelectionKeyForProfile(state, profileID)
 	return ok && actual == key
 }
 
@@ -247,12 +258,12 @@ func verifiedFanDisplayProfileForModel(model string) (fanDisplayProfile, bool) {
 }
 
 func identifyFanDisplayProfile(state display.State, model string) (fanDisplayProfile, string, bool) {
-	key, ok := setupSelectionKey(state)
-	if !ok {
+	profile, ok := verifiedFanDisplayProfileForModel(model)
+	if !ok || len(profile.setupKeys) == 0 {
 		return fanDisplayProfile{}, "", false
 	}
-	profile, ok := verifiedFanDisplayProfileForModel(model)
-	if ok && len(profile.setupKeys) != 0 && key == profile.setupKeys[0] {
+	key, ok := setupSelectionKeyForProfile(state, profile.id)
+	if ok && key == profile.setupKeys[0] {
 		return profile, key, true
 	}
 	return fanDisplayProfile{}, "", false
@@ -293,12 +304,6 @@ func NormalContestFanScreen(state display.State) (selected, policy string, ok bo
 		}
 	}
 	return "", PolicyUnknown, false
-}
-
-// FirstSeriesFanScreen is retained for compatibility with callers that only
-// support the original First Series 1.3K-FA profile.
-func FirstSeriesFanScreen(state display.State) (selected, policy string, ok bool) {
-	return NormalContestFanScreen(state)
 }
 
 func matchesStoring(state display.State) bool {
