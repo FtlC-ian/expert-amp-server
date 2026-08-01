@@ -43,6 +43,9 @@ func TestNewManagerCreatesDefaultConfig(t *testing.T) {
 	if snap.Settings.AutomaticFanPolicyEnabled || snap.Settings.FanHighTemperatureC != 50 || snap.Settings.FanNormalTemperatureC != 42 {
 		t.Fatalf("automatic fan policy defaults unexpected: %+v", snap.Settings)
 	}
+	if snap.Settings.MenuDebugEnabled {
+		t.Fatal("MenuDebugEnabled = true, want disabled by default")
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -57,6 +60,16 @@ func TestNewManagerCreatesDefaultConfig(t *testing.T) {
 	}
 	if got.AutomaticFanPolicyEnabled || got.FanHighTemperatureC != 50 || got.FanNormalTemperatureC != 42 {
 		t.Fatalf("saved automatic fan policy defaults unexpected: %+v", got)
+	}
+	if got.MenuDebugEnabled {
+		t.Fatal("saved MenuDebugEnabled = true, want false")
+	}
+	var saved map[string]json.RawMessage
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatalf("decode saved settings map: %v", err)
+	}
+	if raw, ok := saved["menuDebugEnabled"]; !ok || string(raw) != "false" {
+		t.Fatalf("saved menuDebugEnabled = %s, present=%v; want explicit false", raw, ok)
 	}
 }
 
@@ -193,6 +206,7 @@ func TestUpdatePersistsSettings(t *testing.T) {
 		FanHighTemperatureC:         65,
 		FanNormalTemperatureC:       55,
 		FanDisplayProfile:           FanDisplayProfileFirstSeries,
+		MenuDebugEnabled:            true,
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
@@ -223,6 +237,16 @@ func TestUpdatePersistsSettings(t *testing.T) {
 	}
 	if !snap.Settings.AutomaticFanPolicyEnabled || snap.Settings.FanHighTemperatureC != 65 || snap.Settings.FanNormalTemperatureC != 55 || snap.Settings.FanDisplayProfile != FanDisplayProfileFirstSeries {
 		t.Fatalf("automatic fan policy settings not persisted: %+v", snap.Settings)
+	}
+	if !snap.Settings.MenuDebugEnabled {
+		t.Fatal("MenuDebugEnabled was not persisted")
+	}
+	reloaded, err := NewManager(path, ":8088")
+	if err != nil {
+		t.Fatalf("reload manager: %v", err)
+	}
+	if !reloaded.Get().Settings.MenuDebugEnabled {
+		t.Fatal("MenuDebugEnabled was not restored after reload")
 	}
 }
 

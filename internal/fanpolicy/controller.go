@@ -63,6 +63,7 @@ type navState struct {
 	controlUncertain bool
 	leaseHeld        bool
 	verifyOnly       bool
+	failureAfterGen  uint64
 }
 
 type passiveSaveState struct {
@@ -106,6 +107,7 @@ type Controller struct {
 	displayOperate         *bool
 	statusGeneration       uint64
 	lastDisplayGen         uint64
+	lastDisplayKey         string
 	manualOverride         string
 	manualOverrideDuration time.Duration
 	manualOverrideUntil    time.Time
@@ -216,6 +218,63 @@ func (c *Controller) SetManualOverride(policy string, duration time.Duration) er
 	return nil
 }
 
+// ClearCompletedNormalOverride removes an inert manual Normal request so a
+// separately guarded menu-debug session can take ownership. It never sends an
+// amplifier command and refuses to clear high cooling or uncertain state.
+func (c *Controller) ClearCompletedNormalOverride(status api.Status, settings Settings) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("fan-policy controller unavailable")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if settings.Enabled || c.manualOverride != PolicyNormal {
+		return false, nil
+	}
+	if !status.RecentContact || status.TX == nil || *status.TX || normalizeOperatingState(status.OperatingState) != "standby" {
+		return false, nil
+	}
+	if c.lastDisplayKey != "home" || c.lastDisplayGen == 0 || c.displayTX == nil || *c.displayTX || c.displayOperate == nil || *c.displayOperate {
+		return false, nil
+	}
+	if c.nav.active || c.nav.failed || c.nav.paused || c.nav.leaseHeld || c.mayBeInMenu || c.verifyRequested {
+		return false, nil
+	}
+	if c.current != PolicyNormal || c.currentConfidence != "verified-live" || c.currentVerifiedAt.IsZero() {
+		return false, nil
+	}
+
+	previousOverride := c.manualOverride
+	previousDuration := c.manualOverrideDuration
+	previousUntil := c.manualOverrideUntil
+	previousDesired := c.desired
+	previousBaseSettings := c.baseSettings
+	previousSettings := c.settings
+	c.manualOverride = PolicyUnknown
+	c.manualOverrideDuration = 0
+	c.manualOverrideUntil = time.Time{}
+	c.desired = PolicyUnknown
+	c.baseSettings = settings
+	c.settings = c.effectiveSettingsLocked(settings)
+	c.persistLocked()
+	if c.persistenceError != "" {
+		persistErr := c.persistenceError
+		c.manualOverride = previousOverride
+		c.manualOverrideDuration = previousDuration
+		c.manualOverrideUntil = previousUntil
+		c.desired = previousDesired
+		c.baseSettings = previousBaseSettings
+		c.settings = previousSettings
+		c.result = c.decorateLocked(Evaluate(status, c.settings, c.desired), c.settings)
+		return false, fmt.Errorf("persist cleared Normal fan override: %s", persistErr)
+	}
+	if c.nav.step == "complete" {
+		c.nav = navState{}
+	}
+	c.result = c.decorateLocked(Evaluate(status, c.settings, PolicyUnknown), c.settings)
+	return true, nil
+}
+
 func (c *Controller) RequestVerification(reason string) error {
 	if c == nil {
 		return fmt.Errorf("fan-policy controller unavailable")
@@ -239,6 +298,85 @@ func (c *Controller) RequestVerification(reason string) error {
 	}
 	c.settings = c.effectiveSettingsLocked(c.baseSettings)
 	c.result = c.decorateLocked(Evaluate(c.currentStatusLocked(c.now()), c.settings, c.desired), c.settings)
+	return nil
+}
+
+// Recover clears a failed-closed navigation latch only after the operator has
+// disabled automatic control and the server has observed a newer, checksum-
+// valid STANDBY home display. It also clears the manual override that caused
+// the failed transaction so recovery cannot immediately retry it.
+func (c *Controller) Recover(status api.Status, settings Settings) error {
+	if c == nil {
+		return fmt.Errorf("fan-policy controller unavailable")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.nav.failed {
+		return fmt.Errorf("fan-policy navigation is not failed closed")
+	}
+	if settings.Enabled {
+		return fmt.Errorf("disable automatic fan-policy switching before clearing the failure")
+	}
+	if !status.RecentContact {
+		return fmt.Errorf("cannot clear fan-policy failure without fresh protocol status")
+	}
+	if status.TX == nil || *status.TX {
+		return fmt.Errorf("cannot clear fan-policy failure until protocol status verifies RX")
+	}
+	if normalizeOperatingState(status.OperatingState) != "standby" {
+		return fmt.Errorf("cannot clear fan-policy failure until protocol status verifies STANDBY")
+	}
+	if c.lastDisplayGen <= c.nav.failureAfterGen || c.lastDisplayKey != "home" {
+		return fmt.Errorf("cannot clear fan-policy failure until a newer checksum-valid home display is observed")
+	}
+	if c.displayTX == nil || *c.displayTX || c.displayOperate == nil || *c.displayOperate {
+		return fmt.Errorf("cannot clear fan-policy failure until the LCD verifies STANDBY/RX at home")
+	}
+
+	previousOverride := c.manualOverride
+	previousDuration := c.manualOverrideDuration
+	previousUntil := c.manualOverrideUntil
+	previousVerifyRequested := c.verifyRequested
+	previousVerifyReason := c.verifyReason
+	previousDesired := c.desired
+	previousNav := c.nav
+	previousMayBeInMenu := c.mayBeInMenu
+	previousLastVerifiedScreen := c.lastVerifiedScreen
+	previousBaseSettings := c.baseSettings
+	previousSettings := c.settings
+	c.manualOverride = PolicyUnknown
+	c.manualOverrideDuration = 0
+	c.manualOverrideUntil = time.Time{}
+	c.verifyRequested = false
+	c.verifyReason = ""
+	c.desired = PolicyUnknown
+	c.nav = navState{}
+	c.mayBeInMenu = false
+	c.lastVerifiedScreen = "home:standby"
+	c.baseSettings = settings
+	c.settings = c.effectiveSettingsLocked(settings)
+	c.persistLocked()
+	if c.persistenceError != "" {
+		persistErr := c.persistenceError
+		c.manualOverride = previousOverride
+		c.manualOverrideDuration = previousDuration
+		c.manualOverrideUntil = previousUntil
+		c.verifyRequested = previousVerifyRequested
+		c.verifyReason = previousVerifyReason
+		c.desired = previousDesired
+		c.nav = previousNav
+		c.mayBeInMenu = previousMayBeInMenu
+		c.lastVerifiedScreen = previousLastVerifiedScreen
+		c.baseSettings = previousBaseSettings
+		c.settings = previousSettings
+		c.result = c.decorateLocked(Evaluate(status, c.settings, c.desired), c.settings)
+		return fmt.Errorf("persist recovered fan-policy state: %s", persistErr)
+	}
+	c.nav = previousNav
+	c.releaseLeaseLocked()
+	c.nav = navState{}
+	c.result = c.decorateLocked(Evaluate(status, c.settings, PolicyUnknown), c.settings)
 	return nil
 }
 
@@ -277,7 +415,9 @@ func (c *Controller) observe(status api.Status, settings Settings, protocolObser
 		c.releaseLeaseLocked()
 		c.desired = PolicyUnknown
 		next.DesiredPolicy = PolicyUnknown
-		c.nav = navState{}
+		if !c.nav.failed {
+			c.nav = navState{}
+		}
 	case next.State == StateUnavailable:
 		c.desired = PolicyUnknown
 		next.DesiredPolicy = PolicyUnknown
@@ -324,6 +464,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 	now := c.now()
 	key := semanticDisplayKey(observation.State)
 	c.lastDisplayGen = observation.Generation
+	c.lastDisplayKey = key
 	if observation.TX == nil {
 		c.displayTX = nil
 	} else {
@@ -825,6 +966,7 @@ func (c *Controller) failLocked(message string) {
 	c.nav.pauseReason = ""
 	c.nav.resumeDeadline = time.Time{}
 	c.nav.lastError = message
+	c.nav.failureAfterGen = c.lastDisplayGen
 	c.nav.deadline = time.Time{}
 	c.releaseLeaseLocked()
 }
@@ -1107,7 +1249,7 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 	}
 	if c.mayBeInMenu || (c.nav.failed && (c.nav.changedOperate || c.nav.controlUncertain || c.nav.restoreOperate)) {
 		base.Navigation.RecoveryState = "operator-required"
-		base.Navigation.RecoveryInstructions = "Stop transmitting, confirm the amplifier is in STANDBY, and use the physical front panel to return to the home screen if necessary; automatic recovery and blind OPERATE toggles are disabled after an uncertain transaction."
+		base.Navigation.RecoveryInstructions = "Stop transmitting, put the amplifier in STANDBY, and use the physical front panel to return to the home screen. Disable automatic fan-policy switching, wait for fresh STANDBY/RX home evidence, then POST /api/v1/fan-policy/recover or use Clear Failed Fan Transaction in Settings. Recovery clears the manual override and latch without restoring OPERATE."
 	}
 	switch {
 	case c.nav.failed:

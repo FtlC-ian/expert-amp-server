@@ -134,6 +134,14 @@ journalctl -u expert-amp-server -f
 
 The unit uses `Restart=always`, so `POST /api/v1/runtime/restart` causes the process to exit cleanly and systemd brings it back automatically. With the default `RestartSec=5`, the UI/API may be unavailable for a few seconds during restart; that is expected. For an intentional shutdown, use `sudo systemctl stop expert-amp-server`.
 
+To enable explicit, consented uploads of sanitized Menu Debug reports, add the full collector endpoint to the service environment and restart:
+
+```ini
+Environment=EXPERT_AMP_MENU_REPORT_COLLECTOR_URL=https://collector.example/v1/menu-reports
+```
+
+Leave this unset to keep uploads disabled. Local JSON report download remains available without a collector.
+
 Common gotchas from the first radio-host smoke test:
 
 - If another manually-started `expert-amp-server` process is already listening on `:8088`, stop it before enabling the systemd unit.

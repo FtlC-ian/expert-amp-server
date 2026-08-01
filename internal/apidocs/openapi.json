@@ -37,11 +37,75 @@
       "description": "Document-backed front-panel command transport"
     },
     {
+      "name": "Menu Debug",
+      "description": "Disabled-by-default, STANDBY-only menu discovery and sanitized candidate-profile reporting"
+    },
+    {
       "name": "Docs",
       "description": "OpenAPI and local documentation endpoints"
     }
   ],
   "paths": {
+    "/api/v1/menu-debug/session": {
+      "get": {
+        "tags": ["Menu Debug"],
+        "summary": "Inspect the current menu-debug session",
+        "description": "Requires the memory-only X-Menu-Debug-Token after a session is armed.",
+        "responses": {"200": {"description": "Current session and safety prerequisites"}, "409": {"description": "Invalid, expired, or failed session"}}
+      },
+      "post": {
+        "tags": ["Menu Debug"],
+        "summary": "Arm a short-lived menu-debug session",
+        "description": "Requires the exact safety acknowledgement plus fresh protocol STANDBY/RX, a checksum-valid STANDBY home display, inactive fan control, disarmed overtemperature standby, and an available actuation lease. A completed display-verified manual Normal override may be cleared automatically as server-only state after an unreachable provisional arm succeeds; this sends no amplifier command. Automatic control, CONTEST/high-cooling, uncertain policy, active or failed navigation, and persistence failure remain blocking. The returned token is memory-only and is not authentication.",
+        "responses": {"201": {"description": "Session armed; no amplifier command sent"}, "409": {"description": "A safety prerequisite blocked arming"}}
+      }
+    },
+    "/api/v1/menu-debug/session/advance": {
+      "post": {
+        "tags": ["Menu Debug"],
+        "summary": "Run one bounded server-owned wizard step",
+        "description": "Consumes the current revision, rechecks every safety prerequisite, sends at most one reviewed SET or RIGHT command, and waits for newer checksum-valid display evidence. Unknown profiles are topology-only and cannot change or SAVE a value.",
+        "responses": {"202": {"description": "One bounded step accepted"}, "409": {"description": "Stale revision, safety conflict, profile mismatch, or failed-closed stop"}}
+      }
+    },
+    "/api/v1/menu-debug/session/verification": {
+      "post": {
+        "tags": ["Menu Debug"],
+        "summary": "Record operator verification",
+        "description": "Records candidate or restoration verification. A failed or uncertain answer stops with no recovery or OPERATE command.",
+        "responses": {"200": {"description": "Verification recorded"}, "409": {"description": "Session or revision conflict"}}
+      }
+    },
+    "/api/v1/menu-debug/session/abort": {
+      "post": {
+        "tags": ["Menu Debug"],
+        "summary": "Abort without recovery commands",
+        "responses": {"200": {"description": "Ownership released; no recovery or OPERATE command sent"}, "409": {"description": "Session or revision conflict"}}
+      }
+    },
+    "/api/v1/menu-debug/report": {
+      "get": {
+        "tags": ["Menu Debug"],
+        "summary": "Get the sanitized menu topology report",
+        "description": "Returns menu-report.v1 evidence produced by the server. Reports omit IPs, hostnames, callsigns, tokens, and serial-device identity and never enable a production profile automatically.",
+        "responses": {"200": {"description": "Sanitized candidate-profile report"}, "409": {"description": "Invalid or expired session token"}}
+      }
+    },
+    "/api/v1/menu-debug/report.json": {
+      "get": {
+        "tags": ["Menu Debug"],
+        "summary": "Download the sanitized report as JSON",
+        "responses": {"200": {"description": "menu-report.v1 JSON attachment"}, "409": {"description": "Invalid or expired session token"}}
+      }
+    },
+    "/api/v1/menu-debug/report/upload": {
+      "post": {
+        "tags": ["Menu Debug"],
+        "summary": "Upload one sanitized report with explicit consent",
+        "description": "The upload is one-shot per armed session and is unavailable unless a receive-only uploader is configured.",
+        "responses": {"202": {"description": "Sanitized report uploaded"}, "409": {"description": "Stale/replayed upload or invalid session"}, "503": {"description": "Uploader unavailable"}}
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -401,7 +465,7 @@
             "$ref": "#/components/responses/ErrorResponse"
           },
           "409": {
-            "$ref": "#/components/responses/ErrorResponse"
+            "$ref": "#/components/responses/FanPolicyResponse"
           },
           "405": {
             "$ref": "#/components/responses/ErrorResponse"
@@ -424,7 +488,30 @@
             "$ref": "#/components/responses/FanPolicyResponse"
           },
           "409": {
+            "$ref": "#/components/responses/FanPolicyResponse"
+          },
+          "405": {
             "$ref": "#/components/responses/ErrorResponse"
+          },
+          "503": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/fan-policy/recover": {
+      "post": {
+        "tags": [
+          "Actions"
+        ],
+        "summary": "Clear a failed-closed fan transaction",
+        "description": "Clears a failed navigation latch and its manual override only after automatic fan-policy switching is disabled and the server has observed fresh protocol STANDBY/RX plus a newer checksum-valid STANDBY home display after the failure. This endpoint sends no amplifier command and never restores OPERATE.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/FanPolicyResponse"
+          },
+          "409": {
+            "$ref": "#/components/responses/FanPolicyResponse"
           },
           "405": {
             "$ref": "#/components/responses/ErrorResponse"
@@ -1034,6 +1121,10 @@
           },
           "data": {
             "$ref": "#/components/schemas/FanPolicy"
+          },
+          "error": {
+            "type": "string",
+            "description": "Present for failed fan-policy action responses; inspect data.navigation for the original failure and recovery guidance."
           }
         }
       },
@@ -1908,7 +1999,8 @@
             ]
           },
           "lastError": {
-            "type": "string"
+            "type": "string",
+            "description": "Original navigation failure. Conflict responses retain this even when the top-level error only reports the failed-closed latch."
           },
           "lastVerifiedScreen": {
             "type": "string",
@@ -1944,7 +2036,7 @@
           },
           "recoveryInstructions": {
             "type": "string",
-            "description": "Physical-front-panel recovery guidance when the amplifier may remain in a menu."
+            "description": "Physical-front-panel and API recovery guidance when the amplifier may remain in a menu. Recovery requires disabled automatic control and newer verified STANDBY/RX home evidence."
           },
           "actionsTaken": {
             "type": "array",
@@ -2232,6 +2324,18 @@
           "lastError": {
             "type": "string"
           },
+          "lastErrorAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastRecoveredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reconnects": {
+            "type": "integer",
+            "format": "int64"
+          },
           "serialPort": {
             "type": "string"
           },
@@ -2390,6 +2494,11 @@
             "maximum": 10080,
             "default": 0,
             "description": "Built-in UI default for manual Fan Boost. Zero means until explicitly changed."
+          },
+          "menuDebugEnabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Advanced opt-in for the local menu discovery and reporting wizard. Enabling this setting does not arm a session or authorize amplifier writes. Session tokens and discovery state are never persisted."
           }
         }
       },
@@ -2546,6 +2655,11 @@
             "maximum": 10080,
             "default": 0,
             "description": "Built-in UI default for manual Fan Boost. Zero means until explicitly changed."
+          },
+          "menuDebugEnabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Advanced opt-in for the local menu discovery and reporting wizard. Enabling this setting does not arm a session or authorize amplifier writes. Session tokens and discovery state are never persisted."
           }
         }
       },

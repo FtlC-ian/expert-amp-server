@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/font"
+	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
@@ -41,23 +43,31 @@ func main() {
 	configPath := flag.String("config", "config/expert-amp-server.json", "path to local runtime config")
 	pollInterval := flag.Duration("poll-interval", 200*time.Millisecond, "snapshot poll interval")
 	lcdFlagDebug := flag.Bool("lcd-flag-debug", false, "log changes in unknown GetLCD flag bits for protocol investigation")
+	collectorURL := flag.String("menu-report-collector-url", os.Getenv("EXPERT_AMP_MENU_REPORT_COLLECTOR_URL"), "HTTPS endpoint for consented sanitized menu reports")
 	flag.Parse()
 
-	if err := run(*addr, *configPath, *pollInterval, *lcdFlagDebug); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := run(*addr, *configPath, *pollInterval, *lcdFlagDebug, *collectorURL); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
 
-func run(addr, configPath string, pollInterval time.Duration, lcdFlagDebug bool) error {
+func run(addr, configPath string, pollInterval time.Duration, lcdFlagDebug bool, collectorURL string) error {
 	cfg, err := config.NewManager(configPath, addr)
 	if err != nil {
 		return err
+	}
+	var uploader server.MenuDebugUploader
+	if strings.TrimSpace(collectorURL) != "" {
+		uploader, err = server.NewMenuReportHTTPUploader(collectorURL, nil)
+		if err != nil {
+			return err
+		}
 	}
 
 	baseCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	handler, snapshot, poller, serialSource, requestRestart := newServer(cfg, pollInterval, stop, lcdFlagDebug)
+	handler, snapshot, poller, serialSource, requestRestart := newServerWithUploader(cfg, pollInterval, stop, uploader, lcdFlagDebug)
 
 	srv := &http.Server{
 		Addr:    snapshot.Settings.ListenAddress,
@@ -143,6 +153,10 @@ func (r *restartSignal) attach(parent context.Context) context.Context {
 }
 
 func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.CancelFunc, lcdFlagDebugOpt ...bool) (http.Handler, config.Snapshot, *runtime.Poller, *runtime.SerialSource, *restartSignal) {
+	return newServerWithUploader(cfg, pollInterval, stop, nil, lcdFlagDebugOpt...)
+}
+
+func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop context.CancelFunc, uploader server.MenuDebugUploader, lcdFlagDebugOpt ...bool) (http.Handler, config.Snapshot, *runtime.Poller, *runtime.SerialSource, *restartSignal) {
 	lcdFlagDebug := false
 	if len(lcdFlagDebugOpt) > 0 {
 		lcdFlagDebug = lcdFlagDebugOpt[0]
@@ -251,15 +265,18 @@ func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.Can
 	}
 	var safetyButtonTransport transport.ButtonTransport
 	var fanButtonTransport transport.ButtonTransport
+	var menuDebugButtonTransport transport.LeaseButtonTransport
 	if rawButtonTransport != nil {
 		coordinator := transport.NewActuationCoordinator(rawButtonTransport)
 		buttonTransport = coordinator
 		wakeTransport = coordinator.GateWake(wakeTransport)
 		safetyButtonTransport = coordinator.Owner(transport.ActuationOwnerSafety, true)
 		fanButtonTransport = coordinator.Owner(transport.ActuationOwnerFan, false)
+		menuDebugButtonTransport = coordinator.Owner(transport.ActuationOwnerMenuDebug, false)
 	}
 	safetyController := monitoring.NewController(safetyButtonTransport)
 	fanPolicyController := fanpolicy.NewController(fanButtonTransport)
+	menuDebugController := menudebug.NewController(menuDebugButtonTransport)
 	persistedFanState := cfg.FanPolicyState()
 	fanPolicyController.ConfigurePersistence(fanpolicy.PersistentState{
 		ManualOverride:                persistedFanState.ManualOverride,
@@ -304,26 +321,30 @@ func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.Can
 				SafetyStandbyTripC: settings.TemperatureTripC,
 			}
 		})
+		serialSource.ConfigureMenuDebugController(menuDebugController)
 	}
 
 	handler := server.NewHandler(server.Options{
-		IndexHTML:        indexHTML,
-		DocsHTML:         apidocs.MustDocsHTML(),
-		OpenAPIJSON:      apidocs.MustOpenAPIJSON(),
-		ROM:              rom,
-		Store:            store,
-		StatusState:      statusState,
-		SerialSource:     serialSource,
-		DemoState:        demoState,
-		AltState:         altState,
-		Fixtures:         fixtures,
-		Config:           cfg,
-		SafetyController: safetyController,
-		FanPolicy:        fanPolicyController,
-		ButtonTransport:  buttonTransport,
-		WakeTransport:    wakeTransport,
-		Version:          server.VersionInfo{Version: Version, Commit: Commit, BuildDate: BuildDate, Channel: Channel},
-		RestartServer:    signal.request,
+		IndexHTML:          indexHTML,
+		DocsHTML:           apidocs.MustDocsHTML(),
+		OpenAPIJSON:        apidocs.MustOpenAPIJSON(),
+		ROM:                rom,
+		Store:              store,
+		StatusState:        statusState,
+		SerialSource:       serialSource,
+		DemoState:          demoState,
+		AltState:           altState,
+		Fixtures:           fixtures,
+		Config:             cfg,
+		SafetyController:   safetyController,
+		FanPolicy:          fanPolicyController,
+		MenuDebug:          menuDebugController,
+		MenuDebugTransport: menuDebugButtonTransport,
+		MenuDebugUploader:  uploader,
+		ButtonTransport:    buttonTransport,
+		WakeTransport:      wakeTransport,
+		Version:            server.VersionInfo{Version: Version, Commit: Commit, BuildDate: BuildDate, Channel: Channel},
+		RestartServer:      signal.request,
 	})
 
 	return handler, snapshot, poller, serialSource, signal

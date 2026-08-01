@@ -48,6 +48,7 @@ Current screenshot index: [`docs/reference/screens/README.md`](../reference/scre
 - Normal button endpoint intentionally blocks `back`, `on`, and `standby`.
 - Some documented button actions are transport-real but still need broader user-visible hardware confirmation.
 - Fan control is hardware-confirmed on a First Series 1.3K-FA; other models must begin with manual Fan Boost and are experimental until their menu path verifies.
+- Menu Debug is disabled by default. Only reviewed First Series 1.3K-FA fan and two-bank A/B layouts may change and SAVE values; all other layouts remain topology-only.
 - Fahrenheit-configured amplifiers must set `amplifierTemperatureUnit: "F"` before temperature monitoring or fan automation is enabled because the status protocol is unitless.
 - `/healthz` is process liveness only; use `/api/v1/status` for serial/protocol health.
 - The service intentionally assumes a trusted station LAN and usually listens on `:8088` for use from another shack PC; do not expose it directly to the public internet.

@@ -10,6 +10,7 @@ It is meant for radio-side computers like a Raspberry Pi, an Apache Labs ANAN G2
 - Provides Front Panel and compact Operator layouts for day-to-day amp monitoring and control.
 - Gives you local-network amp controls: operate/standby, power level, antenna, input, tune, display/menu controls, and power-off where supported.
 - Adds display-verified manual and automatic fan cooling with timed Fan Boost, plus optional state-gated overtemperature standby protection.
+- Includes a disabled-by-default Menu Debug & Reporting wizard for bounded fan and antenna-bank compatibility tests and sanitized reports.
 - Exposes a documented HTTP/WebSocket API for custom integrations, station dashboards, Node-RED flows, and future Thetis-style gauge work.
 - Ships a bootstrappable Node-RED dashboard example.
 - Includes Raspberry Pi/systemd install notes and a release build helper.
@@ -96,6 +97,14 @@ Automatic fan cooling is disabled by default. Optional overtemperature standby i
 Important upgrade note: the amplifier status protocol sends temperature numbers without a unit. Before enabling temperature monitoring or fan automation, set `amplifierTemperatureUnit` to match the amplifier SET menu (`C` or `F`). All thresholds and API fields ending in `C` remain canonical Celsius.
 
 SPE documents a maximum rate of `115200` with automatic adaptation to lower speeds, so that remains the server default. One field-tested 2K-FA installation only communicated reliably at `57600`; use that as a troubleshooting fallback, not as a model-wide requirement.
+
+## Menu Debug & Reporting
+
+The advanced Menu Debug wizard is disabled by default and intended for supervised compatibility testing. Arming requires the exact acknowledgement, fresh protocol STANDBY/RX, a checksum-valid STANDBY home display, inactive fan control, disarmed overtemperature standby, and an exclusive actuation lease. Each accepted step sends at most one reviewed command and then waits for newer verified display evidence.
+
+Only the reviewed First Series Expert 1.3K-FA fan and two-bank A/B layouts may propose a reversible value change and SAVE. Unknown models or layouts are topology-only: they may produce useful screen evidence, but they cannot inherit a value-changing profile. TX, stale evidence, an unexpected screen, timeout, or safety preemption stops the session fail-closed; the wizard never restores OPERATE or performs blind menu recovery.
+
+Completed `menu-report.v1` reports can be previewed and downloaded locally. Optional upload requires explicit consent and a separately configured HTTPS collector endpoint through `-menu-report-collector-url` or `EXPERT_AMP_MENU_REPORT_COLLECTOR_URL`. Reports exclude network, host, callsign, session-token, and serial-device identity.
 
 ## Documentation
 

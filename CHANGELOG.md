@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.4.0 - 2026-07-31
+
+Guarded menu discovery, compatibility reporting, and serial recovery release.
+
+### Added
+
+- A disabled-by-default, 10-minute Menu Debug & Reporting session in Settings with memory-only tokens and revision-protected actions.
+- Reviewed reversible NORMAL/CONTEST fan and Bank A/B test profiles for the confirmed First Series Expert 1.3K-FA layouts.
+- Topology-only capture for unrecognized models and layouts; unknown screens never inherit a value-changing or SAVE profile.
+- Sanitized `menu-report.v1` preview/download plus explicit one-shot upload to a separately configured receive-only HTTPS collector.
+- Serial reconnect diagnostics and coordinated wake/reconnect handling.
+
+### Safety hardening and fixes
+
+- Every wizard write requires fresh protocol STANDBY/RX and a newer checksum-valid LCD receipt; the server sends at most one reviewed command before waiting for new evidence.
+- TX, stale evidence, unexpected screens, timeout, or safety preemption stop the wizard fail-closed. It never performs blind menu recovery or restores OPERATE.
+- A completed, display-verified Normal fan override can be cleared while arming the wizard without sending an amplifier command. CONTEST, pending, failed, or uncertain state still blocks arming.
+- Added server-only recovery for failed fan transactions after the operator returns the amplifier to a fresh STANDBY/RX home screen.
+- Fixed hidden verification controls, repeated LCD polls during actions, fan-selector advancement, and Bank SAVE confirmation handling.
+- Serial write timeouts now retire the uncertain serial session and reconnect instead of leaving it reusable.
+- Menu reports are isolated to the currently armed session, hostname-shaped firmware metadata is rejected, and the uploader refuses collector redirects.
+- Failed fan recovery now remains latched and retains its actuation lease if the cleared state cannot be persisted.
+
+### Known caveats
+
+- Menu Debug remains experimental and disabled by default. Other model/layout combinations are topology-only until explicitly reviewed.
+- The reviewed bank profile requires the exact two-bank A/B layout with Bank A active at the start.
+- Do not transmit or enable OPERATE during a session. Sampled RX gates cannot eliminate the physical race before an unexpected PTT event.
+- Session tokens expire after 10 minutes and are lost on page reload or server restart.
+- Upload is available only when an HTTPS collector endpoint is configured; local JSON download remains available without it.
+- The HTTP service remains unauthenticated and belongs only on a trusted station LAN or VPN.
+
 ## v0.3.1 - 2026-07-30
 
 Corrective documentation and Node-RED integration release.

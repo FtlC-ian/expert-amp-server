@@ -576,7 +576,7 @@
     "type": "function",
     "z": "e7f8cbd87d347be8",
     "name": "Format action result",
-    "func": "const env  = msg.payload || {};\nconst ok   = env.success !== false;\nconst name = (env.data && env.data.name) ? env.data.name : (msg.topic || '?');\nmsg.payload = ok ? 'OK: ' + name : 'FAIL: ' + name + ' (' + (env.error || '?') + ')';\nreturn msg;",
+    "func": "const env  = msg.payload || {};\nconst ok   = env.success !== false;\nconst name = (env.data && env.data.name) ? env.data.name : (msg.topic || '?');\nif (ok) {\n  msg.payload = 'OK: ' + name;\n  return msg;\n}\nconst nav = (env.data && env.data.navigation) || {};\nconst detail = nav.lastError || env.error || '?';\nconst recovery = nav.recoveryInstructions ? ' Recovery: ' + nav.recoveryInstructions : '';\nmsg.payload = 'FAIL: ' + name + ' (' + detail + ')' + recovery;\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",

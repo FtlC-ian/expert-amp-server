@@ -17,6 +17,16 @@ type recordingButtons struct {
 	sent    bool
 }
 
+type leaseRecordingButtons struct {
+	recordingButtons
+	releases int
+}
+
+func (r *leaseRecordingButtons) Acquire() bool      { return true }
+func (r *leaseRecordingButtons) Release()           { r.releases++ }
+func (r *leaseRecordingButtons) SafetyHold() bool   { return false }
+func (r *leaseRecordingButtons) SetSafetyHold(bool) {}
+
 func (r *recordingButtons) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
 	r.actions = append(r.actions, action.Name)
 	if r.err != nil {
@@ -598,6 +608,82 @@ func TestControllerLatchesTransportFailureWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestControllerRecoveryRequiresNewVerifiedStandbyHomeAndClearsOverride(t *testing.T) {
+	buttons := &recordingButtons{err: errors.New("serial unavailable")}
+	controller := NewController(buttons)
+	if err := controller.SetManualOverride(PolicyHigh, 0); err != nil {
+		t.Fatalf("SetManualOverride: %v", err)
+	}
+	disabled := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 80, NormalTemperatureC: 75}
+	standbyRX := statusAt(81, "standby", false)
+	controller.Observe(standbyRX, disabled)
+	failed := controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	if failed.State != StateFailed || !failed.ManualOverride.Active {
+		t.Fatalf("failed override did not latch: %+v", failed)
+	}
+
+	if err := controller.Recover(standbyRX, Settings{Enabled: true}); err == nil || !strings.Contains(err.Error(), "disable automatic") {
+		t.Fatalf("enabled recovery error = %v", err)
+	}
+	if err := controller.Recover(standbyRX, disabled); err == nil || !strings.Contains(err.Error(), "newer checksum-valid home") {
+		t.Fatalf("stale-display recovery error = %v", err)
+	}
+
+	controller.ObserveDisplay(rxObservation(homeScreen(), 2))
+	if err := controller.Recover(statusAt(81, "operate", false), disabled); err == nil || !strings.Contains(err.Error(), "STANDBY") {
+		t.Fatalf("operate recovery error = %v", err)
+	}
+	if err := controller.Recover(standbyRX, disabled); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	result := controller.Current()
+	if result.State != StateDisabled || result.ManualOverride.Active || result.Navigation.State != "idle" || result.Navigation.MayBeInMenu {
+		t.Fatalf("recovery did not clear failed override safely: %+v", result)
+	}
+}
+
+func TestControllerRecoveryFailsClosedWhenPersistenceFails(t *testing.T) {
+	buttons := &leaseRecordingButtons{}
+	controller := NewController(buttons)
+	failPersist := false
+	controller.ConfigurePersistence(PersistentState{}, false, func(PersistentState) error {
+		if failPersist {
+			return errors.New("disk unavailable")
+		}
+		return nil
+	})
+	disabled := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 80, NormalTemperatureC: 75}
+	standbyRX := statusAt(81, "standby", false)
+	rx := false
+	controller.manualOverride = PolicyHigh
+	controller.nav = navState{failed: true, leaseHeld: true, failureAfterGen: 1}
+	controller.mayBeInMenu = true
+	controller.lastDisplayGen = 2
+	controller.lastDisplayKey = "home"
+	controller.displayTX = &rx
+	controller.displayOperate = &rx
+
+	failPersist = true
+	if err := controller.Recover(standbyRX, disabled); err == nil || !strings.Contains(err.Error(), "persist recovered") {
+		t.Fatalf("Recover error = %v", err)
+	}
+	result := controller.Current()
+	if result.State != StateFailed || !result.ManualOverride.Active || result.Navigation.State != "failed" {
+		t.Fatalf("persistence failure cleared failed state in memory: %+v", result)
+	}
+	if buttons.releases != 0 || !controller.nav.leaseHeld {
+		t.Fatalf("persistence failure released lease: releases=%d nav=%+v", buttons.releases, controller.nav)
+	}
+
+	failPersist = false
+	if err := controller.Recover(standbyRX, disabled); err != nil {
+		t.Fatal(err)
+	}
+	if buttons.releases != 1 || controller.nav.leaseHeld {
+		t.Fatalf("successful recovery did not release lease exactly once: releases=%d nav=%+v", buttons.releases, controller.nav)
+	}
+}
+
 func TestControllerDoesNotReportCurrentPolicyUntilVerifiedReturnHome(t *testing.T) {
 	buttons := &recordingButtons{}
 	controller := NewController(buttons)
@@ -739,16 +825,21 @@ func TestControllerContactLossDoesNotClearFailedPolicyLatch(t *testing.T) {
 		t.Fatalf("opposite-threshold request cleared failure latch: %v", buttons.actions)
 	}
 
-	controller.Observe(statusAt(74, "standby", false), Settings{
+	disabled := Settings{
 		HighTemperatureC:   80,
 		NormalTemperatureC: 75,
-	})
+	}
+	controller.Observe(statusAt(74, "standby", false), disabled)
 	buttons.err = nil
+	controller.ObserveDisplay(rxObservation(homeScreen(), 4))
+	if err := controller.Recover(statusAt(74, "standby", false), disabled); err != nil {
+		t.Fatalf("verified recovery: %v", err)
+	}
 	controller.normalRestoreAfter = time.Time{}
 	controller.Observe(statusAt(74, "standby", false), settings)
-	controller.ObserveDisplay(rxObservation(homeScreen(), 4))
+	controller.ObserveDisplay(rxObservation(homeScreen(), 5))
 	if len(buttons.actions) != 2 {
-		t.Fatalf("explicit disable did not clear failure latch: %v", buttons.actions)
+		t.Fatalf("verified recovery did not clear failure latch: %v", buttons.actions)
 	}
 }
 
@@ -847,6 +938,133 @@ func TestManualNormalOverrideBypassesAutomaticRestoreCooldown(t *testing.T) {
 	got := controller.Observe(statusAt(30, "standby", false), settings)
 	if containsBlock(got.BlockedBy, "cooldown") || got.DesiredPolicy != PolicyNormal {
 		t.Fatalf("explicit Normal override remained in cooldown: %+v", got)
+	}
+}
+
+func TestClearCompletedNormalOverrideIsServerOnlyAndFailClosed(t *testing.T) {
+	now := time.Date(2026, 7, 31, 18, 0, 0, 0, time.UTC)
+	rx := false
+	status := api.Status{Telemetry: api.Telemetry{OperatingState: "standby", TX: &rx}, RecentContact: true}
+	settings := Settings{Enabled: false}
+	buttons := &recordingButtons{sent: true}
+	var persisted PersistentState
+	controller := NewController(buttons)
+	controller.now = func() time.Time { return now }
+	controller.persist = func(state PersistentState) error {
+		persisted = state
+		return nil
+	}
+	controller.manualOverride = PolicyNormal
+	controller.current = PolicyNormal
+	controller.currentConfidence = "verified-live"
+	controller.currentVerifiedAt = now.Add(-time.Minute)
+	controller.currentSource = "manual-override"
+	controller.nav.step = "complete"
+	controller.lastVerifiedScreen = "home:standby"
+	controller.lastDisplayKey = "home"
+	controller.lastDisplayGen = 1
+	controller.displayTX = &rx
+	controller.displayOperate = &rx
+	controller.baseSettings = settings
+	controller.settings = controller.effectiveSettingsLocked(settings)
+
+	cleared, err := controller.ClearCompletedNormalOverride(status, settings)
+	if err != nil || !cleared {
+		t.Fatalf("ClearCompletedNormalOverride() = %v, %v", cleared, err)
+	}
+	if len(buttons.actions) != 0 {
+		t.Fatalf("cleanup sent amplifier commands: %v", buttons.actions)
+	}
+	if persisted.ManualOverride != "" {
+		t.Fatalf("persisted override was not cleared: %+v", persisted)
+	}
+	result := controller.Current()
+	if result.ControlActive || result.ManualOverride.Active || result.Navigation.State != "idle" {
+		t.Fatalf("cleanup left fan control active: %+v", result)
+	}
+
+	refused := []struct {
+		name         string
+		mutate       func(*Controller, *Settings)
+		mutateStatus func(*api.Status)
+	}{
+		{name: "contest override", mutate: func(c *Controller, _ *Settings) { c.manualOverride = PolicyHigh }},
+		{name: "automatic policy", mutate: func(_ *Controller, s *Settings) { s.Enabled = true }},
+		{name: "unverified current policy", mutate: func(c *Controller, _ *Settings) { c.currentConfidence = "persisted-stale" }},
+		{name: "unknown current policy", mutate: func(c *Controller, _ *Settings) { c.current = PolicyUnknown }},
+		{name: "active navigation", mutate: func(c *Controller, _ *Settings) { c.nav.active = true }},
+		{name: "paused navigation", mutate: func(c *Controller, _ *Settings) { c.nav.paused = true }},
+		{name: "failed navigation", mutate: func(c *Controller, _ *Settings) { c.nav.failed = true }},
+		{name: "held lease", mutate: func(c *Controller, _ *Settings) { c.nav.leaseHeld = true }},
+		{name: "pending verification", mutate: func(c *Controller, _ *Settings) { c.verifyRequested = true }},
+		{name: "missing verification time", mutate: func(c *Controller, _ *Settings) { c.currentVerifiedAt = time.Time{} }},
+		{name: "amplifier may be in menu", mutate: func(c *Controller, _ *Settings) { c.mayBeInMenu = true }},
+		{name: "missing home display", mutate: func(c *Controller, _ *Settings) { c.lastDisplayKey = "setup" }},
+		{name: "missing display generation", mutate: func(c *Controller, _ *Settings) { c.lastDisplayGen = 0 }},
+		{name: "unknown display RX", mutate: func(c *Controller, _ *Settings) { c.displayTX = nil }},
+		{name: "display TX", mutate: func(c *Controller, _ *Settings) { value := true; c.displayTX = &value }},
+		{name: "display OPERATE", mutate: func(c *Controller, _ *Settings) { value := true; c.displayOperate = &value }},
+		{name: "stale protocol contact", mutateStatus: func(s *api.Status) { s.RecentContact = false }},
+		{name: "protocol TX", mutateStatus: func(s *api.Status) { value := true; s.TX = &value }},
+		{name: "unknown protocol RX", mutateStatus: func(s *api.Status) { s.TX = nil }},
+		{name: "protocol OPERATE", mutateStatus: func(s *api.Status) { s.OperatingState = "operate" }},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			candidateSettings := settings
+			candidateStatus := status
+			candidateButtons := &recordingButtons{sent: true}
+			candidate := NewController(candidateButtons)
+			candidate.manualOverride = PolicyNormal
+			candidate.current = PolicyNormal
+			candidate.currentConfidence = "verified-live"
+			candidate.currentVerifiedAt = now.Add(-time.Minute)
+			candidate.lastDisplayKey = "home"
+			candidate.lastDisplayGen = 1
+			candidate.displayTX = &rx
+			candidate.displayOperate = &rx
+			if tc.mutate != nil {
+				tc.mutate(candidate, &candidateSettings)
+			}
+			if tc.mutateStatus != nil {
+				tc.mutateStatus(&candidateStatus)
+			}
+			expectedOverride := candidate.manualOverride
+			cleared, err := candidate.ClearCompletedNormalOverride(candidateStatus, candidateSettings)
+			if err != nil || cleared || candidate.manualOverride != expectedOverride {
+				t.Fatalf("unsafe cleanup result: cleared=%v err=%v override=%q", cleared, err, candidate.manualOverride)
+			}
+			if len(candidateButtons.actions) != 0 {
+				t.Fatalf("refused cleanup sent amplifier commands: %v", candidateButtons.actions)
+			}
+		})
+	}
+}
+
+func TestClearCompletedNormalOverrideRollsBackOnPersistenceFailure(t *testing.T) {
+	now := time.Date(2026, 7, 31, 18, 0, 0, 0, time.UTC)
+	rx := false
+	status := api.Status{Telemetry: api.Telemetry{OperatingState: "standby", TX: &rx}, RecentContact: true}
+	settings := Settings{Enabled: false}
+	controller := NewController()
+	controller.manualOverride = PolicyNormal
+	controller.current = PolicyNormal
+	controller.currentConfidence = "verified-live"
+	controller.currentVerifiedAt = now.Add(-time.Minute)
+	controller.lastDisplayKey = "home"
+	controller.lastDisplayGen = 1
+	controller.displayTX = &rx
+	controller.displayOperate = &rx
+	controller.baseSettings = settings
+	controller.settings = controller.effectiveSettingsLocked(settings)
+	controller.persist = func(PersistentState) error { return errors.New("disk unavailable") }
+
+	cleared, err := controller.ClearCompletedNormalOverride(status, settings)
+	if err == nil || cleared {
+		t.Fatalf("expected persistence failure, got cleared=%v err=%v", cleared, err)
+	}
+	if !controller.Current().ManualOverride.Active || controller.manualOverride != PolicyNormal {
+		t.Fatalf("persistence failure did not restore override: %+v", controller.Current())
 	}
 }
 

@@ -796,6 +796,101 @@ func TestSettingsPageHasAllConfigFields(t *testing.T) {
 	}
 }
 
+func TestSettingsPageHasGuardedMenuDebugWizard(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	h, _, _, _, _ := newServer(mgr, 250*time.Millisecond, func() {})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d", res.Code)
+	}
+	body := res.Body.String()
+
+	for _, id := range []string{
+		"menu-debug-card",
+		"menu-debug-body",
+		"s-menu-debug-enabled",
+		"menu-debug-firmware",
+		"menu-debug-acknowledgement",
+		"menu-debug-arm-session",
+		"menu-debug-prerequisites",
+		"menu-debug-proposal",
+		"menu-debug-advance",
+		"menu-debug-candidate-verification",
+		"menu-debug-restored-verification",
+		"menu-debug-abort",
+		"menu-debug-report-preview",
+		"menu-debug-download-report",
+		"menu-debug-upload-consent",
+		"menu-debug-upload-report",
+	} {
+		if !htmlHasID(body, id) {
+			t.Errorf("menu debug wizard missing id=%q", id)
+		}
+	}
+
+	for _, required := range []string{
+		"I AM IN STANDBY AND WILL NOT TRANSMIT",
+		"Disabled by default. This reveals the separate, short-lived STANDBY-only wizard",
+		"X-Menu-Debug-Token",
+		"expectedRevision",
+		"capabilities: ['fan', 'bank']",
+		"begin-discovery",
+		"apply-proposed-change",
+		"restore-original",
+		"Changed as Expected",
+		"Original Value Restored",
+		"state === 'awaiting-apply-verification'",
+		"state === 'awaiting-restore-verification'",
+		"the completed Normal fan override was cleared without touching the amplifier",
+		"Abort and Stop Sending Commands",
+		"OPERATE will not be restored automatically",
+		"It excludes IP addresses, hostnames, callsigns, and serial-device paths or identifiers",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("menu debug wizard missing safety or workflow text %q", required)
+		}
+	}
+
+	for _, endpoint := range []string{
+		"/api/v1/menu-debug/session",
+		"/api/v1/menu-debug/session/advance",
+		"/api/v1/menu-debug/session/verification",
+		"/api/v1/menu-debug/session/abort",
+		"/api/v1/menu-debug/report",
+		"/api/v1/menu-debug/report.json",
+		"/api/v1/menu-debug/report/upload",
+	} {
+		if !strings.Contains(body, endpoint) {
+			t.Errorf("menu debug wizard missing API wiring %q", endpoint)
+		}
+	}
+
+	if strings.Contains(body, `id="tab-menu-debug"`) {
+		t.Error("menu debug wizard must remain a collapsed advanced Settings card, not a top-level tab")
+	}
+	if !regexp.MustCompile(`<[^>]+id="menu-debug-card"[^>]+hidden`).MatchString(body) {
+		t.Error("menu debug wizard card must be hidden until its disabled-by-default server setting is enabled")
+	}
+	wizardScriptStart := strings.Index(body, "// ─── Menu Debug & Reporting wizard")
+	wizardScriptEnd := strings.Index(body, "// ─── Settings page")
+	if wizardScriptStart < 0 || wizardScriptEnd <= wizardScriptStart {
+		t.Fatal("could not isolate menu debug wizard script")
+	}
+	wizardScript := body[wizardScriptStart:wizardScriptEnd]
+	if strings.Contains(wizardScript, "/api/v1/actions/button") {
+		t.Error("menu debug wizard must never bypass the guarded session API with raw button actions")
+	}
+	if strings.Contains(wizardScript, "localStorage") || strings.Contains(wizardScript, "sessionStorage") {
+		t.Error("menu debug token must remain memory-only")
+	}
+}
+
 // TestSettingsEndpointStatusPollingNoRestartNeeded verifies that toggling
 // statusPollingEnabled alone does not trigger a restart-needed message, since
 // the poller respects it as a live toggle.

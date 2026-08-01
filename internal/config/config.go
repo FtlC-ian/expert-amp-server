@@ -70,6 +70,11 @@ type Settings struct {
 	VerifyFanModeOnStartup    bool    `json:"verifyFanModeOnStartup,omitempty"`
 	FanBoostDurationMinutes   int     `json:"fanBoostDurationMinutes,omitempty"`
 
+	// Menu debug/reporting is an advanced, explicitly enabled workflow. Only
+	// this enable flag is persisted; session tokens and in-progress discovery
+	// state remain in memory.
+	MenuDebugEnabled bool `json:"menuDebugEnabled"`
+
 	// Serial connection parameters for live ingest.
 	SerialBaudRate           int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      int  `json:"serialReadTimeoutMs,omitempty"`
@@ -130,6 +135,7 @@ type rawSettings struct {
 	FanDisplayProfile            *string           `json:"fanDisplayProfile,omitempty"`
 	VerifyFanModeOnStartup       *bool             `json:"verifyFanModeOnStartup,omitempty"`
 	FanBoostDurationMinutes      *int              `json:"fanBoostDurationMinutes,omitempty"`
+	MenuDebugEnabled             *bool             `json:"menuDebugEnabled,omitempty"`
 
 	SerialBaudRate           *int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      *int  `json:"serialReadTimeoutMs,omitempty"`
@@ -345,6 +351,9 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.FanBoostDurationMinutes != nil {
 		out.FanBoostDurationMinutes = *r.FanBoostDurationMinutes
 	}
+	if r.MenuDebugEnabled != nil {
+		out.MenuDebugEnabled = *r.MenuDebugEnabled
+	}
 	if r.SerialBaudRate != nil && *r.SerialBaudRate > 0 {
 		out.SerialBaudRate = *r.SerialBaudRate
 	}
@@ -418,6 +427,7 @@ func normalizeSettings(in, defaults Settings) Settings {
 	out.FanDisplayProfile = strings.TrimSpace(in.FanDisplayProfile)
 	out.VerifyFanModeOnStartup = in.VerifyFanModeOnStartup
 	out.FanBoostDurationMinutes = in.FanBoostDurationMinutes
+	out.MenuDebugEnabled = in.MenuDebugEnabled
 	if in.SerialBaudRate > 0 {
 		out.SerialBaudRate = in.SerialBaudRate
 	}

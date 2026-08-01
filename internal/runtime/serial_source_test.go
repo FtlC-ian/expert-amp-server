@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
+	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
 )
@@ -27,15 +29,40 @@ type mockSerialPort struct {
 	blockWrite    chan struct{}
 	setReadTimout []time.Duration
 	writeStarted  chan struct{}
+	readErr       error
+	blockRead     bool
+	closedCh      chan struct{}
+	closeOnce     sync.Once
+	dtr           []bool
+	rts           []bool
 }
 
 func (m *mockSerialPort) Read(buf []byte) (int, error) {
+	if m.blockRead {
+		m.mu.Lock()
+		if m.closedCh == nil {
+			m.closedCh = make(chan struct{})
+		}
+		closedCh := m.closedCh
+		m.mu.Unlock()
+		<-closedCh
+		return 0, errors.New("Port has been closed")
+	}
+	m.mu.Lock()
 	if m.chunkIdx >= len(m.chunks) {
+		if m.readErr != nil {
+			err := m.readErr
+			m.readErr = nil
+			m.mu.Unlock()
+			return 0, err
+		}
+		m.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
 		return 0, nil
 	}
 	chunk := m.chunks[m.chunkIdx]
 	m.chunkIdx++
+	m.mu.Unlock()
 	n := copy(buf, chunk)
 	return n, nil
 }
@@ -65,15 +92,38 @@ func (m *mockSerialPort) writtenSnapshot() [][]byte {
 	return out
 }
 func (m *mockSerialPort) Close() error {
+	m.mu.Lock()
 	m.closed = true
+	if m.closedCh == nil {
+		m.closedCh = make(chan struct{})
+	}
+	closedCh := m.closedCh
+	m.mu.Unlock()
+	m.closeOnce.Do(func() { close(closedCh) })
 	return nil
 }
 func (m *mockSerialPort) SetReadTimeout(d time.Duration) error {
 	m.setReadTimout = append(m.setReadTimout, d)
 	return nil
 }
-func (m *mockSerialPort) SetDTR(bool) error { return nil }
-func (m *mockSerialPort) SetRTS(bool) error { return nil }
+func (m *mockSerialPort) SetDTR(value bool) error {
+	m.mu.Lock()
+	m.dtr = append(m.dtr, value)
+	m.mu.Unlock()
+	return nil
+}
+func (m *mockSerialPort) SetRTS(value bool) error {
+	m.mu.Lock()
+	m.rts = append(m.rts, value)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *mockSerialPort) isClosed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed
+}
 
 type mockSerialOpener struct {
 	port *mockSerialPort
@@ -83,6 +133,36 @@ func (m *mockSerialOpener) Open(string, int) (serial.Port, error) {
 	return m.port, nil
 }
 
+type sequenceSerialOpener struct {
+	mu     sync.Mutex
+	ports  []serial.Port
+	opens  int
+	opened chan int
+}
+
+func (m *sequenceSerialOpener) Open(string, int) (serial.Port, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.opens >= len(m.ports) {
+		return nil, errors.New("no test serial port available")
+	}
+	port := m.ports[m.opens]
+	m.opens++
+	if m.opened != nil {
+		select {
+		case m.opened <- m.opens:
+		default:
+		}
+	}
+	return port, nil
+}
+
+func (m *sequenceSerialOpener) openCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.opens
+}
+
 func mustDecodeHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
@@ -90,6 +170,30 @@ func mustDecodeHex(t *testing.T, s string) []byte {
 		t.Fatalf("DecodeString(%q): %v", s, err)
 	}
 	return b
+}
+
+func displayStreamChunk(t *testing.T) []byte {
+	t.Helper()
+	rawFrame, err := os.ReadFile("../../fixtures/real_home_status_frame.bin")
+	if err != nil {
+		t.Fatalf("read display fixture: %v", err)
+	}
+	chunk := append([]byte{}, protocol.RadioDisplayPrefix...)
+	chunk = append(chunk, rawFrame[len(protocol.RadioDisplayPrefix):]...)
+	chunk = append(chunk, protocol.RadioDisplayPrefix...)
+	return chunk
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
 }
 
 func TestSerialSourcePollReturnsInitialUpdate(t *testing.T) {
@@ -217,6 +321,117 @@ func TestSerialSourceStopsOnCancel(t *testing.T) {
 	diag := src.Diagnostics()
 	if diag.Connected {
 		t.Fatal("should not be connected after cancel")
+	}
+}
+
+func TestSerialSourceDoesNotMarkConnectedForUndecodedBytes(t *testing.T) {
+	mockPort := &mockSerialPort{chunks: [][]byte{{0x01, 0x02, 0x03}}}
+	src := NewSerialSource(SerialSourceConfig{
+		Port:             "/dev/ttyTEST0",
+		ReadTimeout:      10 * time.Millisecond,
+		ReadSize:         512,
+		MinFrameLen:      64,
+		MaxBuffer:        8192,
+		ReconnectBackoff: time.Millisecond,
+	}, &mockSerialOpener{port: mockPort}, Update{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	src.Start(ctx)
+	defer cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	if diag := src.Diagnostics(); diag.Connected {
+		t.Fatalf("undecoded bytes incorrectly marked serial healthy: %+v", diag)
+	}
+}
+
+func TestSerialSourceReconnectsWithFreshDecodersAndClearsTransportError(t *testing.T) {
+	validChunk := displayStreamChunk(t)
+	first := &mockSerialPort{
+		chunks:  [][]byte{append([]byte(nil), validChunk[:100]...)},
+		readErr: errors.New("Port has been closed"),
+	}
+	second := &mockSerialPort{chunks: [][]byte{validChunk}}
+	opener := &sequenceSerialOpener{ports: []serial.Port{first, second}}
+	src := NewSerialSource(SerialSourceConfig{
+		Port:             "/dev/ttyTEST0",
+		ReadTimeout:      10 * time.Millisecond,
+		ReadSize:         512,
+		MinFrameLen:      64,
+		MaxBuffer:        8192,
+		ReconnectBackoff: time.Millisecond,
+	}, opener, Update{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	src.Start(ctx)
+	defer cancel()
+	waitForCondition(t, time.Second, func() bool {
+		diag := src.Diagnostics()
+		return diag.Connected && diag.FramesSeen >= 1 && diag.Reconnects == 1
+	})
+
+	diag := src.Diagnostics()
+	if diag.LastError != "" || diag.LastErrorAt != "" {
+		t.Fatalf("recovered connection retained active error: %+v", diag)
+	}
+	if diag.LastRecoveredAt == "" {
+		t.Fatalf("recovery timestamp missing: %+v", diag)
+	}
+	if diag.DecodeErrors != 0 {
+		t.Fatalf("decoder state leaked across serial sessions: %+v", diag)
+	}
+}
+
+func TestSerialSourceWakeQuiescesLiveSessionAndReconnects(t *testing.T) {
+	live := &mockSerialPort{blockRead: true}
+	wakePort := &mockSerialPort{}
+	reconnected := &mockSerialPort{chunks: [][]byte{displayStreamChunk(t)}}
+	opener := &sequenceSerialOpener{
+		ports:  []serial.Port{live, wakePort, reconnected},
+		opened: make(chan int, 3),
+	}
+	src := NewSerialSource(SerialSourceConfig{
+		Port:             "/dev/ttyTEST0",
+		BaudRate:         115200,
+		ReadTimeout:      10 * time.Millisecond,
+		ReadSize:         512,
+		MinFrameLen:      64,
+		MaxBuffer:        8192,
+		IOTimeout:        2 * time.Second,
+		ReconnectBackoff: 100 * time.Millisecond,
+	}, opener, Update{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	src.Start(ctx)
+	defer cancel()
+	waitForCondition(t, time.Second, func() bool { return opener.openCount() == 1 })
+
+	wakeCtx, wakeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer wakeCancel()
+	result, err := src.SendWake(wakeCtx)
+	if err != nil {
+		t.Fatalf("SendWake error: %v", err)
+	}
+	if !result.Sent || result.Transport != "serial-live-wake" {
+		t.Fatalf("unexpected wake result: %+v", result)
+	}
+	if !live.isClosed() {
+		t.Fatal("wake did not retire the live reader before opening wake transport")
+	}
+
+	waitForCondition(t, time.Second, func() bool {
+		diag := src.Diagnostics()
+		return opener.openCount() >= 3 && diag.Connected && diag.Reconnects == 1
+	})
+	wakePort.mu.Lock()
+	dtr := append([]bool(nil), wakePort.dtr...)
+	rts := append([]bool(nil), wakePort.rts...)
+	wakePort.mu.Unlock()
+	if len(dtr) != 3 || !dtr[0] || dtr[1] || !dtr[2] {
+		t.Fatalf("unexpected wake DTR sequence: %v", dtr)
+	}
+	if len(rts) != 2 || !rts[0] || rts[1] {
+		t.Fatalf("unexpected wake RTS sequence: %v", rts)
 	}
 }
 
@@ -434,6 +649,26 @@ func TestSerialSourceParsesLiveCapturedStatusFrame(t *testing.T) {
 	}
 }
 
+func TestSerialSourceFeedsMenuDebugStatusAndDisplayEvidence(t *testing.T) {
+	statusFrame := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	displayFrame, err := os.ReadFile("../../fixtures/real_home_status_frame.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := menudebug.NewController(nil)
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0"}, &mockSerialOpener{port: &mockSerialPort{}}, Update{})
+	src.ConfigureMenuDebugController(controller)
+	src.applyStatusFrame(statusFrame)
+	src.applyFrame(displayFrame)
+	runtime := controller.Runtime()
+	if runtime.StatusGeneration != 1 || runtime.DisplayGeneration != 1 {
+		t.Fatalf("runtime generations=%d/%d", runtime.StatusGeneration, runtime.DisplayGeneration)
+	}
+	if runtime.Status.ModelName != "EXPERT 1.3K-FA" || runtime.Screen.Fingerprint == "" || !runtime.ChecksumValid {
+		t.Fatalf("runtime evidence=%+v", runtime)
+	}
+}
+
 func TestSerialSourceUsesSeparateDisplayAndStatusPollFrames(t *testing.T) {
 	mockPort := &mockSerialPort{}
 	src := NewSerialSource(SerialSourceConfig{
@@ -609,7 +844,7 @@ func TestSerialSourceWriteFrameTimeoutRestoresReadTimeout(t *testing.T) {
 	started := make(chan struct{}, 1)
 	mockPort := &mockSerialPort{blockWrite: blocked, writeStarted: started}
 	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0", ReadTimeout: 25 * time.Millisecond}, &mockSerialOpener{port: mockPort}, Update{})
-	src.setPort(mockPort)
+	src.beginSession(mockPort)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -627,8 +862,11 @@ func TestSerialSourceWriteFrameTimeoutRestoresReadTimeout(t *testing.T) {
 
 	err := <-errCh
 	close(blocked)
-	if err == nil || !contains(err.Error(), "underlying serial write may still complete asynchronously") {
+	if err == nil || !contains(err.Error(), "serial session retired") {
 		t.Fatalf("writeFrame error = %v, want timeout note", err)
+	}
+	if !mockPort.isClosed() {
+		t.Fatal("timed-out write did not close the failed serial session")
 	}
 	if len(mockPort.setReadTimout) < 2 {
 		t.Fatalf("SetReadTimeout calls = %v, want deadline then restore", mockPort.setReadTimout)

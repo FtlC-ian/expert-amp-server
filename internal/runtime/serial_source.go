@@ -13,6 +13,7 @@ import (
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
+	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
@@ -43,6 +44,8 @@ type SerialSourceConfig struct {
 	StatusPollEnabledFn       func() bool
 	TemperatureUnitFn         func() string
 	LCDFlagDebug              bool
+	IOTimeout                 time.Duration
+	ReconnectBackoff          time.Duration
 }
 
 // Defaults returns a SerialSourceConfig with sensible SPE Expert defaults.
@@ -65,6 +68,8 @@ func DefaultSerialSourceConfig(port string) SerialSourceConfig {
 		MinFrameLen:               64,
 		MaxBuffer:                 8192,
 		TemperatureUnitFn:         func() string { return tempunit.Celsius },
+		IOTimeout:                 transport.DefaultButtonTimeout,
+		ReconnectBackoff:          2 * time.Second,
 	}
 }
 
@@ -75,6 +80,9 @@ type IngestDiagnostics struct {
 	LastFrameLength int64  `json:"lastFrameLength"`
 	LastFrameAt     string `json:"lastFrameAt,omitempty"`
 	LastError       string `json:"lastError,omitempty"`
+	LastErrorAt     string `json:"lastErrorAt,omitempty"`
+	LastRecoveredAt string `json:"lastRecoveredAt,omitempty"`
+	Reconnects      int64  `json:"reconnects"`
 	SerialPort      string `json:"serialPort"`
 	Connected       bool   `json:"connected"`
 }
@@ -95,17 +103,25 @@ type SerialSource struct {
 	diag        IngestDiagnostics
 	running     bool
 
-	framesSeen   atomic.Int64
-	decodeErrors atomic.Int64
-	lastFrameLen atomic.Int64
-	lastFrameAt  atomic.Int64
-	connected    atomic.Bool
+	framesSeen      atomic.Int64
+	decodeErrors    atomic.Int64
+	lastFrameLen    atomic.Int64
+	lastFrameAt     atomic.Int64
+	connected       atomic.Bool
+	reconnects      atomic.Int64
+	lastErrorAt     atomic.Int64
+	lastRecoveredAt atomic.Int64
 
-	lastErrMu sync.RWMutex
-	lastErr   string
+	lastErrMu          sync.RWMutex
+	lastErr            string
+	transportErrActive bool
 
-	portMu sync.RWMutex
-	port   serial.Port
+	portMu         sync.RWMutex
+	port           serial.Port
+	portGeneration uint64
+	portDone       chan struct{}
+	lifecycleMu    sync.Mutex
+	reconnectNow   chan struct{}
 
 	writeMu          sync.Mutex
 	specs            map[string]transport.ButtonSpec
@@ -113,6 +129,8 @@ type SerialSource struct {
 	safetySettings   func() monitoring.ControlSettings
 	fanController    *fanpolicy.Controller
 	fanSettings      func() fanpolicy.Settings
+	menuDebug        *menudebug.Controller
+	menuStatusGen    atomic.Uint64
 
 	flagDebugMu      sync.Mutex
 	lastUnknownFlags uint16
@@ -126,11 +144,12 @@ type SerialSource struct {
 // the background read loop; call [SerialSource.Stop] to shut it down.
 func NewSerialSource(cfg SerialSourceConfig, opener serial.PortOpener, initial Update) *SerialSource {
 	return &SerialSource{
-		cfg:         cfg,
-		opener:      opener,
-		latest:      initial,
-		statusState: NewStatusState(api.Status{Telemetry: initial.Telemetry}),
-		specs:       transport.DefaultButtonMap(),
+		cfg:          cfg,
+		opener:       opener,
+		latest:       initial,
+		statusState:  NewStatusState(api.Status{Telemetry: initial.Telemetry}),
+		specs:        transport.DefaultButtonMap(),
+		reconnectNow: make(chan struct{}, 1),
 	}
 }
 
@@ -185,6 +204,15 @@ func (s *SerialSource) ConfigureFanPolicyController(controller *fanpolicy.Contro
 	s.mu.Unlock()
 }
 
+func (s *SerialSource) ConfigureMenuDebugController(controller *menudebug.Controller) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.menuDebug = controller
+	s.mu.Unlock()
+}
+
 // Diagnostics returns the current ingest diagnostics snapshot.
 func (s *SerialSource) Diagnostics() IngestDiagnostics {
 	s.mu.RLock()
@@ -195,6 +223,7 @@ func (s *SerialSource) Diagnostics() IngestDiagnostics {
 	d.DecodeErrors = s.decodeErrors.Load()
 	d.LastFrameLength = s.lastFrameLen.Load()
 	d.Connected = s.connected.Load()
+	d.Reconnects = s.reconnects.Load()
 	d.SerialPort = s.cfg.Port
 	if ts := s.lastFrameAt.Load(); ts > 0 {
 		d.LastFrameAt = time.Unix(ts, 0).UTC().Format(time.RFC3339)
@@ -202,6 +231,12 @@ func (s *SerialSource) Diagnostics() IngestDiagnostics {
 	s.lastErrMu.RLock()
 	d.LastError = s.lastErr
 	s.lastErrMu.RUnlock()
+	if ts := s.lastErrorAt.Load(); ts > 0 {
+		d.LastErrorAt = time.Unix(ts, 0).UTC().Format(time.RFC3339)
+	}
+	if ts := s.lastRecoveredAt.Load(); ts > 0 {
+		d.LastRecoveredAt = time.Unix(ts, 0).UTC().Format(time.RFC3339)
+	}
 	return d
 }
 
@@ -222,13 +257,17 @@ func (s *SerialSource) SendButton(ctx context.Context, action api.ButtonAction) 
 func (s *SerialSource) SendWake(ctx context.Context) (api.ActionResult, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	s.lifecycleMu.Lock()
+	defer func() {
+		s.lifecycleMu.Unlock()
+		s.signalReconnect()
+	}()
 
 	if strings.TrimSpace(s.cfg.Port) == "" {
 		return api.ActionResult{Name: "wake", Queued: false, Sent: false, Transport: "serial-live-wake"}, transport.WakeTransportUnavailableError()
 	}
-	if port := s.currentPort(); port != nil {
-		_ = port.Close()
-		s.setPort(nil)
+	if err := s.retireCurrentSession(ctx); err != nil {
+		return api.ActionResult{Name: "wake", Queued: false, Sent: false, Transport: "serial-live-wake"}, err
 	}
 	opener := s.opener
 	if opener == nil {
@@ -242,12 +281,6 @@ func (s *SerialSource) SendWake(ctx context.Context) (api.ActionResult, error) {
 
 func (s *SerialSource) readLoop(ctx context.Context) {
 	s.connected.Store(false)
-
-	decoder := protocol.NewDisplayStreamDecoder(protocol.StreamDecoderConfig{
-		MinFrameLen: s.cfg.MinFrameLen,
-		MaxBuffer:   s.cfg.MaxBuffer,
-	})
-	statusDecoder := protocol.NewStatusStreamDecoder()
 
 	serialCfg := serial.Config{
 		Port:        s.cfg.Port,
@@ -275,40 +308,55 @@ func (s *SerialSource) readLoop(ctx context.Context) {
 
 	for {
 		if ctx.Err() != nil {
-			s.setPort(nil)
 			s.connected.Store(false)
 			return
 		}
 
-		port, err := opener.Open(serialCfg.Port, serialCfg.BaudRate)
-		if err != nil {
-			err = fmt.Errorf("open serial %s: %w", serialCfg.Port, err)
-		} else {
-			err = s.readFromPort(ctx, port, serialCfg, decoder, statusDecoder, displayPollFrame, statusPollFrame)
-		}
-		if err == nil {
-			// Context canceled.
-			s.setPort(nil)
+		s.lifecycleMu.Lock()
+		if ctx.Err() != nil {
+			s.lifecycleMu.Unlock()
 			s.connected.Store(false)
 			return
 		}
-		s.setPort(nil)
+		port, err := opener.Open(serialCfg.Port, serialCfg.BaudRate)
+		var generation uint64
+		var done chan struct{}
+		if err != nil {
+			err = fmt.Errorf("open serial %s: %w", serialCfg.Port, err)
+		} else {
+			generation, done = s.beginSession(port)
+		}
+		s.lifecycleMu.Unlock()
+		if err == nil {
+			decoder := protocol.NewDisplayStreamDecoder(protocol.StreamDecoderConfig{
+				MinFrameLen: s.cfg.MinFrameLen,
+				MaxBuffer:   s.cfg.MaxBuffer,
+			})
+			statusDecoder := protocol.NewStatusStreamDecoder()
+			err = s.readFromPort(ctx, port, serialCfg, decoder, statusDecoder, displayPollFrame, statusPollFrame)
+			s.endSession(generation, done)
+		}
+		if err == nil {
+			// Context canceled.
+			s.connected.Store(false)
+			return
+		}
 		s.connected.Store(false)
-		s.setErr(err.Error())
+		s.setTransportErr(err.Error())
 		log.Printf("serial source read error: %v", err)
 
 		// Backoff before reconnect.
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(2 * time.Second):
+		case <-time.After(s.reconnectBackoff()):
+		case <-s.reconnectNow:
 		}
 	}
 }
 
 func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg serial.Config, decoder *protocol.DisplayStreamDecoder, statusDecoder *protocol.StatusStreamDecoder, displayPollFrame []byte, statusPollFrame []byte) error {
 	defer port.Close()
-	s.setPort(port)
 
 	if err := port.SetReadTimeout(cfg.ReadTimeout); err != nil {
 		return fmt.Errorf("set read timeout: %w", err)
@@ -349,7 +397,6 @@ func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, cfg s
 
 		n, err := port.Read(buf)
 		if n > 0 {
-			s.connected.Store(true)
 			chunk := append([]byte(nil), buf[:n]...)
 			for _, frame := range statusDecoder.Push(chunk) {
 				s.applyStatusFrame(frame)
@@ -378,7 +425,9 @@ func (s *SerialSource) writeFrame(ctx context.Context, frame []byte) error {
 	if port == nil {
 		return transport.TransportUnavailableError()
 	}
-	if deadline, ok := ctx.Deadline(); ok {
+	writeCtx, cancel := context.WithTimeout(ctx, s.ioTimeout())
+	defer cancel()
+	if deadline, ok := writeCtx.Deadline(); ok {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			return fmt.Errorf("button send timeout before write")
@@ -405,11 +454,12 @@ func (s *SerialSource) writeFrame(ctx context.Context, frame []byte) error {
 	}(port)
 
 	select {
-	case <-ctx.Done():
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("button send timeout after %s; underlying serial write may still complete asynchronously", tRound(timeoutForContext(ctx)))
+	case <-writeCtx.Done():
+		s.retirePortIfCurrent(port)
+		if writeCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("button send timeout after %s; serial session retired", tRound(s.ioTimeout()))
 		}
-		return fmt.Errorf("button send canceled: %w", ctx.Err())
+		return fmt.Errorf("button send canceled: %w", writeCtx.Err())
 	case err := <-written:
 		return err
 	}
@@ -421,10 +471,74 @@ func (s *SerialSource) currentPort() serial.Port {
 	return s.port
 }
 
-func (s *SerialSource) setPort(port serial.Port) {
+func (s *SerialSource) beginSession(port serial.Port) (uint64, chan struct{}) {
 	s.portMu.Lock()
+	s.portGeneration++
+	generation := s.portGeneration
+	done := make(chan struct{})
 	s.port = port
+	s.portDone = done
 	s.portMu.Unlock()
+	return generation, done
+}
+
+func (s *SerialSource) endSession(generation uint64, done chan struct{}) {
+	s.portMu.Lock()
+	if s.portGeneration == generation {
+		s.port = nil
+		s.portDone = nil
+	}
+	s.portMu.Unlock()
+	close(done)
+}
+
+func (s *SerialSource) retirePortIfCurrent(port serial.Port) {
+	s.portMu.Lock()
+	if s.port == port {
+		s.port = nil
+		s.connected.Store(false)
+	}
+	s.portMu.Unlock()
+	_ = port.Close()
+}
+
+func (s *SerialSource) retireCurrentSession(ctx context.Context) error {
+	s.portMu.Lock()
+	port := s.port
+	done := s.portDone
+	if port != nil {
+		s.port = nil
+		s.connected.Store(false)
+	}
+	s.portMu.Unlock()
+	if port == nil && done == nil {
+		return nil
+	}
+	if port != nil {
+		if err := port.Close(); err != nil {
+			return fmt.Errorf("close live serial session for wake: %w", err)
+		}
+	}
+	if done == nil {
+		return nil
+	}
+	wait := time.NewTimer(s.sessionRetireTimeout())
+	defer wait.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wake canceled while waiting for live serial session: %w", ctx.Err())
+	case <-wait.C:
+		return fmt.Errorf("timeout waiting for live serial session to stop before wake")
+	}
+}
+
+func (s *SerialSource) signalReconnect() {
+	select {
+	case s.reconnectNow <- struct{}{}:
+	default:
+	}
 }
 
 func (s *SerialSource) applyFrame(frame []byte) {
@@ -434,6 +548,7 @@ func (s *SerialSource) applyFrame(frame []byte) {
 		s.setErr(fmt.Sprintf("decode frame: %v", err))
 		return
 	}
+	s.markHealthy()
 
 	meta := api.FrameInfo{
 		Source:      "serial",
@@ -471,7 +586,6 @@ func (s *SerialSource) applyFrame(frame []byte) {
 		DecodeErrors:    s.decodeErrors.Load(),
 		LastFrameLength: s.lastFrameLen.Load(),
 		LastFrameAt:     "",
-		LastError:       s.lastErr,
 		SerialPort:      s.cfg.Port,
 		Connected:       s.connected.Load(),
 	}
@@ -483,11 +597,16 @@ func (s *SerialSource) applyFrame(frame []byte) {
 
 	s.mu.RLock()
 	fanController := s.fanController
+	menuDebug := s.menuDebug
 	s.mu.RUnlock()
 	if fanController != nil {
 		fanController.ObserveDisplay(fanpolicy.DisplayObservation{
 			State: state, Generation: generation, TX: displayTX, Operate: displayOperate,
 		})
+	}
+	if menuDebug != nil {
+		checksumValid := meta.LCDFlags != nil && meta.LCDFlags.ChecksumPresent && meta.LCDFlags.ChecksumValid
+		menuDebug.ObserveDisplay(state, generation, checksumValid, displayTX, displayOperate)
 	}
 }
 
@@ -553,6 +672,7 @@ func (s *SerialSource) applyStatusFrame(frame []byte) {
 		s.setErr(fmt.Sprintf("decode status frame: %v", err))
 		return
 	}
+	s.markHealthy()
 
 	if s.statusState != nil {
 		s.statusState.UpdateProtocolNative(status)
@@ -565,12 +685,16 @@ func (s *SerialSource) applyStatusFrame(frame []byte) {
 	safetySettings := s.safetySettings
 	fanController := s.fanController
 	fanSettings := s.fanSettings
+	menuDebug := s.menuDebug
 	s.mu.RUnlock()
 	if safetyController != nil && safetySettings != nil {
 		safetyController.Observe(context.Background(), controllerStatus, safetySettings())
 	}
 	if fanController != nil && fanSettings != nil {
 		fanController.Observe(controllerStatus, fanSettings())
+	}
+	if menuDebug != nil {
+		menuDebug.ObserveStatus(controllerStatus, s.menuStatusGen.Add(1))
 	}
 }
 
@@ -586,8 +710,9 @@ func (s *SerialSource) safetyContactLoop(ctx context.Context) {
 			safetyController := s.safetyController
 			fanController := s.fanController
 			fanSettings := s.fanSettings
+			menuDebug := s.menuDebug
 			s.mu.RUnlock()
-			if safetyController == nil && fanController == nil {
+			if safetyController == nil && fanController == nil && menuDebug == nil {
 				continue
 			}
 			last := s.statusState.protocolUpdatedAt()
@@ -604,6 +729,9 @@ func (s *SerialSource) safetyContactLoop(ctx context.Context) {
 			}
 			if fanController != nil {
 				fanController.Tick(time.Now())
+			}
+			if menuDebug != nil {
+				menuDebug.Tick(time.Now())
 			}
 		}
 	}
@@ -798,7 +926,55 @@ func normalizeSerialPollingMode(mode string) string {
 func (s *SerialSource) setErr(msg string) {
 	s.lastErrMu.Lock()
 	s.lastErr = msg
+	s.transportErrActive = false
 	s.lastErrMu.Unlock()
+	s.lastErrorAt.Store(time.Now().Unix())
+}
+
+func (s *SerialSource) setTransportErr(msg string) {
+	s.lastErrMu.Lock()
+	s.lastErr = msg
+	s.transportErrActive = true
+	s.lastErrMu.Unlock()
+	s.lastErrorAt.Store(time.Now().Unix())
+}
+
+func (s *SerialSource) markHealthy() {
+	s.connected.Store(true)
+	s.lastErrMu.Lock()
+	if s.transportErrActive {
+		s.lastErr = ""
+		s.transportErrActive = false
+		s.lastErrorAt.Store(0)
+		s.lastRecoveredAt.Store(time.Now().Unix())
+		s.reconnects.Add(1)
+	}
+	s.lastErrMu.Unlock()
+}
+
+func (s *SerialSource) ioTimeout() time.Duration {
+	if s.cfg.IOTimeout > 0 {
+		return s.cfg.IOTimeout
+	}
+	return transport.DefaultButtonTimeout
+}
+
+func (s *SerialSource) reconnectBackoff() time.Duration {
+	if s.cfg.ReconnectBackoff > 0 {
+		return s.cfg.ReconnectBackoff
+	}
+	return 2 * time.Second
+}
+
+func (s *SerialSource) sessionRetireTimeout() time.Duration {
+	timeout := s.cfg.ReadTimeout + 250*time.Millisecond
+	if timeout < 500*time.Millisecond {
+		return 500 * time.Millisecond
+	}
+	if timeout > s.ioTimeout() {
+		return s.ioTimeout()
+	}
+	return timeout
 }
 
 func timeoutForContext(ctx context.Context) time.Duration {

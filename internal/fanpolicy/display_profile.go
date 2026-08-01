@@ -179,6 +179,18 @@ func submenuPolicy(state display.State, selected string) (string, bool) {
 	}
 }
 
+// FirstSeriesFanScreen returns the selected waypoint and policy only when the
+// display exactly matches the captured First Series 1.3K-FA fan layout,
+// including its single highlighted selection geometry.
+func FirstSeriesFanScreen(state display.State) (selected, policy string, ok bool) {
+	for _, candidate := range []string{"TEMPERATURE SCALE", "FAN MANAGEMENT", "SAVE"} {
+		if value, matches := submenuPolicy(state, candidate); matches {
+			return candidate, value, true
+		}
+	}
+	return "", PolicyUnknown, false
+}
+
 func matchesStoring(state display.State) bool {
 	rows := displayRows(state)
 	return strings.TrimSpace(rows[0]) == "TEMPERATURE AND FANS" &&
