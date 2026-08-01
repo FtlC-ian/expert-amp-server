@@ -473,7 +473,7 @@ func (c *Controller) Begin(token string, revision uint64, capability Capability)
 
 // AuthorizeDiscovery permits only bounded selector movement, plus SET when the
 // current server-derived evidence identifies the requested candidate menu.
-func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Action, evidence Evidence) (ActionAuthorization, error) {
+func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Action, expectedModel string, evidence Evidence) (ActionAuthorization, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.authorizeLocked(token, revision); err != nil {
@@ -484,6 +484,9 @@ func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Ac
 	}
 	if c.session.discoveryPending {
 		return ActionAuthorization{}, errors.New("previous discovery action still awaits display verification")
+	}
+	if !modelMatches(expectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("connected amplifier model changed while authorizing discovery")
 	}
 	if err := c.verifyCurrentEvidenceLocked(evidence); err != nil {
 		return ActionAuthorization{}, c.failLocked(err.Error())
@@ -502,7 +505,7 @@ func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Ac
 	} else if action != ActionRight {
 		return ActionAuthorization{}, c.failLocked("unsupported discovery action")
 	}
-	authorization, err := c.consumeActionLocked(action, purpose)
+	authorization, err := c.consumeActionLocked(action, purpose, expectedModel)
 	if err == nil {
 		c.session.discoveryPending = true
 		c.session.discoveryPurpose = purpose
@@ -514,7 +517,7 @@ func (c *Controller) AuthorizeDiscovery(token string, revision uint64, action Ac
 // exit after read-only discovery. The caller must independently restrict this
 // to a hardware profile where DISPLAY has been confirmed to return home
 // without committing menu values.
-func (c *Controller) AuthorizeTopologyExit(token string, revision uint64, evidence Evidence) (ActionAuthorization, error) {
+func (c *Controller) AuthorizeTopologyExit(token string, revision uint64, expectedModel string, evidence Evidence) (ActionAuthorization, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.authorizeLocked(token, revision); err != nil {
@@ -523,13 +526,16 @@ func (c *Controller) AuthorizeTopologyExit(token string, revision uint64, eviden
 	if c.session.phase != PhaseDiscovering || c.session.discoveryPending {
 		return ActionAuthorization{}, errors.New("topology exit requires completed discovery evidence")
 	}
+	if !modelMatches(expectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("connected amplifier model changed while authorizing topology exit")
+	}
 	if err := c.verifyCurrentEvidenceLocked(evidence); err != nil {
 		return ActionAuthorization{}, c.failLocked(err.Error())
 	}
 	if evidence.Candidate != c.session.capability || (evidence.Kind != ScreenFan && evidence.Kind != ScreenBank) {
 		return ActionAuthorization{}, c.failLocked("DISPLAY no-save exit requires a classified active capability screen")
 	}
-	authorization, err := c.consumeActionLocked(ActionDisplay, PurposeExitWithoutSave)
+	authorization, err := c.consumeActionLocked(ActionDisplay, PurposeExitWithoutSave, expectedModel)
 	if err == nil {
 		c.session.discoveryPending = true
 		c.session.discoveryPurpose = PurposeExitWithoutSave
@@ -777,7 +783,7 @@ func (c *Controller) AuthorizeNext(token string, revision uint64, evidence Evide
 	if step.Action == ActionSet {
 		c.session.mayBeInMenu = true
 	}
-	return c.consumeActionLocked(step.Action, step.Purpose)
+	return c.consumeActionLocked(step.Action, step.Purpose, c.session.plan.ExpectedModel)
 }
 
 func (c *Controller) ObserveActionResult(token string, revision uint64, evidence Evidence) (SessionView, error) {
@@ -941,12 +947,16 @@ func (c *Controller) Fail(token string, revision uint64, reason string) (Session
 	return c.viewLocked(), c.failLocked(strings.TrimSpace(reason))
 }
 
-func (c *Controller) consumeActionLocked(action Action, purpose Purpose) (ActionAuthorization, error) {
+func (c *Controller) consumeActionLocked(action Action, purpose Purpose, expectedModel string) (ActionAuthorization, error) {
 	if c.lease != nil && c.lease.SafetyHold() {
 		return ActionAuthorization{}, c.failLocked("overtemperature safety preempted menu debug")
 	}
 	if !c.serialSessionMatchesLocked(c.runtime.StatusSerialSessionGeneration) {
 		return ActionAuthorization{}, c.failLocked("fresh status from the active serial session is required")
+	}
+	expectedModel = strings.TrimSpace(expectedModel)
+	if expectedModel == "" || !modelMatches(expectedModel, c.runtime.Status.ModelName) {
+		return ActionAuthorization{}, c.failLocked("fresh identified amplifier model is required")
 	}
 	c.session.actionsAttempted++
 	if c.session.actionsAttempted > c.session.actionBudget {
@@ -955,7 +965,7 @@ func (c *Controller) consumeActionLocked(action Action, purpose Purpose) (Action
 	c.session.actions = append(c.session.actions, action)
 	c.session.actionReceipts = append(c.session.actionReceipts, ActionReceipt{Action: action, Purpose: purpose, At: c.now().UTC()})
 	c.bumpLocked()
-	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision, ExpectedModel: c.session.plan.ExpectedModel, ExpectedSerialSessionGeneration: c.runtime.StatusSerialSessionGeneration}, nil
+	return ActionAuthorization{Action: action, Purpose: purpose, Revision: c.session.revision, ExpectedModel: expectedModel, ExpectedSerialSessionGeneration: c.runtime.StatusSerialSessionGeneration}, nil
 }
 
 func (c *Controller) serialSessionMatchesLocked(expected uint64) bool {

@@ -8,9 +8,9 @@ import (
 )
 
 type recordingActuator struct {
-	actions  []string
-	sessions []uint64
-	wakes    int
+	actions        []string
+	authorizations []SerialSessionWriteAuthorization
+	wakes          int
 }
 
 func (r *recordingActuator) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
@@ -18,9 +18,9 @@ func (r *recordingActuator) SendButton(_ context.Context, action api.ButtonActio
 	return api.ActionResult{Name: action.Name, Sent: true}, nil
 }
 
-func (r *recordingActuator) SendButtonForSerialSession(_ context.Context, action api.ButtonAction, sessionGeneration uint64) (api.ActionResult, error) {
+func (r *recordingActuator) SendButtonForSerialSession(_ context.Context, action api.ButtonAction, authorization SerialSessionWriteAuthorization) (api.ActionResult, error) {
 	r.actions = append(r.actions, action.Name)
-	r.sessions = append(r.sessions, sessionGeneration)
+	r.authorizations = append(r.authorizations, authorization)
 	return api.ActionResult{Name: action.Name, Sent: true}, nil
 }
 
@@ -118,10 +118,11 @@ func TestOwnedActuationForwardsSerialSessionBinding(t *testing.T) {
 	if !ok {
 		t.Fatal("owned transport does not preserve serial-session binding")
 	}
-	if _, err := sessionTransport.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, 7); err != nil {
+	authorization := SerialSessionWriteAuthorization{SessionGeneration: 7, Model: "EXPERT 1.3K-FA"}
+	if _, err := sessionTransport.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization); err != nil {
 		t.Fatal(err)
 	}
-	if len(raw.actions) != 1 || raw.actions[0] != "set" || len(raw.sessions) != 1 || raw.sessions[0] != 7 {
-		t.Fatalf("forwarded actions=%v sessions=%v", raw.actions, raw.sessions)
+	if len(raw.actions) != 1 || raw.actions[0] != "set" || len(raw.authorizations) != 1 || raw.authorizations[0] != authorization {
+		t.Fatalf("forwarded actions=%v authorizations=%v", raw.actions, raw.authorizations)
 	}
 }

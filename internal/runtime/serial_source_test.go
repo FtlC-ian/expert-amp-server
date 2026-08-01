@@ -17,6 +17,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
+	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
 // mockSerialPort implements serial.Port for testing.
@@ -170,6 +171,23 @@ func mustDecodeHex(t *testing.T, s string) []byte {
 		t.Fatalf("DecodeString(%q): %v", s, err)
 	}
 	return b
+}
+
+func statusFrameWithState(t *testing.T, frame []byte, operatingCode, txrxCode byte) []byte {
+	t.Helper()
+	if len(frame) != 76 || frame[9] != 'S' || frame[11] != 'R' {
+		t.Fatalf("unexpected status fixture shape")
+	}
+	out := append([]byte(nil), frame...)
+	out[9] = operatingCode
+	out[11] = txrxCode
+	sum := 0
+	for _, value := range out[4:71] {
+		sum += int(value)
+	}
+	out[71] = byte(sum % 256)
+	out[72] = byte(sum / 256)
+	return out
 }
 
 func displayStreamChunk(t *testing.T) []byte {
@@ -698,7 +716,8 @@ func TestSerialSourceBindsMenuDebugStatusAndWritesToOneSession(t *testing.T) {
 	if runtime := controller.Runtime(); runtime.SerialSessionGeneration != secondGeneration || runtime.StatusSerialSessionGeneration != firstGeneration || runtime.DisplaySerialSessionGeneration != 0 || !runtime.StatusObservedAt.IsZero() || !runtime.DisplayObservedAt.IsZero() || runtime.ChecksumValid {
 		t.Fatalf("replacement session did not invalidate controller status: %+v", runtime)
 	}
-	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, firstGeneration); err == nil || !strings.Contains(err.Error(), "serial session changed") {
+	firstAuthorization := transport.SerialSessionWriteAuthorization{SessionGeneration: firstGeneration, Model: "EXPERT 1.3K-FA"}
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, firstAuthorization); err == nil || !strings.Contains(err.Error(), "serial session") {
 		t.Fatalf("stale-session write error = %v", err)
 	}
 	if len(secondPort.writtenSnapshot()) != 0 {
@@ -714,11 +733,157 @@ func TestSerialSourceBindsMenuDebugStatusAndWritesToOneSession(t *testing.T) {
 		t.Fatalf("status-only replacement session reused display evidence: %+v", runtime)
 	}
 	src.applyFrameFromSession(displayFrame, secondGeneration)
-	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, secondGeneration); err != nil {
+	secondAuthorization := transport.SerialSessionWriteAuthorization{SessionGeneration: secondGeneration, Model: "EXPERT 1.3K-FA"}
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, secondAuthorization); err != nil {
 		t.Fatalf("current-session write: %v", err)
 	}
 	if len(secondPort.writtenSnapshot()) != 1 {
 		t.Fatalf("current-session writes = %v", secondPort.writtenSnapshot())
+	}
+}
+
+func TestSerialSourceSerializesStatusIdentityChangesWithAuthorizedWrite(t *testing.T) {
+	status13K := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	status2K, err := os.ReadFile("../protocol/testdata/status_response_example.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan struct{})
+	started := make(chan struct{}, 1)
+	port := &mockSerialPort{blockWrite: blocked, writeStarted: started}
+	controller := menudebug.NewController(nil)
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0", ReadTimeout: 25 * time.Millisecond}, &mockSerialOpener{port: port}, Update{})
+	src.ConfigureMenuDebugController(controller)
+	sessionGeneration, _ := src.beginSession(port)
+	src.applyStatusFrameFromSession(status13K, sessionGeneration)
+	runtimeSnapshot := controller.Runtime()
+	authorization := transport.SerialSessionWriteAuthorization{
+		SessionGeneration: sessionGeneration,
+		Model:             runtimeSnapshot.Status.ModelName,
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, sendErr := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization)
+		writeDone <- sendErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("authorized write did not reach the held serial port")
+	}
+
+	statusDone := make(chan struct{})
+	go func() {
+		src.applyStatusFrameFromSession(status2K, sessionGeneration)
+		close(statusDone)
+	}()
+	select {
+	case <-statusDone:
+		t.Fatal("new status identity crossed the in-progress serial write")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(blocked)
+	if err = <-writeDone; err != nil {
+		t.Fatalf("authorized write failed: %v", err)
+	}
+	select {
+	case <-statusDone:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("status identity did not publish after the write completed")
+	}
+	if got := controller.Runtime().Status.ModelName; got != "EXPERT 2K-FA" {
+		t.Fatalf("replacement status model = %q", got)
+	}
+	if _, err = src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization); err == nil || !strings.Contains(err.Error(), "amplifier model") {
+		t.Fatalf("stale model/status authorization error = %v", err)
+	}
+	if writes := port.writtenSnapshot(); len(writes) != 1 {
+		t.Fatalf("stale authorization wrote after model change: %v", writes)
+	}
+}
+
+func TestSerialSourceAllowsNewerSameModelStatusForAuthorizedWrite(t *testing.T) {
+	status13K := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	port := &mockSerialPort{}
+	controller := menudebug.NewController(nil)
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0", ReadTimeout: 25 * time.Millisecond}, &mockSerialOpener{port: port}, Update{})
+	src.ConfigureMenuDebugController(controller)
+	sessionGeneration, _ := src.beginSession(port)
+	src.applyStatusFrameFromSession(status13K, sessionGeneration)
+	authorization := transport.SerialSessionWriteAuthorization{SessionGeneration: sessionGeneration, Model: "EXPERT 1.3K-FA"}
+	firstStatusGeneration := controller.Runtime().StatusGeneration
+
+	src.applyStatusFrameFromSession(status13K, sessionGeneration)
+	if got := controller.Runtime().StatusGeneration; got <= firstStatusGeneration {
+		t.Fatalf("newer same-model status generation = %d, want > %d", got, firstStatusGeneration)
+	}
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization); err != nil {
+		t.Fatalf("newer same-model status rejected authorized write: %v", err)
+	}
+	if writes := port.writtenSnapshot(); len(writes) != 1 {
+		t.Fatalf("same-model authorization writes = %v", writes)
+	}
+}
+
+func TestSerialSourceSerializesUnsafeStatusChangesWithAuthorizedWrite(t *testing.T) {
+	status13K := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	tests := []struct {
+		name        string
+		statusFrame []byte
+	}{
+		{name: "rx to tx", statusFrame: statusFrameWithState(t, status13K, 'S', 'T')},
+		{name: "standby to operate", statusFrame: statusFrameWithState(t, status13K, 'O', 'R')},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			blocked := make(chan struct{})
+			started := make(chan struct{}, 1)
+			port := &mockSerialPort{blockWrite: blocked, writeStarted: started}
+			controller := menudebug.NewController(nil)
+			src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0", ReadTimeout: 25 * time.Millisecond}, &mockSerialOpener{port: port}, Update{})
+			src.ConfigureMenuDebugController(controller)
+			sessionGeneration, _ := src.beginSession(port)
+			src.applyStatusFrameFromSession(status13K, sessionGeneration)
+			authorization := transport.SerialSessionWriteAuthorization{SessionGeneration: sessionGeneration, Model: "EXPERT 1.3K-FA"}
+
+			writeDone := make(chan error, 1)
+			go func() {
+				_, sendErr := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization)
+				writeDone <- sendErr
+			}()
+			select {
+			case <-started:
+			case <-time.After(200 * time.Millisecond):
+				t.Fatal("authorized write did not reach the held serial port")
+			}
+
+			statusDone := make(chan struct{})
+			go func() {
+				src.applyStatusFrameFromSession(tc.statusFrame, sessionGeneration)
+				close(statusDone)
+			}()
+			select {
+			case <-statusDone:
+				t.Fatal("unsafe status crossed the in-progress serial write")
+			case <-time.After(20 * time.Millisecond):
+			}
+			close(blocked)
+			if err := <-writeDone; err != nil {
+				t.Fatalf("authorized write failed: %v", err)
+			}
+			select {
+			case <-statusDone:
+			case <-time.After(200 * time.Millisecond):
+				t.Fatal("unsafe status did not publish after the write completed")
+			}
+			if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, authorization); err == nil || !strings.Contains(err.Error(), "STANDBY/RX") {
+				t.Fatalf("unsafe status authorization error = %v", err)
+			}
+			if writes := port.writtenSnapshot(); len(writes) != 1 {
+				t.Fatalf("unsafe status allowed another write: %v", writes)
+			}
+		})
 	}
 }
 

@@ -160,7 +160,7 @@ func TestCompletedCapabilityDoesNotAuthorizeNextCapabilityRestore(t *testing.T) 
 		t.Fatal(err)
 	}
 	base := c.session.lastEvidenceGen
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: base + 1, Fingerprint: "bank-entry", Candidate: CapabilityBank})
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: base + 1, Fingerprint: "bank-entry", Candidate: CapabilityBank})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func completeCapability(t *testing.T, c *Controller, token string, v SessionView
 	}
 	base := c.session.lastEvidenceGen
 	discovery := Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: plan.Capability}
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, discovery)
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", discovery)
 	if err != nil {
 		t.Fatalf("Authorize discovery: %v", err)
 	}
@@ -315,6 +315,44 @@ func TestReviewedPlanProfilesAreCapabilityBound(t *testing.T) {
 	}
 }
 
+func TestDiscoveryAuthorizationFreezesObservedAmplifierModel(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{
+		Generation:  c.session.lastEvidenceGen + 1,
+		Fingerprint: "home",
+		Kind:        ScreenHome,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.ExpectedModel != "EXPERT 1.3K-FA" {
+		t.Fatalf("discovery authorization model = %q", auth.ExpectedModel)
+	}
+	if auth.ExpectedSerialSessionGeneration != 1 {
+		t.Fatalf("discovery authorization serial session = %d", auth.ExpectedSerialSessionGeneration)
+	}
+}
+
+func TestDiscoveryAuthorizationRejectsChangedSelectionModel(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
+
+	if _, err = c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: c.session.lastEvidenceGen + 1, Fingerprint: "home", Kind: ScreenHome}); err == nil || !strings.Contains(err.Error(), "model changed") {
+		t.Fatalf("changed selection model error = %v", err)
+	}
+}
+
 func TestPlannedActionRejectsChangedAmplifierModel(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	v, token := arm(t, c)
@@ -324,7 +362,7 @@ func TestPlannedActionRejectsChangedAmplifierModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := c.session.lastEvidenceGen
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +393,7 @@ func TestPlannedActionRejectsChangedSerialSessionWithSameModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := c.session.lastEvidenceGen
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +434,7 @@ func TestPendingDiscoveryFailsClosedOnSerialSessionChange(t *testing.T) {
 
 	before := display.NewState()
 	before.SetRow(0, "BEFORE")
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, Evidence{Generation: 5, Fingerprint: Analyze(before).Fingerprint})
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: Analyze(before).Fingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +464,7 @@ func TestPendingPlannedActionFailsClosedOnSerialSessionChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := c.session.lastEvidenceGen
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +730,7 @@ func TestAbortAndFailureNeverAttemptBlindRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: 5, Fingerprint: "fan-entry", Candidate: CapabilityFan})
+		auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: "fan-entry", Candidate: CapabilityFan})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -720,7 +758,7 @@ func TestDiscoveryIsBoundedAndSETRequiresServerCandidate(t *testing.T) {
 	c.budget = 1
 	v, token := arm(t, c)
 	v, _ = c.Begin(token, v.Revision, CapabilityFan)
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, evidence(5, "screen-a"))
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, "EXPERT 1.3K-FA", evidence(5, "screen-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -728,14 +766,14 @@ func TestDiscoveryIsBoundedAndSETRequiresServerCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.AuthorizeDiscovery(token, v.Revision, ActionRight, evidence(6, "screen-b")); err == nil || !strings.Contains(err.Error(), "budget") {
+	if _, err = c.AuthorizeDiscovery(token, v.Revision, ActionRight, "EXPERT 1.3K-FA", evidence(6, "screen-b")); err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("budget error=%v", err)
 	}
 
 	c, _ = newDeterministicController(&fakeLease{})
 	v, token = arm(t, c)
 	v, _ = c.Begin(token, v.Revision, CapabilityBank)
-	if _, err = c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: 5, Fingerprint: "fan", Candidate: CapabilityFan}); err == nil || !strings.Contains(err.Error(), "server-identified") {
+	if _, err = c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: "fan", Candidate: CapabilityFan}); err == nil || !strings.Contains(err.Error(), "server-identified") {
 		t.Fatalf("candidate error=%v", err)
 	}
 }
@@ -744,7 +782,7 @@ func TestDiscoveryLoopFailsClosed(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	v, token := arm(t, c)
 	v, _ = c.Begin(token, v.Revision, CapabilityFan)
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, evidence(5, "same-highlight-aware-fingerprint"))
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, "EXPERT 1.3K-FA", evidence(5, "same-highlight-aware-fingerprint"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -761,7 +799,7 @@ func TestPendingDiscoveryIgnoresRepeatedPolledScreen(t *testing.T) {
 	before := display.NewState()
 	before.SetRow(0, "BEFORE")
 	beforeScreen := Analyze(before)
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, Evidence{Generation: 5, Fingerprint: beforeScreen.Fingerprint})
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: beforeScreen.Fingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -789,7 +827,7 @@ func TestTopologyDisplayExitCompletesOnlyAtVerifiedHomeWithoutSave(t *testing.T)
 	home := display.NewState()
 	home.SetRow(6, "IN  BAND ANT BNK  CAT   OUT   SWR   TEMP")
 	homeFingerprint := Analyze(home).Fingerprint
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, Evidence{Generation: 5, Fingerprint: homeFingerprint, Kind: ScreenHome})
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: homeFingerprint, Kind: ScreenHome})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -797,7 +835,7 @@ func TestTopologyDisplayExitCompletesOnlyAtVerifiedHomeWithoutSave(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err = c.AuthorizeTopologyExit(token, v.Revision, Evidence{Generation: 6, Fingerprint: "bank", Kind: ScreenBank, Candidate: CapabilityBank, Value: "A"})
+	auth, err = c.AuthorizeTopologyExit(token, v.Revision, "EXPERT 1.3K-FA", Evidence{Generation: 6, Fingerprint: "bank", Kind: ScreenBank, Candidate: CapabilityBank, Value: "A"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,11 +867,30 @@ func TestTopologyDisplayExitCompletesOnlyAtVerifiedHomeWithoutSave(t *testing.T)
 	}
 }
 
+func TestTopologyExitRejectsChangedSelectionModel(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	v, _ = c.Begin(token, v.Revision, CapabilityBank)
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: "home", Kind: ScreenHome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.ObserveDiscoveryResult(token, auth.Revision, Evidence{Generation: 6, Fingerprint: "bank", Kind: ScreenBank, Candidate: CapabilityBank, Value: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
+
+	if _, err = c.AuthorizeTopologyExit(token, v.Revision, "EXPERT 1.3K-FA", Evidence{Generation: 6, Fingerprint: "bank", Kind: ScreenBank, Candidate: CapabilityBank, Value: "A"}); err == nil || !strings.Contains(err.Error(), "model changed") {
+		t.Fatalf("changed topology-exit model error = %v", err)
+	}
+}
+
 func TestDisplayEvidenceMustAdvance(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	v, token := arm(t, c)
 	v, _ = c.Begin(token, v.Revision, CapabilityFan)
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, evidence(5, "screen-a"))
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, "EXPERT 1.3K-FA", evidence(5, "screen-a"))
 	if err != nil {
 		t.Fatal(err)
 	}

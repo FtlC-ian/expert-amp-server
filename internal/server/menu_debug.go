@@ -425,7 +425,7 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 		}
 	case menudebug.ScreenFan, menudebug.ScreenBank:
 		if action, ok := reviewedMenuDebugDiscoveryAction(runtime, view.Capability); ok {
-			authorization, err := m.opts.MenuDebug.AuthorizeDiscovery(token, view.Revision, action, evidence)
+			authorization, err := m.opts.MenuDebug.AuthorizeDiscovery(token, view.Revision, action, runtime.Status.ModelName, evidence)
 			if err != nil {
 				return view, err
 			}
@@ -442,7 +442,7 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 		if planErr != nil {
 			if strings.Contains(planErr.Error(), "no reviewed action profile") {
 				if reviewedMenuDebugNoSaveExit(runtime, view.Capability) {
-					authorization, exitErr := m.opts.MenuDebug.AuthorizeTopologyExit(token, view.Revision, evidence)
+					authorization, exitErr := m.opts.MenuDebug.AuthorizeTopologyExit(token, view.Revision, runtime.Status.ModelName, evidence)
 					if exitErr != nil {
 						return view, exitErr
 					}
@@ -467,7 +467,7 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 	default:
 		return view, errors.New("current display is not a recognized home or setup screen")
 	}
-	authorization, err := m.opts.MenuDebug.AuthorizeDiscovery(token, view.Revision, action, evidence)
+	authorization, err := m.opts.MenuDebug.AuthorizeDiscovery(token, view.Revision, action, runtime.Status.ModelName, evidence)
 	if err != nil {
 		return view, err
 	}
@@ -539,12 +539,16 @@ func (m *menuDebugAPI) sendAuthorized(ctx context.Context, token string, authori
 	if view.Revision != authorization.Revision {
 		return errors.New("menu-debug session changed before the authorized write")
 	}
-	if authorization.ExpectedModel != "" && !strings.EqualFold(strings.TrimSpace(authorization.ExpectedModel), strings.TrimSpace(m.opts.MenuDebug.Runtime().Status.ModelName)) {
+	runtimeSnapshot := m.opts.MenuDebug.Runtime()
+	expectedModel := strings.TrimSpace(authorization.ExpectedModel)
+	if expectedModel == "" {
+		return errors.New("menu-debug authorization lacks a frozen amplifier model")
+	}
+	if !strings.EqualFold(expectedModel, strings.TrimSpace(runtimeSnapshot.Status.ModelName)) {
 		return errors.New("connected amplifier model changed before the authorized write")
 	}
-	runtimeSnapshot := m.opts.MenuDebug.Runtime()
 	if authorization.ExpectedSerialSessionGeneration == 0 || runtimeSnapshot.SerialSessionGeneration != authorization.ExpectedSerialSessionGeneration || runtimeSnapshot.StatusSerialSessionGeneration != authorization.ExpectedSerialSessionGeneration || runtimeSnapshot.DisplaySerialSessionGeneration != authorization.ExpectedSerialSessionGeneration {
-		return errors.New("serial session changed or lacks fresh status before the authorized write")
+		return errors.New("serial session or status evidence changed before the authorized write")
 	}
 	action := api.ButtonAction{Name: string(authorization.Action)}
 	var result api.ActionResult
@@ -553,7 +557,10 @@ func (m *menuDebugAPI) sendAuthorized(ctx context.Context, token string, authori
 		if !ok {
 			return errors.New("menu-debug transport cannot bind writes to a serial session")
 		}
-		result, err = sessionTransport.SendButtonForSerialSession(ctx, action, authorization.ExpectedSerialSessionGeneration)
+		result, err = sessionTransport.SendButtonForSerialSession(ctx, action, transport.SerialSessionWriteAuthorization{
+			SessionGeneration: authorization.ExpectedSerialSessionGeneration,
+			Model:             authorization.ExpectedModel,
+		})
 	} else {
 		result, err = m.opts.MenuDebugTransport.SendButton(ctx, action)
 	}

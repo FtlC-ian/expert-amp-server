@@ -121,6 +121,10 @@ type SerialSource struct {
 	port                 serial.Port
 	portGeneration       uint64
 	statusPortGeneration uint64
+	statusModel          string
+	statusOperatingState string
+	statusTX             bool
+	statusTXKnown        bool
 	portDone             chan struct{}
 	lifecycleMu          sync.Mutex
 	reconnectNow         chan struct{}
@@ -264,27 +268,27 @@ func (s *SerialSource) Diagnostics() IngestDiagnostics {
 
 // SendButton writes a safe action frame through the currently held live serial port.
 func (s *SerialSource) SendButton(ctx context.Context, action api.ButtonAction) (api.ActionResult, error) {
-	return s.sendButton(ctx, action, 0)
+	return s.sendButton(ctx, action, transport.SerialSessionWriteAuthorization{})
 }
 
 // SendButtonForSerialSession captures and verifies the current port under the
 // same write lock used for dispatch, so a reconnect can never redirect an
 // authorized command to a replacement amplifier.
-func (s *SerialSource) SendButtonForSerialSession(ctx context.Context, action api.ButtonAction, sessionGeneration uint64) (api.ActionResult, error) {
-	if sessionGeneration == 0 {
-		return api.ActionResult{Name: action.Name}, errors.New("serial session generation is required")
+func (s *SerialSource) SendButtonForSerialSession(ctx context.Context, action api.ButtonAction, authorization transport.SerialSessionWriteAuthorization) (api.ActionResult, error) {
+	if authorization.SessionGeneration == 0 || strings.TrimSpace(authorization.Model) == "" {
+		return api.ActionResult{Name: action.Name}, errors.New("serial session and model are required")
 	}
-	return s.sendButton(ctx, action, sessionGeneration)
+	return s.sendButton(ctx, action, authorization)
 }
 
-func (s *SerialSource) sendButton(ctx context.Context, action api.ButtonAction, sessionGeneration uint64) (api.ActionResult, error) {
+func (s *SerialSource) sendButton(ctx context.Context, action api.ButtonAction, authorization transport.SerialSessionWriteAuthorization) (api.ActionResult, error) {
 	action = action.Normalized()
 	spec, ok := s.specs[action.Name]
 	if !ok || !spec.Safe || spec.Code == nil {
 		return api.ActionResult{Name: action.Name, Queued: false, Sent: false, Transport: "serial-live"}, transport.InvalidButtonActionError(action.Name)
 	}
 	frame := []byte{0x55, 0x55, 0x55, 0x01, *spec.Code, *spec.Code}
-	if err := s.writeFrameForSerialSession(ctx, frame, sessionGeneration); err != nil {
+	if err := s.writeFrameForSerialSession(ctx, frame, authorization); err != nil {
 		return api.ActionResult{Name: action.Name, Queued: false, Sent: false, Transport: "serial-live", FrameHex: hex.EncodeToString(frame)}, err
 	}
 	return api.ActionResult{Name: action.Name, Queued: false, Sent: true, Transport: "serial-live", FrameHex: hex.EncodeToString(frame)}, nil
@@ -451,10 +455,10 @@ func (s *SerialSource) readFromPort(ctx context.Context, port serial.Port, sessi
 }
 
 func (s *SerialSource) writeFrame(ctx context.Context, frame []byte) error {
-	return s.writeFrameForSerialSession(ctx, frame, 0)
+	return s.writeFrameForSerialSession(ctx, frame, transport.SerialSessionWriteAuthorization{})
 }
 
-func (s *SerialSource) writeFrameForSerialSession(ctx context.Context, frame []byte, expectedSessionGeneration uint64) error {
+func (s *SerialSource) writeFrameForSerialSession(ctx context.Context, frame []byte, authorization transport.SerialSessionWriteAuthorization) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("button send canceled: %w", err)
 	}
@@ -465,12 +469,16 @@ func (s *SerialSource) writeFrameForSerialSession(ctx context.Context, frame []b
 	port := s.port
 	currentGeneration := s.portGeneration
 	statusGeneration := s.statusPortGeneration
+	statusModel := s.statusModel
+	statusOperatingState := s.statusOperatingState
+	statusTX := s.statusTX
+	statusTXKnown := s.statusTXKnown
 	s.portMu.RUnlock()
 	if port == nil {
 		return transport.TransportUnavailableError()
 	}
-	if expectedSessionGeneration != 0 && (currentGeneration != expectedSessionGeneration || statusGeneration != expectedSessionGeneration) {
-		return errors.New("serial session changed or lacks fresh status before button write")
+	if authorization.SessionGeneration != 0 && (currentGeneration != authorization.SessionGeneration || statusGeneration != authorization.SessionGeneration || !strings.EqualFold(strings.TrimSpace(statusModel), strings.TrimSpace(authorization.Model)) || !strings.EqualFold(strings.TrimSpace(statusOperatingState), "standby") || !statusTXKnown || statusTX) {
+		return errors.New("serial session, amplifier model, or STANDBY/RX status changed before button write")
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, s.ioTimeout())
 	defer cancel()
@@ -523,6 +531,10 @@ func (s *SerialSource) beginSession(port serial.Port) (uint64, chan struct{}) {
 	s.portGeneration++
 	generation := s.portGeneration
 	s.statusPortGeneration = 0
+	s.statusModel = ""
+	s.statusOperatingState = ""
+	s.statusTX = false
+	s.statusTXKnown = false
 	done := make(chan struct{})
 	s.port = port
 	s.portDone = done
@@ -747,13 +759,23 @@ func (s *SerialSource) applyStatusFrameFromSession(frame []byte, sessionGenerati
 		return
 	}
 	if sessionGeneration != 0 {
+		s.writeMu.Lock()
 		s.portMu.Lock()
 		if s.port == nil || s.portGeneration != sessionGeneration {
 			s.portMu.Unlock()
+			s.writeMu.Unlock()
 			return
 		}
 		s.statusPortGeneration = sessionGeneration
+		// A newly accepted status frame invalidates the prior identity before
+		// any other observer can see the update. Dispatch uses writeMu too, so
+		// either the prior authorized write finishes first or it fails closed.
+		s.statusModel = ""
+		s.statusOperatingState = ""
+		s.statusTX = false
+		s.statusTXKnown = false
 		s.portMu.Unlock()
+		s.writeMu.Unlock()
 	}
 	s.markHealthy()
 
@@ -782,6 +804,18 @@ func (s *SerialSource) applyStatusFrameFromSession(frame []byte, sessionGenerati
 			menuDebug.ObserveStatus(controllerStatus, statusGeneration)
 		} else {
 			menuDebug.ObserveStatusFromSerialSession(controllerStatus, statusGeneration, sessionGeneration)
+			s.writeMu.Lock()
+			s.portMu.Lock()
+			if s.port != nil && s.portGeneration == sessionGeneration {
+				s.statusModel = strings.TrimSpace(controllerStatus.ModelName)
+				s.statusOperatingState = strings.TrimSpace(controllerStatus.OperatingState)
+				if controllerStatus.TX != nil {
+					s.statusTX = *controllerStatus.TX
+					s.statusTXKnown = true
+				}
+			}
+			s.portMu.Unlock()
+			s.writeMu.Unlock()
 		}
 	}
 }

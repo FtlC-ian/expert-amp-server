@@ -714,6 +714,54 @@ func TestMenuDebugAuthorizedWriteRechecksFrozenModel(t *testing.T) {
 	}
 }
 
+func TestMenuDebugDiscoveryWriteRejectsModelChangeBeforeDispatch(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err = mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, controller.Runtime().Status.ModelName, menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.ExpectedModel != "EXPERT 1.3K-FA" || auth.ExpectedSerialSessionGeneration != 1 {
+		t.Fatalf("discovery authorization = %+v", auth)
+	}
+
+	controller.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 2, 1)
+	menuAPI := &menuDebugAPI{opts: Options{Config: mgr, MenuDebug: controller, MenuDebugTransport: lease}}
+	err = menuAPI.sendAuthorized(context.Background(), token, auth, true)
+	if err == nil || !strings.Contains(err.Error(), "model changed") {
+		t.Fatalf("changed-model discovery write error = %v", err)
+	}
+	if raw.calls != 0 {
+		t.Fatalf("model-mismatched discovery write reached transport %d times", raw.calls)
+	}
+}
+
 func TestMenuDebugArmAutoClearsOnlySafeCompletedNormalOverride(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1165,7 +1213,8 @@ func TestMenuDebugFirstSeriesDiscoveryInstallsTopologyBoundPlan(t *testing.T) {
 	generation := uint64(2)
 	discover := func(action menudebug.Action, next display.State) {
 		t.Helper()
-		authorization, authErr := controller.AuthorizeDiscovery(token, view.Revision, action, menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan))
+		runtimeSnapshot := controller.Runtime()
+		authorization, authErr := controller.AuthorizeDiscovery(token, view.Revision, action, runtimeSnapshot.Status.ModelName, menuDebugEvidence(runtimeSnapshot, menudebug.CapabilityFan))
 		if authErr != nil {
 			t.Fatal(authErr)
 		}
@@ -1218,7 +1267,7 @@ func TestMenuDebugUploaderFailureDoesNotCrashAndCanRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, menudebug.Evidence{Generation: 2, Fingerprint: "home", Kind: menudebug.ScreenHome})
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, controller.Runtime().Status.ModelName, menudebug.Evidence{Generation: 2, Fingerprint: "home", Kind: menudebug.ScreenHome})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1266,7 +1315,7 @@ func TestMenuDebugReconnectBlocksCompletedReportAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, menudebug.Evidence{Generation: 2, Fingerprint: "home", Kind: menudebug.ScreenHome})
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, controller.Runtime().Status.ModelName, menudebug.Evidence{Generation: 2, Fingerprint: "home", Kind: menudebug.ScreenHome})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1339,7 +1388,8 @@ func TestTopologyOnlyCaptureEndsSessionBeforeAnotherCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, menuDebugEvidence(controller.Runtime(), menudebug.CapabilityBank))
+	runtimeSnapshot := controller.Runtime()
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, runtimeSnapshot.Status.ModelName, menuDebugEvidence(runtimeSnapshot, menudebug.CapabilityBank))
 	if err != nil {
 		t.Fatal(err)
 	}
