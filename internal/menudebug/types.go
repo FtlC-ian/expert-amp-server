@@ -83,16 +83,17 @@ type RuntimeSnapshot struct {
 }
 
 type Evidence struct {
-	Generation  uint64     `json:"generation"`
-	Fingerprint string     `json:"fingerprint"`
-	Kind        ScreenKind `json:"kind,omitempty"`
-	Rows        [8]string  `json:"rows"`
-	Selection   string     `json:"selection,omitempty"`
-	Candidate   Capability `json:"candidate,omitempty"`
-	Value       string     `json:"value,omitempty"`
-	SaveVisible bool       `json:"saveVisible,omitempty"`
-	StandbyHome bool       `json:"standbyHome,omitempty"`
-	ObservedAt  time.Time  `json:"observedAt"`
+	Generation    uint64     `json:"generation"`
+	Fingerprint   string     `json:"fingerprint"`
+	Kind          ScreenKind `json:"kind,omitempty"`
+	Rows          [8]string  `json:"rows"`
+	Selection     string     `json:"selection,omitempty"`
+	Candidate     Capability `json:"candidate,omitempty"`
+	Value         string     `json:"value,omitempty"`
+	SaveVisible   bool       `json:"saveVisible,omitempty"`
+	StandbyHome   bool       `json:"standbyHome,omitempty"`
+	ObservedAt    time.Time  `json:"observedAt"`
+	SetupTopology string     `json:"-"`
 }
 
 type Step struct {
@@ -111,12 +112,14 @@ type Step struct {
 }
 
 type Plan struct {
-	Profile        string     `json:"profile"`
-	Capability     Capability `json:"capability"`
-	OriginalValue  string     `json:"originalValue"`
-	CandidateValue string     `json:"candidateValue"`
-	Apply          []Step     `json:"apply"`
-	Restore        []Step     `json:"restore"`
+	Profile                 string     `json:"profile"`
+	Capability              Capability `json:"capability"`
+	OriginalValue           string     `json:"originalValue"`
+	CandidateValue          string     `json:"candidateValue"`
+	DiscoverySetupWaypoints []string   `json:"-"`
+	DiscoverySetupTopology  string     `json:"-"`
+	Apply                   []Step     `json:"apply"`
+	Restore                 []Step     `json:"restore"`
 }
 
 type ActionAuthorization struct {

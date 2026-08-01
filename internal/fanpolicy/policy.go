@@ -12,7 +12,9 @@ const (
 	PolicyNormal  = "normal"
 	PolicyHigh    = "high-cooling"
 
-	SupportedDisplayProfile = "expert-1.3k-fa-first-series-v1"
+	FirstSeriesDisplayProfile  = "expert-1.3k-fa-first-series-v1"
+	SecondSeriesDisplayProfile = "expert-1.5k-fa-second-series-v1"
+	SupportedDisplayProfile    = FirstSeriesDisplayProfile
 
 	StateDisabled    = "disabled"
 	StateUnavailable = "unavailable"
@@ -53,6 +55,7 @@ type Observations struct {
 
 type Navigation struct {
 	State                 string   `json:"state"`
+	Profile               string   `json:"profile,omitempty"`
 	LastAction            string   `json:"lastAction,omitempty"`
 	LastError             string   `json:"lastError,omitempty"`
 	LastVerifiedScreen    string   `json:"lastVerifiedScreen,omitempty"`
@@ -217,8 +220,8 @@ func actionBlocks(status api.Status, settings Settings) []string {
 	if operatingState != "standby" && operatingState != "operate" {
 		blocked = append(blocked, "operating-state")
 	}
-	if !isExpertModel(status.ModelName) {
-		blocked = append(blocked, "supported-model-family")
+	if _, ok := verifiedFanDisplayProfileForModel(status.ModelName); !ok {
+		blocked = append(blocked, "supported-fan-profile")
 	}
 	if settings.SafetyStandbyArmed && settings.SafetyStandbyTripC > 0 {
 		if temperature, _ := maximumTemperature(
@@ -230,10 +233,6 @@ func actionBlocks(status api.Status, settings Settings) []string {
 		}
 	}
 	return blocked
-}
-
-func isExpertModel(model string) bool {
-	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(model)), "EXPERT ")
 }
 
 func normalizePolicy(value string) string {
