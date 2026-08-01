@@ -38,6 +38,10 @@ type Controller struct {
 	session  session
 	reports  []CapabilityReport
 	runtime  RuntimeSnapshot
+	// lastObservedModel retains the most recent non-empty model identity for
+	// the active serial session. An undecodable status frame must not erase the
+	// identity baseline used to protect in-flight work and retained reports.
+	lastObservedModel string
 }
 
 type session struct {
@@ -70,8 +74,9 @@ func NewController(l lease) *Controller {
 	return &Controller{lease: l, now: time.Now, newToken: randomToken, lifetime: defaultLifetime, budget: defaultBudget, session: session{phase: PhaseIdle}}
 }
 
-// ObserveStatus records protocol-native status evidence. It never changes a
-// session phase or sends an amplifier command.
+// ObserveStatus records protocol-native status evidence. A model change fails
+// any active transaction and invalidates retained report evidence; it never
+// sends an amplifier command.
 func (c *Controller) ObserveStatus(status api.Status, generation uint64) {
 	if c == nil || generation == 0 {
 		return
@@ -84,6 +89,7 @@ func (c *Controller) ObserveStatus(status api.Status, generation uint64) {
 	if generation < c.runtime.StatusGeneration {
 		return
 	}
+	c.invalidateForModelChangeLocked(status.Telemetry.ModelName)
 	c.runtime.Status = status
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
@@ -106,6 +112,7 @@ func (c *Controller) ObserveSerialSession(generation uint64) {
 		return
 	}
 	c.runtime.SerialSessionGeneration = generation
+	c.lastObservedModel = ""
 	c.runtime.StatusObservedAt = time.Time{}
 	c.runtime.Status.RecentContact = false
 	c.runtime.DisplayObservedAt = time.Time{}
@@ -131,7 +138,8 @@ func (c *Controller) invalidateForSerialSessionChangeLocked() error {
 }
 
 // ObserveStatusFromSerialSession records protocol evidence only when it came
-// from the currently active live serial session.
+// from the currently active live serial session. A model change within that
+// session invalidates any transaction or report bound to the prior model.
 func (c *Controller) ObserveStatusFromSerialSession(status api.Status, generation, serialSessionGeneration uint64) {
 	if c == nil || generation == 0 || serialSessionGeneration == 0 {
 		return
@@ -141,10 +149,32 @@ func (c *Controller) ObserveStatusFromSerialSession(status api.Status, generatio
 	if serialSessionGeneration != c.runtime.SerialSessionGeneration || generation < c.runtime.StatusGeneration {
 		return
 	}
+	c.invalidateForModelChangeLocked(status.Telemetry.ModelName)
 	c.runtime.Status = status
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
 	c.runtime.StatusSerialSessionGeneration = serialSessionGeneration
+}
+
+func (c *Controller) invalidateForModelChangeLocked(observedModel string) {
+	observedModel = strings.TrimSpace(observedModel)
+	if observedModel == "" {
+		return
+	}
+	previousModel := strings.TrimSpace(c.lastObservedModel)
+	c.lastObservedModel = observedModel
+	if previousModel == "" || strings.EqualFold(previousModel, observedModel) {
+		return
+	}
+	if !c.activeLocked() && len(c.reports) == 0 {
+		return
+	}
+	c.reports = nil
+	reason := "amplifier model changed; menu-debug session and report evidence were invalidated"
+	c.session.phase = PhaseFailed
+	c.session.failure = reason
+	c.releaseLocked()
+	c.bumpLocked()
 }
 
 // ObserveDisplay records checksum/display evidence and closes a pending

@@ -339,7 +339,7 @@ func TestDiscoveryAuthorizationFreezesObservedAmplifierModel(t *testing.T) {
 	}
 }
 
-func TestDiscoveryAuthorizationRejectsChangedSelectionModel(t *testing.T) {
+func TestDiscoverySessionFailsWhenObservedModelChanges(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	v, token := arm(t, c)
 	v, err := c.Begin(token, v.Revision, CapabilityFan)
@@ -347,13 +347,13 @@ func TestDiscoveryAuthorizationRejectsChangedSelectionModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
-
-	if _, err = c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: c.session.lastEvidenceGen + 1, Fingerprint: "home", Kind: ScreenHome}); err == nil || !strings.Contains(err.Error(), "model changed") {
-		t.Fatalf("changed selection model error = %v", err)
+	v, err = c.Current(token)
+	if err != nil || v.Phase != PhaseFailed || !strings.Contains(v.Failure, "model changed") {
+		t.Fatalf("changed selection model did not fail discovery: view=%+v err=%v", v, err)
 	}
 }
 
-func TestPlannedActionRejectsChangedAmplifierModel(t *testing.T) {
+func TestPlannedSessionFailsWhenObservedModelChanges(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	v, token := arm(t, c)
 	plan := simplePlan(CapabilityFan, "normal", "contest")
@@ -379,8 +379,9 @@ func TestPlannedActionRejectsChangedAmplifierModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 10)
-	if _, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false)); err == nil || !strings.Contains(err.Error(), "model changed") {
-		t.Fatalf("changed-model authorization error = %v", err)
+	v, err = c.Current(token)
+	if err != nil || v.Phase != PhaseFailed || !strings.Contains(v.Failure, "model changed") {
+		t.Fatalf("changed model did not fail planned session: view=%+v err=%v", v, err)
 	}
 }
 
@@ -497,6 +498,81 @@ func TestPendingPlannedActionFailsClosedOnSerialSessionChange(t *testing.T) {
 	c.ObserveDisplayFromSerialSession(replacement, base+3, true, nil, nil, 2)
 	if c.session.phase != PhaseFailed || len(c.session.evidence) != evidenceCount || c.session.revision != auth.Revision+1 {
 		t.Fatalf("replacement-session display altered failed planned action: %+v", c.session)
+	}
+}
+
+func TestPendingDiscoveryFailsClosedOnSameSessionModelChange(t *testing.T) {
+	l := &fakeLease{}
+	c, _ := newDeterministicController(l)
+	v, token := arm(t, c)
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := display.NewState()
+	before.SetRow(0, "BEFORE")
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionRight, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: Analyze(before).Fingerprint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceCount := len(c.session.evidence)
+
+	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
+	if c.session.phase != PhaseFailed || !strings.Contains(c.session.failure, "model changed") || l.released != 1 {
+		t.Fatalf("model change did not fail pending discovery: session=%+v lease=%+v", c.session, l)
+	}
+
+	after := display.NewState()
+	after.SetRow(0, "AFTER")
+	c.ObserveDisplayFromSerialSession(after, 6, true, nil, nil, 1)
+	if c.session.phase != PhaseFailed || len(c.session.evidence) != evidenceCount || c.session.revision != auth.Revision+1 {
+		t.Fatalf("later display altered model-invalidated discovery: %+v", c.session)
+	}
+}
+
+func TestPendingPlannedActionFailsClosedOnSameSessionModelChange(t *testing.T) {
+	l := &fakeLease{}
+	c, _ := newDeterministicController(l)
+	v, token := arm(t, c)
+	plan := simplePlan(CapabilityFan, "NORMAL", "CONTEST")
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := c.session.lastEvidenceGen
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: CapabilityFan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.ObserveDiscoveryResult(token, auth.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.InstallPlan(token, v.Revision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = c.BeginApply(token, v.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err = c.AuthorizeNext(token, v.Revision, capabilityEvidence(base+2, plan.Apply[0].FromFingerprint, CapabilityFan, plan.OriginalValue, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceCount := len(c.session.evidence)
+
+	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
+	if c.session.phase != PhaseFailed || !strings.Contains(c.session.failure, "model changed") || l.released != 1 {
+		t.Fatalf("model change did not fail pending planned action: session=%+v lease=%+v", c.session, l)
+	}
+
+	replacement := display.NewState()
+	replacement.SetRow(0, "REPLACEMENT")
+	c.ObserveDisplayFromSerialSession(replacement, base+3, true, nil, nil, 1)
+	if c.session.phase != PhaseFailed || len(c.session.evidence) != evidenceCount || c.session.revision != auth.Revision+1 {
+		t.Fatalf("later display altered model-invalidated planned action: %+v", c.session)
 	}
 }
 
@@ -624,6 +700,171 @@ func TestSerialSessionChangePreservesIdleControllerWithoutReports(t *testing.T) 
 	if c.session.phase != PhaseIdle || c.session.revision != 0 || len(c.reports) != 0 {
 		t.Fatalf("idle controller changed on reconnect: session=%+v reports=%+v", c.session, c.reports)
 	}
+}
+
+func TestSameSessionModelChangeInvalidatesReportsInEveryPhase(t *testing.T) {
+	tests := []struct {
+		name      string
+		terminate func(*testing.T, *Controller, *time.Time, string, SessionView) SessionView
+	}{
+		{
+			name: "complete",
+			terminate: func(t *testing.T, c *Controller, _ *time.Time, token string, v SessionView) SessionView {
+				t.Helper()
+				view, err := c.Complete(token, v.Revision)
+				if err != nil || view.Phase != PhaseComplete {
+					t.Fatalf("Complete: view=%+v err=%v", view, err)
+				}
+				return view
+			},
+		},
+		{
+			name: "failed",
+			terminate: func(t *testing.T, c *Controller, _ *time.Time, token string, v SessionView) SessionView {
+				t.Helper()
+				if _, err := c.Fail(token, v.Revision, "test failure"); err == nil {
+					t.Fatal("Fail returned no error")
+				}
+				view, err := c.Current(token)
+				if err != nil || view.Phase != PhaseFailed {
+					t.Fatalf("Current after Fail: view=%+v err=%v", view, err)
+				}
+				return view
+			},
+		},
+		{
+			name: "aborted",
+			terminate: func(t *testing.T, c *Controller, _ *time.Time, token string, v SessionView) SessionView {
+				t.Helper()
+				view, err := c.Abort(token, v.Revision, true)
+				if err != nil || view.Phase != PhaseAborted {
+					t.Fatalf("Abort: view=%+v err=%v", view, err)
+				}
+				return view
+			},
+		},
+		{
+			name: "expired",
+			terminate: func(t *testing.T, c *Controller, now *time.Time, _ string, _ SessionView) SessionView {
+				t.Helper()
+				*now = now.Add(c.lifetime)
+				view := c.Tick(*now)
+				if view.Phase != PhaseExpired {
+					t.Fatalf("Tick: view=%+v", view)
+				}
+				return view
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, now := newDeterministicController(&fakeLease{})
+			v, token := arm(t, c)
+			v = completeCapability(t, c, token, v, simplePlan(CapabilityFan, "NORMAL", "CONTEST"))
+			v = tc.terminate(t, c, now, token, v)
+			if len(c.reports) != 1 {
+				t.Fatalf("terminal session did not retain report: %+v", c.reports)
+			}
+			previousRevision := v.Revision
+
+			c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
+
+			if c.session.phase != PhaseFailed || !strings.Contains(c.session.failure, "model changed") || c.session.revision != previousRevision+1 || len(c.reports) != 0 {
+				t.Fatalf("report survived model change: session=%+v reports=%+v", c.session, c.reports)
+			}
+			if got := c.Report("EXPERT 1.5K-FA", "replacement", "test"); len(got.Capabilities) != 0 {
+				t.Fatalf("replacement model received prior report evidence: %+v", got)
+			}
+		})
+	}
+}
+
+func TestModelObservationPreservesControllersWithoutBoundEvidence(t *testing.T) {
+	t.Run("initial empty to model", func(t *testing.T) {
+		c := NewController(&fakeLease{})
+		c.now = func() time.Time { return time.Date(2026, 7, 31, 15, 0, 0, 0, time.UTC) }
+		c.newToken = func() (string, error) { return "test-token", nil }
+		c.ObserveSerialSession(1)
+		v, _, err := c.Arm(Acknowledgement, readyPrerequisites())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 1, 1)
+		if c.session.phase != PhaseArmed || c.session.revision != v.Revision || c.runtime.Status.ModelName != "EXPERT 1.3K-FA" {
+			t.Fatalf("initial model observation invalidated active controller: session=%+v runtime=%+v", c.session, c.runtime)
+		}
+	})
+
+	t.Run("idle model change", func(t *testing.T) {
+		c, _ := newDeterministicController(&fakeLease{})
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
+		if c.session.phase != PhaseIdle || c.session.revision != 0 || c.runtime.Status.ModelName != "EXPERT 1.5K-FA" {
+			t.Fatalf("idle model change invalidated controller: session=%+v runtime=%+v", c.session, c.runtime)
+		}
+	})
+}
+
+func TestEmptyModelObservationPreservesActiveSessionAndRetainedReport(t *testing.T) {
+	t.Run("active session", func(t *testing.T) {
+		l := &fakeLease{}
+		c, _ := newDeterministicController(l)
+		v, token := arm(t, c)
+		v, err := c.Begin(token, v.Revision, CapabilityFan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		previousRevision := v.Revision
+
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{}}, 2, 1)
+
+		v, err = c.Current(token)
+		if err != nil || v.Phase != PhaseDiscovering || v.Revision != previousRevision || l.released != 0 {
+			t.Fatalf("empty model invalidated active session: view=%+v err=%v lease=%+v", v, err, l)
+		}
+
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 3, 1)
+		v, err = c.Current(token)
+		if err != nil || v.Phase != PhaseDiscovering || v.Revision != previousRevision || l.released != 0 {
+			t.Fatalf("same model after empty status invalidated active session: view=%+v err=%v lease=%+v", v, err, l)
+		}
+
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 4, 1)
+		v, err = c.Current(token)
+		if err != nil || v.Phase != PhaseFailed || !strings.Contains(v.Failure, "model changed") || v.Revision != previousRevision+1 || l.released != 1 {
+			t.Fatalf("different model after empty status did not invalidate active session: view=%+v err=%v lease=%+v", v, err, l)
+		}
+	})
+
+	t.Run("retained report", func(t *testing.T) {
+		c, _ := newDeterministicController(&fakeLease{})
+		v, token := arm(t, c)
+		v = completeCapability(t, c, token, v, simplePlan(CapabilityFan, "NORMAL", "CONTEST"))
+		v, err := c.Complete(token, v.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		previousRevision := v.Revision
+
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{}}, 2, 1)
+
+		v, err = c.Current(token)
+		if err != nil || v.Phase != PhaseComplete || v.Revision != previousRevision || len(c.reports) != 1 {
+			t.Fatalf("empty model invalidated retained report: view=%+v err=%v reports=%+v", v, err, c.reports)
+		}
+
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA"}}, 3, 1)
+		v, err = c.Current(token)
+		if err != nil || v.Phase != PhaseComplete || v.Revision != previousRevision || len(c.reports) != 1 {
+			t.Fatalf("same model after empty status invalidated retained report: view=%+v err=%v reports=%+v", v, err, c.reports)
+		}
+
+		c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 4, 1)
+		v, err = c.Current(token)
+		if err != nil || v.Phase != PhaseFailed || !strings.Contains(v.Failure, "model changed") || v.Revision != previousRevision+1 || len(c.reports) != 0 {
+			t.Fatalf("different model after empty status did not clear retained report: view=%+v err=%v reports=%+v", v, err, c.reports)
+		}
+	})
 }
 
 func TestReviewedPlanDiscoveryTopologyMustMatchExactly(t *testing.T) {
@@ -867,7 +1108,7 @@ func TestTopologyDisplayExitCompletesOnlyAtVerifiedHomeWithoutSave(t *testing.T)
 	}
 }
 
-func TestTopologyExitRejectsChangedSelectionModel(t *testing.T) {
+func TestTopologySessionFailsWhenObservedModelChanges(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	v, token := arm(t, c)
 	v, _ = c.Begin(token, v.Revision, CapabilityBank)
@@ -880,9 +1121,9 @@ func TestTopologyExitRejectsChangedSelectionModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA"}}, 2, 1)
-
-	if _, err = c.AuthorizeTopologyExit(token, v.Revision, "EXPERT 1.3K-FA", Evidence{Generation: 6, Fingerprint: "bank", Kind: ScreenBank, Candidate: CapabilityBank, Value: "A"}); err == nil || !strings.Contains(err.Error(), "model changed") {
-		t.Fatalf("changed topology-exit model error = %v", err)
+	v, err = c.Current(token)
+	if err != nil || v.Phase != PhaseFailed || !strings.Contains(v.Failure, "model changed") {
+		t.Fatalf("changed model did not fail topology session: view=%+v err=%v", v, err)
 	}
 }
 

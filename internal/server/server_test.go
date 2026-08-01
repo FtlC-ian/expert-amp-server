@@ -754,8 +754,12 @@ func TestMenuDebugDiscoveryWriteRejectsModelChangeBeforeDispatch(t *testing.T) {
 	controller.ObserveStatusFromSerialSession(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.5K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 2, 1)
 	menuAPI := &menuDebugAPI{opts: Options{Config: mgr, MenuDebug: controller, MenuDebugTransport: lease}}
 	err = menuAPI.sendAuthorized(context.Background(), token, auth, true)
-	if err == nil || !strings.Contains(err.Error(), "model changed") {
+	if err == nil {
 		t.Fatalf("changed-model discovery write error = %v", err)
+	}
+	failed, currentErr := controller.Current(token)
+	if currentErr != nil || failed.Phase != menudebug.PhaseFailed || !strings.Contains(failed.Failure, "model changed") {
+		t.Fatalf("changed model did not invalidate session: view=%+v err=%v", failed, currentErr)
 	}
 	if raw.calls != 0 {
 		t.Fatalf("model-mismatched discovery write reached transport %d times", raw.calls)
