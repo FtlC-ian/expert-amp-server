@@ -77,3 +77,13 @@ func TestBacklightButtonsUseDirectDocumentedActions(t *testing.T) {
 		}
 	}
 }
+
+func TestActionFailuresExposeFanNavigationCauseAndRecovery(t *testing.T) {
+	nodes := loadFlowNodes(t)
+	formatter := nodes["4b8044f456aaf8ba"]
+	for _, field := range []string{"navigation", "lastError", "recoveryInstructions"} {
+		if !strings.Contains(formatter.Func, field) {
+			t.Fatalf("action result formatter does not expose %s", field)
+		}
+	}
+}

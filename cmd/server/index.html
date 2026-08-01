@@ -244,6 +244,46 @@
     .advanced-toggle:hover { color: #8aaa8a; }
     #advanced-serial-body { display: none; margin-top: 10px; }
     #advanced-serial-body.open { display: block; }
+    #menu-debug-body { display: none; margin-top: 14px; }
+    #menu-debug-body.open { display: block; }
+    .menu-debug-plan {
+      margin: 0;
+      padding-left: 20px;
+      color: #93a693;
+      font-size: 0.8rem;
+      line-height: 1.6;
+    }
+    .menu-debug-step {
+      border-left: 3px solid #364436;
+      padding-left: 12px;
+    }
+    .menu-debug-step-title {
+      color: #d6e3d6;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 0;
+    }
+    .menu-debug-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .menu-debug-actions .settings-save-btn[disabled] {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+    .menu-debug-abort {
+      background: transparent;
+      color: #c99a9a;
+      border-color: #694444;
+    }
+    .menu-debug-abort:hover { background: #382222; }
+    .menu-debug-report {
+      max-height: 320px;
+      overflow: auto;
+    }
+    #menu-debug-card[hidden] { display: none; }
 
     /* ── Generic cards ── */
     .card {
@@ -1686,13 +1726,102 @@
             <label class="settings-label" for="s-fan-normal-temperature">Return to Normal at or below (°C)</label>
             <input id="s-fan-normal-temperature" class="settings-input" type="number" min="0.1" step="0.1" value="42">
           </div>
-          <p class="settings-hint">Requires Polling mode Both and at least 5 °C between thresholds. We recommend testing Fan Boost before enabling automatic mode. Menu entry, fan changes, and SAVE are RX-only. Any unexpected screen or failed write stops the transaction; follow the runtime recovery instructions before trying again.</p>
+          <p class="settings-hint">Requires Polling mode Both and at least 5 °C between thresholds. We recommend testing Fan Boost before enabling automatic mode. Menu entry, fan changes, and SAVE are RX-only. Any unexpected screen or failed write stops the transaction. To clear a failed transaction, stop transmitting, put the amplifier in STANDBY, return to its home screen with the physical panel, disable automatic fan policy, then use Clear Failed Fan Transaction.</p>
           <div class="settings-runtime" id="fan-policy-runtime">Runtime state not loaded.</div>
         </div>
 
         <div class="settings-action-row">
           <button class="settings-save-btn" id="save-fan-policy">Save Fan Policy</button>
+          <button class="settings-save-btn" id="recover-fan-policy">Clear Failed Fan Transaction</button>
           <span class="settings-status" id="fan-policy-status"></span>
+        </div>
+      </div>
+
+      <!-- Menu Debug & Reporting (advanced, disabled by default) -->
+      <div class="settings-card" id="menu-debug-card" hidden>
+        <div class="settings-card-title">
+          Menu Debug &amp; Reporting
+          <button class="advanced-toggle" id="menu-debug-toggle" type="button" onclick="toggleMenuDebug()">show</button>
+        </div>
+        <p class="needs-restart-note">Advanced diagnostic wizard. It can change and restore amplifier settings. Do not transmit or enable OPERATE until the wizard is finished or aborted.</p>
+
+        <div id="menu-debug-body">
+          <div class="settings-section">
+            <p class="settings-hint">The server runs two separate, bounded transactions in order: fan discovery and verification, then bank discovery and verification. It never combines the changes, sends arbitrary menu commands, or restores OPERATE.</p>
+            <ol class="menu-debug-plan">
+              <li>Discover and temporarily change the fan setting; you verify it; the server restores the original.</li>
+              <li>Discover and temporarily change the bank setting; you verify it; the server restores the original.</li>
+            </ol>
+
+            <div id="menu-debug-arm">
+              <div class="settings-row">
+                <label class="settings-label" for="menu-debug-firmware">Amplifier firmware version</label>
+                <input id="menu-debug-firmware" class="settings-input" type="text" maxlength="64" autocomplete="off" placeholder="as shown by the amplifier">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="menu-debug-acknowledgement">Type the safety acknowledgement</label>
+                <input id="menu-debug-acknowledgement" class="settings-input" type="text" autocomplete="off" spellcheck="false" placeholder="I AM IN STANDBY AND WILL NOT TRANSMIT">
+              </div>
+              <p class="settings-hint">Type exactly <code>I AM IN STANDBY AND WILL NOT TRANSMIT</code>. Arming also requires fresh protocol STANDBY/RX, a checksum-valid STANDBY home display, disabled automatic fan policy, disarmed overtemperature standby, and an available actuation lease.</p>
+              <div class="settings-action-row">
+                <button class="settings-save-btn" id="menu-debug-arm-session" type="button">Arm 10-minute Session</button>
+                <span class="settings-status" id="menu-debug-arm-status"></span>
+              </div>
+            </div>
+
+            <div class="settings-runtime" id="menu-debug-prerequisites">Session not armed. Safety prerequisites have not been checked.</div>
+
+            <div class="menu-debug-step" id="menu-debug-step" hidden>
+              <p class="menu-debug-step-title" id="menu-debug-step-title">Waiting for server state</p>
+              <p class="settings-hint" id="menu-debug-step-detail">No action is proposed.</p>
+              <div class="settings-runtime" id="menu-debug-proposal">Exact next action: none</div>
+              <div class="menu-debug-actions" id="menu-debug-advance-actions">
+                <button class="settings-save-btn" id="menu-debug-advance" type="button" disabled>Continue</button>
+              </div>
+
+              <div id="menu-debug-candidate-verification" hidden>
+                <p class="settings-label">Did the temporary setting change work as described?</p>
+                <div class="menu-debug-actions">
+                  <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="true">Changed as Expected</button>
+                  <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="false" data-menu-debug-note="did not change">Did Not Change</button>
+                  <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="false" data-menu-debug-note="operator unsure">Unsure</button>
+                </div>
+              </div>
+
+              <div id="menu-debug-restored-verification" hidden>
+                <p class="settings-label">Is the exact original setting restored?</p>
+                <div class="menu-debug-actions">
+                  <button class="settings-save-btn" type="button" data-menu-debug-phase="restored" data-menu-debug-verified="true">Original Value Restored</button>
+                  <button class="settings-save-btn" type="button" data-menu-debug-phase="restored" data-menu-debug-verified="false" data-menu-debug-note="not restored">Not Restored</button>
+                  <button class="settings-save-btn" type="button" data-menu-debug-phase="restored" data-menu-debug-verified="false" data-menu-debug-note="operator unsure">Unsure</button>
+                </div>
+              </div>
+
+              <div class="settings-action-row">
+                <button class="settings-save-btn menu-debug-abort" id="menu-debug-abort" type="button">Abort and Stop Sending Commands</button>
+                <span class="settings-status" id="menu-debug-action-status"></span>
+              </div>
+            </div>
+
+            <div class="settings-runtime" id="menu-debug-recovery" hidden>Abort sends no recovery commands. If the amplifier is not on its STANDBY home screen, use the physical panel to return there. OPERATE will not be restored automatically.</div>
+
+            <div id="menu-debug-report-section" hidden>
+              <p class="settings-label">Sanitized report preview</p>
+              <pre class="settings-runtime menu-debug-report" id="menu-debug-report-preview">Report not available.</pre>
+              <p class="settings-hint">The report contains only output produced by Expert Amp Server. It excludes IP addresses, hostnames, callsigns, and serial-device paths or identifiers. Download works without uploading.</p>
+              <div class="settings-action-row">
+                <button class="settings-save-btn" id="menu-debug-download-report" type="button">Download JSON</button>
+              </div>
+              <div class="settings-checkbox-row">
+                <input type="checkbox" id="menu-debug-upload-consent">
+                <label class="settings-checkbox-label" for="menu-debug-upload-consent">Upload this sanitized report to the public collector</label>
+              </div>
+              <div class="settings-action-row">
+                <button class="settings-save-btn" id="menu-debug-upload-report" type="button" disabled>Upload Report</button>
+                <span class="settings-status" id="menu-debug-report-status"></span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1738,6 +1867,14 @@
               <label class="settings-checkbox-label" for="s-assert-rts">Assert RTS</label>
             </div>
 
+            <hr class="settings-divider">
+
+            <div class="settings-checkbox-row">
+              <input type="checkbox" id="s-menu-debug-enabled">
+              <label class="settings-checkbox-label" for="s-menu-debug-enabled">Enable Menu Debug &amp; Reporting wizard</label>
+            </div>
+            <p class="settings-hint">Disabled by default. This reveals the separate, short-lived STANDBY-only wizard above; it does not arm a session or authorize amplifier commands.</p>
+
           </div>
 
           <div class="settings-action-row">
@@ -1762,6 +1899,9 @@
             <div class="api-row"><span class="api-path">/api/v1/fan-policy</span><span class="api-desc">read-only automatic fan-policy decision, thresholds, observations, and availability</span></div>
             <div class="api-row"><span class="api-path">POST /api/v1/fan-policy/override</span><span class="api-desc">request automatic, Normal, or CONTEST mode through verified navigation</span></div>
             <div class="api-row"><span class="api-path">POST /api/v1/fan-policy/verify</span><span class="api-desc">verify the EEPROM-backed fan mode through the captured menu path</span></div>
+            <div class="api-row"><span class="api-path">POST /api/v1/fan-policy/recover</span><span class="api-desc">clear a failed latch only after verified STANDBY/RX home recovery</span></div>
+            <div class="api-row"><span class="api-path">GET/POST /api/v1/menu-debug/session</span><span class="api-desc">inspect or arm the short-lived, STANDBY-only menu reporting wizard</span></div>
+            <div class="api-row"><span class="api-path">GET /api/v1/menu-debug/report</span><span class="api-desc">preview the sanitized candidate-profile report generated by the wizard</span></div>
             <div class="api-row"><span class="api-path">/api/v1/runtime/snapshot</span><span class="api-desc">full runtime snapshot</span></div>
             <div class="api-row"><span class="api-path">/api/v1/runtime/ingest</span><span class="api-desc">serial ingest diagnostics</span></div>
             <div class="api-row"><span class="api-path">/api/v1/runtime</span><span class="api-desc">runtime settings view</span></div>
@@ -2256,6 +2396,7 @@
       applyStationLabels(data.settings);
       populateSafetyMonitoringFields(data.settings);
       populateFanPolicyFields(data.settings);
+      populateMenuDebugSetting(data.settings);
       if (panelModelLabel) panelModelLabel.textContent = panelModelDisplay(latestStatus);
       renderOperatorStatus(latestStatus);
     }
@@ -2302,6 +2443,16 @@
       toggle.textContent = open ? 'hide' : 'show';
     }
     window.toggleAdvancedSerial = toggleAdvancedSerial;
+
+    function toggleMenuDebug() {
+      const body = document.getElementById('menu-debug-body');
+      const toggle = document.getElementById('menu-debug-toggle');
+      const open = body.classList.toggle('open');
+      toggle.textContent = open ? 'hide' : 'show';
+      if (open) loadMenuDebugSession();
+      updateMenuDebugPolling();
+    }
+    window.toggleMenuDebug = toggleMenuDebug;
 
     // ─── Shared status helpers ───────────────────────────────────────────────
     function setTelemValue(id, value) {
@@ -2547,6 +2698,17 @@
     }
     window.sendWake = sendWake;
 
+    function fanPolicyFailureMessage(body) {
+      const envelope = body || {};
+      const nav = (envelope.data && envelope.data.navigation) || {};
+      const parts = [];
+      if (nav.lastError) parts.push(nav.lastError);
+      else if (envelope.error) parts.push(envelope.error);
+      else parts.push('fan-policy request failed');
+      if (nav.recoveryInstructions) parts.push('Recovery: ' + nav.recoveryInstructions);
+      return parts.join(' ');
+    }
+
     async function setFanOverride(mode) {
       const layout = currentLayout();
       const feedback = layoutFeedbackEls[layout] || layoutFeedbackEls[DEFAULT_LAYOUT] || feedbackPanel;
@@ -2564,7 +2726,13 @@
           body: JSON.stringify(payload),
         });
         const body = await res.json();
-        if (!body.success) throw new Error(body.error || 'fan override failed');
+        if (!body.success) {
+          if (body.data) {
+            renderFanPolicyRuntime(body.data);
+            renderOperatorFanPolicy(body.data);
+          }
+          throw new Error(fanPolicyFailureMessage(body));
+        }
         feedback.textContent = '✓ Fan request accepted; waiting for verified RX navigation';
         feedback.className = 'action-feedback ok';
         if (body.data) {
@@ -2591,7 +2759,13 @@
       try {
         const res = await fetch('/api/v1/fan-policy/verify', { method: 'POST' });
         const body = await res.json();
-        if (!body.success) throw new Error(body.error || 'fan-mode verification failed');
+        if (!body.success) {
+          if (body.data) {
+            renderFanPolicyRuntime(body.data);
+            renderOperatorFanPolicy(body.data);
+          }
+          throw new Error(fanPolicyFailureMessage(body));
+        }
         feedback.textContent = '✓ Verification accepted; waiting for verified RX navigation';
         feedback.className = 'action-feedback ok';
         if (body.data) {
@@ -2609,6 +2783,308 @@
       }
     }
     window.verifyFanMode = verifyFanMode;
+
+    // ─── Menu Debug & Reporting wizard ───────────────────────────────────────
+    // The token is deliberately memory-only. Reloading the page cannot replay
+    // an armed session, and the browser never derives permission from the DOM.
+    const MENU_DEBUG_ACKNOWLEDGEMENT = 'I AM IN STANDBY AND WILL NOT TRANSMIT';
+    const MENU_DEBUG_TERMINAL_STATES = new Set(['complete', 'aborted', 'failed', 'expired']);
+    let menuDebugToken = '';
+    let menuDebugSession = {};
+    let menuDebugReport = null;
+    let menuDebugPollTimer = null;
+    let menuDebugRequestActive = false;
+
+    function menuDebugHeaders(json) {
+      const headers = {};
+      if (json) headers['Content-Type'] = 'application/json';
+      if (menuDebugToken) headers['X-Menu-Debug-Token'] = menuDebugToken;
+      return headers;
+    }
+
+    function menuDebugState(data) {
+      const d = data || {};
+      return String(d.state || d.phase || d.status || 'ready-to-arm').toLowerCase();
+    }
+
+    function menuDebugRevision() {
+      const revision = Number(menuDebugSession.revision);
+      return Number.isFinite(revision) ? revision : null;
+    }
+
+    function menuDebugConfirmation() {
+      const proposal = menuDebugSession.proposal || menuDebugSession.nextAction || {};
+      return proposal.confirmation || menuDebugSession.confirmation || '';
+    }
+
+    function menuDebugError(body, fallback) {
+      const d = (body && body.data) || {};
+      return d.recoveryInstructions || d.reason || (body && body.error) || fallback;
+    }
+
+    function setMenuDebugBusy(active) {
+      menuDebugRequestActive = active;
+      document.querySelectorAll('#menu-debug-body button').forEach(button => {
+        if (button.id === 'menu-debug-upload-report') {
+          button.disabled = active || !document.getElementById('menu-debug-upload-consent').checked;
+          return;
+        }
+        if (button.id === 'menu-debug-advance') {
+          button.disabled = active || !menuDebugConfirmation();
+          return;
+        }
+        button.disabled = active;
+      });
+    }
+
+    function renderMenuDebugPrerequisites(data) {
+      const el = document.getElementById('menu-debug-prerequisites');
+      const p = data.prerequisites || data.safetyPrerequisites || {};
+      const rows = [
+        ['STANDBY', p.standby],
+        ['RX / not transmitting', p.rx],
+        ['Recent protocol contact', p.recentContact],
+        ['Checksum-valid STANDBY home display', p.standbyHome || p.validStandbyHome],
+        ['Automatic fan policy disabled', p.automaticFanPolicyDisabled],
+        ['Overtemperature standby disarmed', p.overtemperatureStandbyDisarmed],
+        ['Actuation lease available', p.actuationLeaseAvailable],
+      ];
+      const known = rows.some(([, value]) => typeof value === 'boolean');
+      if (!known) {
+        el.textContent = data.reason || 'Safety prerequisites have not been checked by the server.';
+        return;
+      }
+      el.textContent = rows.map(([label, value]) => (value ? 'PASS  ' : 'BLOCK ') + label).join('\n');
+    }
+
+    function renderMenuDebugSession(data) {
+      const envelope = data || {};
+      const session = envelope.session || envelope;
+      menuDebugSession = {
+        ...session,
+        prerequisites: envelope.prerequisites || session.prerequisites,
+        proposal: envelope.proposal || session.proposal,
+        reportAvailable: envelope.reportAvailable ?? session.reportAvailable,
+      };
+      const state = menuDebugState(menuDebugSession);
+      const active = !!menuDebugToken && !MENU_DEBUG_TERMINAL_STATES.has(state);
+      const proposal = menuDebugSession.proposal || menuDebugSession.nextAction || {};
+      const capability = menuDebugSession.capability || menuDebugSession.currentCapability || 'not selected';
+      const step = menuDebugSession.stepNumber || menuDebugSession.step || '–';
+      const total = menuDebugSession.totalSteps || '–';
+      const original = menuDebugSession.originalValue || (proposal.originalValue) || 'not observed';
+      const candidate = menuDebugSession.candidateValue || (proposal.candidateValue) || 'not proposed';
+
+      document.getElementById('menu-debug-arm').hidden = active;
+      document.getElementById('menu-debug-step').hidden = !active;
+      document.getElementById('menu-debug-step-title').textContent =
+        'Step ' + step + ' of ' + total + ' — ' + capability + ' — ' + state;
+      document.getElementById('menu-debug-step-detail').textContent =
+        (menuDebugSession.reason || menuDebugSession.instructions || 'Waiting for the server to propose the next bounded action.') +
+        ' Original: ' + original + '. Candidate: ' + candidate + '.';
+      document.getElementById('menu-debug-proposal').textContent = [
+        'Exact next action: ' + (proposal.description || proposal.action || 'none'),
+        'Required confirmation: ' + (menuDebugConfirmation() || 'none'),
+        'Verified screen: ' + (menuDebugSession.lastVerifiedScreen || 'not reported'),
+        'Action budget: ' + (menuDebugSession.actionsAttempted ?? '–') + ' / ' + (menuDebugSession.actionBudget ?? menuDebugSession.maxActions ?? '–'),
+        'Expires: ' + (menuDebugSession.expiresAt || 'not armed'),
+        ...(Array.isArray(menuDebugSession.planSummary) ? menuDebugSession.planSummary.map(step =>
+          step.transaction + ' ' + step.number + ': ' + String(step.action || '').toUpperCase() +
+          ' — ' + step.purpose + ' — expect ' + step.expected
+        ) : []),
+      ].join('\n');
+      document.getElementById('menu-debug-advance').disabled = menuDebugRequestActive || !menuDebugConfirmation();
+
+      const verificationPhase = String(menuDebugSession.verificationPhase || '').toLowerCase();
+      const awaitingCandidateVerification = state === 'awaiting-apply-verification' ||
+        (state.includes('candidate') && state.includes('verif')) || verificationPhase === 'candidate';
+      const awaitingRestoredVerification = state === 'awaiting-restore-verification' ||
+        (state.includes('restor') && state.includes('verif')) || verificationPhase === 'restored';
+      document.getElementById('menu-debug-candidate-verification').hidden =
+        !awaitingCandidateVerification;
+      document.getElementById('menu-debug-restored-verification').hidden =
+        !awaitingRestoredVerification;
+
+      renderMenuDebugPrerequisites(menuDebugSession);
+      const recovery = document.getElementById('menu-debug-recovery');
+      recovery.hidden = !MENU_DEBUG_TERMINAL_STATES.has(state) || (state === 'complete' && !menuDebugSession.recoveryInstructions);
+      recovery.textContent = menuDebugSession.recoveryInstructions ||
+        'Abort sends no recovery commands. If the amplifier is not on its STANDBY home screen, use the physical panel to return there. OPERATE will not be restored automatically.';
+
+      const reportAvailable = !!menuDebugSession.reportAvailable || state === 'complete';
+      document.getElementById('menu-debug-report-section').hidden = !reportAvailable;
+      if (reportAvailable) loadMenuDebugReport();
+      updateMenuDebugPolling();
+    }
+
+    async function menuDebugRequest(path, options) {
+      setMenuDebugBusy(true);
+      try {
+        const res = await fetch(path, options || { headers: menuDebugHeaders(false) });
+        const body = await res.json();
+        if (body && body.data && body.data.token) menuDebugToken = body.data.token;
+        if (!res.ok || !body.success) {
+          if (body.data) renderMenuDebugSession(body.data);
+          throw new Error(menuDebugError(body, 'Menu Debug request failed'));
+        }
+        if (body.data) renderMenuDebugSession(body.data);
+        return body;
+      } finally {
+        setMenuDebugBusy(false);
+      }
+    }
+
+    async function loadMenuDebugSession() {
+      if (!document.getElementById('menu-debug-body').classList.contains('open')) return;
+      try {
+        await menuDebugRequest('/api/v1/menu-debug/session', { headers: menuDebugHeaders(false) });
+        setStatus('menu-debug-action-status', '', '');
+      } catch (err) {
+        setStatus('menu-debug-action-status', err.message, 'err');
+      }
+    }
+
+    function updateMenuDebugPolling() {
+      const bodyOpen = document.getElementById('menu-debug-body').classList.contains('open');
+      const active = !!menuDebugToken && !MENU_DEBUG_TERMINAL_STATES.has(menuDebugState(menuDebugSession));
+      if (bodyOpen && active && !menuDebugPollTimer) {
+        menuDebugPollTimer = setInterval(loadMenuDebugSession, 1000);
+      } else if ((!bodyOpen || !active) && menuDebugPollTimer) {
+        clearInterval(menuDebugPollTimer);
+        menuDebugPollTimer = null;
+      }
+    }
+
+    async function loadMenuDebugReport() {
+      if (!menuDebugToken) return;
+      try {
+        const res = await fetch('/api/v1/menu-debug/report', { headers: menuDebugHeaders(false) });
+        const body = await res.json();
+        if (!res.ok || !body.success) throw new Error(menuDebugError(body, 'Report unavailable'));
+        menuDebugReport = body.data;
+        document.getElementById('menu-debug-report-preview').textContent = JSON.stringify(menuDebugReport, null, 2);
+      } catch (err) {
+        setStatus('menu-debug-report-status', err.message, 'err');
+      }
+    }
+
+    document.getElementById('menu-debug-arm-session').addEventListener('click', async () => {
+      const acknowledgement = document.getElementById('menu-debug-acknowledgement').value.trim();
+      const firmwareVersion = document.getElementById('menu-debug-firmware').value.trim();
+      if (acknowledgement !== MENU_DEBUG_ACKNOWLEDGEMENT) {
+        setStatus('menu-debug-arm-status', 'Type the acknowledgement exactly as shown.', 'err');
+        return;
+      }
+      setStatus('menu-debug-arm-status', 'Checking fresh STANDBY/RX and home-display evidence…');
+      try {
+        const body = await menuDebugRequest('/api/v1/menu-debug/session', {
+          method: 'POST',
+          headers: menuDebugHeaders(true),
+          body: JSON.stringify({ acknowledgement, firmwareVersion, capabilities: ['fan', 'bank'] }),
+        });
+        const clearedNormalOverride = !!(body.data && body.data.fanOverrideAutoCleared);
+        setStatus('menu-debug-arm-status', clearedNormalOverride
+          ? 'Session armed; the completed Normal fan override was cleared without touching the amplifier.'
+          : 'Session armed; fan and bank will run as separate transactions.', 'ok');
+      } catch (err) {
+        setStatus('menu-debug-arm-status', err.message, 'err');
+      }
+    });
+
+    document.getElementById('menu-debug-advance').addEventListener('click', async () => {
+      const revision = menuDebugRevision();
+      const confirmation = menuDebugConfirmation();
+      const confirmations = ['begin-discovery', 'apply-proposed-change', 'restore-original'];
+      if (revision === null || !confirmations.includes(confirmation)) {
+        setStatus('menu-debug-action-status', 'The server has not supplied a valid current proposal.', 'err');
+        return;
+      }
+      setStatus('menu-debug-action-status', 'Submitting the exact displayed proposal…');
+      try {
+        await menuDebugRequest('/api/v1/menu-debug/session/advance', {
+          method: 'POST',
+          headers: menuDebugHeaders(true),
+          body: JSON.stringify({ expectedRevision: revision, confirmation }),
+        });
+        setStatus('menu-debug-action-status', 'Proposal accepted; waiting for newer verified display evidence.', 'ok');
+      } catch (err) {
+        setStatus('menu-debug-action-status', err.message, 'err');
+      }
+    });
+
+    document.querySelectorAll('[data-menu-debug-phase]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const revision = menuDebugRevision();
+        if (revision === null) return;
+        const phase = button.dataset.menuDebugPhase;
+        const verified = button.dataset.menuDebugVerified === 'true';
+        const note = button.dataset.menuDebugNote || undefined;
+        setStatus('menu-debug-action-status', verified ? 'Recording operator verification…' : 'Stopping safely and recording the failed verification…');
+        try {
+          await menuDebugRequest('/api/v1/menu-debug/session/verification', {
+            method: 'POST',
+            headers: menuDebugHeaders(true),
+            body: JSON.stringify({ expectedRevision: revision, phase, verified, ...(note ? { note } : {}) }),
+          });
+          setStatus('menu-debug-action-status', verified ? 'Verification recorded.' : 'Verification recorded; no further commands will be sent.', verified ? 'ok' : 'err');
+        } catch (err) {
+          setStatus('menu-debug-action-status', err.message, 'err');
+        }
+      });
+    });
+
+    document.getElementById('menu-debug-abort').addEventListener('click', async () => {
+      const revision = menuDebugRevision();
+      if (revision === null) return;
+      setStatus('menu-debug-action-status', 'Aborting without recovery commands…');
+      try {
+        await menuDebugRequest('/api/v1/menu-debug/session/abort', {
+          method: 'POST',
+          headers: menuDebugHeaders(true),
+          body: JSON.stringify({ expectedRevision: revision }),
+        });
+        setStatus('menu-debug-action-status', 'Aborted. No recovery commands or OPERATE restoration were sent.', 'ok');
+      } catch (err) {
+        setStatus('menu-debug-action-status', err.message, 'err');
+      }
+    });
+
+    document.getElementById('menu-debug-download-report').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/v1/menu-debug/report.json', { headers: menuDebugHeaders(false) });
+        if (!res.ok) throw new Error('Report download failed');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'expert-amp-menu-report.json';
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      } catch (err) {
+        setStatus('menu-debug-report-status', err.message, 'err');
+      }
+    });
+
+    document.getElementById('menu-debug-upload-consent').addEventListener('change', event => {
+      document.getElementById('menu-debug-upload-report').disabled = menuDebugRequestActive || !event.target.checked;
+    });
+
+    document.getElementById('menu-debug-upload-report').addEventListener('click', async () => {
+      if (!document.getElementById('menu-debug-upload-consent').checked) return;
+      const revision = menuDebugRevision();
+      if (revision === null) return;
+      setStatus('menu-debug-report-status', 'Uploading sanitized report…');
+      try {
+        await menuDebugRequest('/api/v1/menu-debug/report/upload', {
+          method: 'POST',
+          headers: menuDebugHeaders(true),
+          body: JSON.stringify({ expectedRevision: revision, consent: true }),
+        });
+        setStatus('menu-debug-report-status', 'Sanitized report uploaded.', 'ok');
+      } catch (err) {
+        setStatus('menu-debug-report-status', err.message, 'err');
+      }
+    });
 
     // ─── Settings page ────────────────────────────────────────────────────────
     //
@@ -2700,6 +3176,18 @@
       document.getElementById('s-fan-high-temperature').value = s.fanHighTemperatureC || 50;
       document.getElementById('s-fan-normal-temperature').value = s.fanNormalTemperatureC || 42;
       document.getElementById('s-fan-boost-duration').value = String(s.fanBoostDurationMinutes || 0);
+    }
+
+    function populateMenuDebugSetting(settings) {
+      const enabled = !!(settings && settings.menuDebugEnabled);
+      document.getElementById('s-menu-debug-enabled').checked = enabled;
+      const card = document.getElementById('menu-debug-card');
+      card.hidden = !enabled;
+      if (!enabled) {
+        document.getElementById('menu-debug-body').classList.remove('open');
+        document.getElementById('menu-debug-toggle').textContent = 'show';
+        updateMenuDebugPolling();
+      }
     }
 
     function dismissFanNotice() {
@@ -2850,6 +3338,7 @@
         document.getElementById('s-assert-rts').checked = !!s.serialAssertRTS;
         populateSafetyMonitoringFields(s);
         populateFanPolicyFields(s);
+        populateMenuDebugSetting(s);
 
         // First-run banner in Watch tab
         setupCard.classList.toggle('hidden', !snap.needsSetup);
@@ -2997,8 +3486,35 @@
       }
     });
 
+    document.getElementById('recover-fan-policy').addEventListener('click', async () => {
+      if (!window.confirm('Clear the failed fan transaction only after stopping TX, putting the amplifier in STANDBY, returning to its home screen, and disabling automatic fan policy. Continue?')) return;
+      setStatus('fan-policy-status', 'Checking fresh STANDBY/RX home evidence…');
+      try {
+        const res = await fetch('/api/v1/fan-policy/recover', { method: 'POST' });
+        const body = await res.json();
+        if (!body.success) {
+          if (body.data) renderFanPolicyRuntime(body.data);
+          setStatus('fan-policy-status', fanPolicyFailureMessage(body), 'err');
+          return;
+        }
+        setStatus('fan-policy-status', 'Failed transaction cleared; manual override removed and OPERATE unchanged', 'ok');
+        if (body.data) {
+          renderFanPolicyRuntime(body.data);
+          renderOperatorFanPolicy(body.data);
+        }
+      } catch (err) {
+        setStatus('fan-policy-status', err.message, 'err');
+      }
+    });
+
     // Save advanced serial settings (server config)
     document.getElementById('save-advanced').addEventListener('click', async () => {
+      const menuDebugEnabled = document.getElementById('s-menu-debug-enabled').checked;
+      const menuDebugActive = !!menuDebugToken && !MENU_DEBUG_TERMINAL_STATES.has(menuDebugState(menuDebugSession));
+      if (!menuDebugEnabled && menuDebugActive) {
+        setStatus('advanced-status', 'Abort or complete the active Menu Debug session before disabling the wizard.', 'err');
+        return;
+      }
       setStatus('advanced-status', 'Saving…');
       // Read all current connection fields too so we do a complete merge
       const payload = {
@@ -3014,6 +3530,7 @@
         statusPollIntervalMs:      Number(document.getElementById('s-poll-interval').value || '125'),
         serialAssertDTR:       document.getElementById('s-assert-dtr').checked,
         serialAssertRTS:       document.getElementById('s-assert-rts').checked,
+        menuDebugEnabled,
         ...labelsFromSettingsForm(),
       };
       try {

@@ -152,6 +152,8 @@ Use `GET /api/v1/fan-policy` for the disabled-by-default temperature/hysteresis 
 
 If TX begins, the controller sends no writes, pauses its ordinary waypoint timeout, and resumes only after ordered protocol and LCD RX evidence reverifies the exact expected state. Fan-value toggles and SAVE are RX-only. The temporary STANDBY may skip an unattended transmit cycle. Overtemperature safety preempts fan control and suppresses OPERATE restoration. After stale or unknown status, unsupported state, timeout, ambiguous toggle, write failure, or screen mismatch, the controller never blindly restores OPERATE and requires the operator to verify STANDBY.
 
+Failed navigation responses include the original `navigation.lastError` and `navigation.recoveryInstructions`; the checked-in flow prints both instead of replacing them with only the generic latch error. To recover, stop transmitting, put the amplifier in STANDBY, use the physical panel to return home, disable automatic fan-policy switching, and wait for fresh STANDBY/RX home evidence. Then use **Clear Failed Fan Transaction** in the built-in Settings page or `POST /api/v1/fan-policy/recover`. Recovery sends no amplifier command, clears the failed manual override, and does not restore OPERATE.
+
 `POST /api/v1/fan-policy/verify` refreshes a receipt loaded as `persisted-stale` after server restart. While connected, a complete manually driven FAN MANAGEMENT → SAVE → STORING DATA → home sequence is also observed and recorded. A menu value seen before SAVE is never treated as the stored EEPROM mode.
 
 ---

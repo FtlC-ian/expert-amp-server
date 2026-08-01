@@ -33,6 +33,7 @@ internal/
   font/         — SPE-style LCD font table used by the renderer
   render/       — pixel (PNG) and SVG renderers
   api/          — shared JSON types (telemetry, button action, frame info)
+  menudebug/    — guarded menu discovery sessions and sanitized report generation
 
 fixtures/
   real_home_status_frame.bin  — captured home/status screen
@@ -140,6 +141,14 @@ The HTTP server wires everything together. It:
 | `/api/v1/fan-policy` | GET | Fan-policy state | Automatic/manual policy, verification confidence, and recovery state |
 | `/api/v1/fan-policy/override` | POST | Manual fan override | Requests automatic, Normal, or CONTEST through the verified transaction |
 | `/api/v1/fan-policy/verify` | POST | Fan-mode verification | Revalidates the saved amplifier fan mode |
+| `/api/v1/fan-policy/recover` | POST | Failed fan recovery | Clears only server state after fresh STANDBY/RX home evidence; sends no amplifier command |
+| `/api/v1/menu-debug/session` | GET/POST | Menu discovery session | Inspects or arms the disabled-by-default, memory-only STANDBY/RX wizard |
+| `/api/v1/menu-debug/session/advance` | POST | One bounded wizard step | Sends at most one reviewed action, then waits for newer checksum-valid display evidence |
+| `/api/v1/menu-debug/session/verification` | POST | Operator verification | Records candidate and restoration results; uncertainty stops fail-closed |
+| `/api/v1/menu-debug/session/abort` | POST | Abort wizard | Releases ownership without recovery or OPERATE commands |
+| `/api/v1/menu-debug/report` | GET | Sanitized candidate report | Returns model/firmware/display/action receipts without host or serial identity |
+| `/api/v1/menu-debug/report.json` | GET | Download sanitized report | Downloads the current `menu-report.v1` JSON document |
+| `/api/v1/menu-debug/report/upload` | POST | Consented report upload | One-shot upload to the separately configured receive-only HTTPS collector |
 | `/api/v1/runtime` | GET | Canonical runtime settings/status view | Live |
 | `/api/v1/runtime/snapshot` | GET | Canonical runtime snapshot route | Live |
 | `/api/v1/runtime/ingest` | GET | Canonical ingest diagnostics route | Live |

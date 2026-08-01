@@ -15,6 +15,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/font"
+	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/render"
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
@@ -30,23 +31,26 @@ type VersionInfo struct {
 }
 
 type Options struct {
-	IndexHTML        []byte
-	DocsHTML         []byte
-	OpenAPIJSON      []byte
-	ROM              *font.ROM
-	Store            *runtime.Store
-	StatusState      *runtime.StatusState
-	SerialSource     *runtime.SerialSource // nil when running in fixture mode
-	DemoState        display.State
-	AltState         display.State
-	Fixtures         runtime.FixtureCatalog
-	Config           *config.Manager
-	SafetyController *monitoring.Controller
-	FanPolicy        *fanpolicy.Controller
-	ButtonTransport  transport.ButtonTransport
-	WakeTransport    transport.WakeTransport
-	RestartServer    func(context.Context) error
-	Version          VersionInfo
+	IndexHTML          []byte
+	DocsHTML           []byte
+	OpenAPIJSON        []byte
+	ROM                *font.ROM
+	Store              *runtime.Store
+	StatusState        *runtime.StatusState
+	SerialSource       *runtime.SerialSource // nil when running in fixture mode
+	DemoState          display.State
+	AltState           display.State
+	Fixtures           runtime.FixtureCatalog
+	Config             *config.Manager
+	SafetyController   *monitoring.Controller
+	FanPolicy          *fanpolicy.Controller
+	MenuDebug          *menudebug.Controller
+	MenuDebugTransport transport.ButtonTransport
+	MenuDebugUploader  MenuDebugUploader
+	ButtonTransport    transport.ButtonTransport
+	WakeTransport      transport.WakeTransport
+	RestartServer      func(context.Context) error
+	Version            VersionInfo
 }
 
 type displayStateResponse struct {
@@ -101,6 +105,7 @@ type settingsRequest struct {
 	FanDisplayProfile           *string            `json:"fanDisplayProfile,omitempty"`
 	VerifyFanModeOnStartup      *bool              `json:"verifyFanModeOnStartup,omitempty"`
 	FanBoostDurationMinutes     *int               `json:"fanBoostDurationMinutes,omitempty"`
+	MenuDebugEnabled            *bool              `json:"menuDebugEnabled,omitempty"`
 
 	SerialBaudRate           *int  `json:"serialBaudRate,omitempty"`
 	SerialReadTimeoutMs      *int  `json:"serialReadTimeoutMs,omitempty"`
@@ -134,6 +139,7 @@ func selectedVersion(opts Options) VersionInfo {
 
 func NewHandler(opts Options) http.Handler {
 	mux := http.NewServeMux()
+	registerMenuDebugRoutes(mux, opts)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -354,12 +360,16 @@ func NewHandler(opts Options) http.Handler {
 			}
 			duration = time.Duration(*req.DurationMinutes) * time.Minute
 		}
-		if err := opts.FanPolicy.SetManualOverride(policy, duration); err != nil {
-			writeAPIError(w, http.StatusConflict, err.Error())
-			return
-		}
 		settings := opts.Config.Get().Settings
 		status := opts.StatusState.CurrentProtocolNativeWithContact()
+		if err := opts.FanPolicy.SetManualOverride(policy, duration); err != nil {
+			writeAPI(w, http.StatusConflict, api.Response{
+				Success: false,
+				Error:   err.Error(),
+				Data:    opts.FanPolicy.View(status, fanPolicySettings(settings)),
+			})
+			return
+		}
 		result := opts.FanPolicy.UpdateSettings(status, fanPolicySettings(settings))
 		writeAPI(w, http.StatusAccepted, api.Response{
 			Success: true,
@@ -376,16 +386,46 @@ func NewHandler(opts Options) http.Handler {
 			writeAPIError(w, http.StatusServiceUnavailable, "fan-policy control unavailable")
 			return
 		}
-		if err := opts.FanPolicy.RequestVerification("api"); err != nil {
-			writeAPIError(w, http.StatusConflict, err.Error())
-			return
-		}
 		settings := opts.Config.Get().Settings
 		status := opts.StatusState.CurrentProtocolNativeWithContact()
+		if err := opts.FanPolicy.RequestVerification("api"); err != nil {
+			writeAPI(w, http.StatusConflict, api.Response{
+				Success: false,
+				Error:   err.Error(),
+				Data:    opts.FanPolicy.View(status, fanPolicySettings(settings)),
+			})
+			return
+		}
 		result := opts.FanPolicy.UpdateSettings(status, fanPolicySettings(settings))
 		writeAPI(w, http.StatusAccepted, api.Response{
 			Success: true,
 			Message: "fan-mode verification accepted; the verified transaction will run when RX safety evidence is available",
+			Data:    result,
+		})
+	})
+
+	mux.HandleFunc("/api/v1/fan-policy/recover", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMethodAPI(w, r, http.MethodPost) {
+			return
+		}
+		if opts.FanPolicy == nil || opts.Config == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, "fan-policy control unavailable")
+			return
+		}
+		settings := opts.Config.Get().Settings
+		status := opts.StatusState.CurrentProtocolNativeWithContact()
+		if err := opts.FanPolicy.Recover(status, fanPolicySettings(settings)); err != nil {
+			writeAPI(w, http.StatusConflict, api.Response{
+				Success: false,
+				Error:   err.Error(),
+				Data:    opts.FanPolicy.View(status, fanPolicySettings(settings)),
+			})
+			return
+		}
+		result := opts.FanPolicy.UpdateSettings(status, fanPolicySettings(settings))
+		writeAPI(w, http.StatusOK, api.Response{
+			Success: true,
+			Message: "failed fan-policy transaction cleared; manual override removed and OPERATE remains unchanged",
 			Data:    result,
 		})
 	})
@@ -737,6 +777,7 @@ func mergeSettingsRequest(current config.Settings, req settingsRequest) config.S
 		FanDisplayProfile:           pickOptionalString(current.FanDisplayProfile, req.FanDisplayProfile),
 		VerifyFanModeOnStartup:      pickBool(current.VerifyFanModeOnStartup, req.VerifyFanModeOnStartup),
 		FanBoostDurationMinutes:     pickInt(current.FanBoostDurationMinutes, req.FanBoostDurationMinutes),
+		MenuDebugEnabled:            pickBool(current.MenuDebugEnabled, req.MenuDebugEnabled),
 		SerialBaudRate:              pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
 		SerialReadTimeoutMs:         pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
 		StatusPollCommandEnabled:    statusPollCommandEnabled,
