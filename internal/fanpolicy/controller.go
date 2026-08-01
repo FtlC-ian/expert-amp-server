@@ -64,6 +64,8 @@ type navState struct {
 	leaseHeld        bool
 	verifyOnly       bool
 	failureAfterGen  uint64
+	profile          string
+	setupIndex       int
 }
 
 type passiveSaveState struct {
@@ -525,7 +527,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			return c.result
 		}
 		c.lastVerifiedScreen = "home:standby"
-		if !c.sendLocked("set", "setup:ANTENNA", observation.Generation, "home") {
+		if !c.sendLocked("set", "setup:identify", observation.Generation, "home") {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
@@ -594,7 +596,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			base.State = StateBlocked
 			base.Pending = false
 			base.BlockedBy = []string{"verified-home-display"}
-			base.Reason = "fan-policy change is waiting for the verified First Series home display"
+			base.Reason = "fan-policy change is waiting for a verified Expert home display"
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
@@ -629,7 +631,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 				c.failLocked("STANDBY status did not match a checksum-valid STANDBY home display")
 			} else {
 				c.lastVerifiedScreen = "home:standby"
-				c.sendLocked("set", "setup:ANTENNA", observation.Generation, "home")
+				c.sendLocked("set", "setup:identify", observation.Generation, "home")
 			}
 		default:
 			c.failLocked("operating state was not explicit before fan-policy navigation")
@@ -709,49 +711,18 @@ func (c *Controller) View(status api.Status, settings Settings) Result {
 }
 
 func (c *Controller) advanceLocked(observation DisplayObservation, key string) bool {
+	if strings.HasPrefix(c.nav.step, "setup:") && c.nav.step != "setup:identify" && c.nav.profile != "" {
+		return c.advanceProfileSetupLocked(observation, key)
+	}
 	switch c.nav.step {
-	case "setup:ANTENNA":
-		if !matchesSetupSelection(observation.State, "setup:ANTENNA") {
+	case "setup:identify":
+		profile, initialKey, ok := identifyFanDisplayProfile(observation.State, c.status.ModelName)
+		if !ok || key != initialKey {
 			return c.unexpectedLocked(observation.State)
 		}
-		c.lastVerifiedScreen = key
-		return c.sendLocked("right", "setup:CAT", observation.Generation, key)
-	case "setup:CAT":
-		if !matchesSetupSelection(observation.State, "setup:CAT") {
-			return c.unexpectedLocked(observation.State)
-		}
-		c.lastVerifiedScreen = key
-		return c.sendLocked("right", "setup:MANUAL TUNE", observation.Generation, key)
-	case "setup:MANUAL TUNE":
-		if !matchesSetupSelection(observation.State, "setup:MANUAL TUNE") {
-			return c.unexpectedLocked(observation.State)
-		}
-		c.lastVerifiedScreen = key
-		return c.sendLocked("right", "setup:DISPLAY", observation.Generation, key)
-	case "setup:DISPLAY":
-		if !matchesSetupSelection(observation.State, "setup:DISPLAY") {
-			return c.unexpectedLocked(observation.State)
-		}
-		c.lastVerifiedScreen = key
-		return c.sendLocked("right", "setup:BEEP", observation.Generation, key)
-	case "setup:BEEP":
-		if !matchesSetupSelection(observation.State, "setup:BEEP") {
-			return c.unexpectedLocked(observation.State)
-		}
-		c.lastVerifiedScreen = key
-		return c.sendLocked("right", "setup:START", observation.Generation, key)
-	case "setup:START":
-		if !matchesSetupSelection(observation.State, "setup:START") {
-			return c.unexpectedLocked(observation.State)
-		}
-		c.lastVerifiedScreen = key
-		return c.sendLocked("right", "setup:TEMP/FANS", observation.Generation, key)
-	case "setup:TEMP/FANS":
-		if !matchesSetupSelection(observation.State, "setup:TEMP/FANS") {
-			return c.unexpectedLocked(observation.State)
-		}
-		c.lastVerifiedScreen = key
-		return c.sendLocked("set", "submenu:TEMPERATURE SCALE", observation.Generation, key)
+		c.nav.profile = profile.id
+		c.nav.setupIndex = 0
+		return c.advanceProfileSetupLocked(observation, key)
 	case "submenu:TEMPERATURE SCALE":
 		policy, ok := submenuPolicy(observation.State, "TEMPERATURE SCALE")
 		if !ok {
@@ -845,6 +816,23 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		c.failLocked("unknown display-navigation state")
 		return false
 	}
+}
+
+func (c *Controller) advanceProfileSetupLocked(observation DisplayObservation, key string) bool {
+	profile, ok := fanDisplayProfileByID(c.nav.profile)
+	if !ok || c.nav.setupIndex < 0 || c.nav.setupIndex >= len(profile.setupKeys) {
+		return c.unexpectedLocked(observation.State)
+	}
+	expected := profile.setupKeys[c.nav.setupIndex]
+	if key != expected || !matchesSetupSelection(observation.State, expected) {
+		return c.unexpectedLocked(observation.State)
+	}
+	c.lastVerifiedScreen = key
+	if c.nav.setupIndex == len(profile.setupKeys)-1 {
+		return c.sendLocked("set", "submenu:TEMPERATURE SCALE", observation.Generation, key)
+	}
+	c.nav.setupIndex++
+	return c.sendLocked("right", profile.setupKeys[c.nav.setupIndex], observation.Generation, key)
 }
 
 func (c *Controller) sendLocked(action, nextStep string, generation uint64, previousKey string) bool {
@@ -1217,7 +1205,8 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 	if !c.currentVerifiedAt.IsZero() {
 		base.CurrentPolicyVerifiedAt = c.currentVerifiedAt.UTC().Format(time.RFC3339)
 	}
-	base.ActionAvailable = c.transport != nil && isExpertModel(base.Observations.ModelName)
+	_, supportedProfile := verifiedFanDisplayProfileForModel(base.Observations.ModelName)
+	base.ActionAvailable = c.transport != nil && supportedProfile
 	if base.ControlActive {
 		switch {
 		case c.displayTX == nil:
@@ -1233,6 +1222,7 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 	}
 	base.Navigation = Navigation{
 		State:                 "idle",
+		Profile:               c.nav.profile,
 		LastAction:            c.nav.lastAction,
 		LastError:             c.nav.lastError,
 		LastVerifiedScreen:    c.lastVerifiedScreen,

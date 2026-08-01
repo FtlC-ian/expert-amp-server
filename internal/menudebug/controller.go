@@ -508,6 +508,9 @@ func (c *Controller) InstallPlan(token string, revision uint64, plan Plan) (Sess
 	if latest.Value != plan.OriginalValue {
 		return c.viewLocked(), c.failLocked("plan original value does not match classified display evidence")
 	}
+	if len(plan.DiscoverySetupWaypoints) != 0 && !matchesDiscoverySetupWaypoints(c.session.evidence, plan.DiscoverySetupWaypoints) {
+		return c.viewLocked(), c.failLocked("reviewed profile does not match the observed setup-menu topology")
+	}
 	c.session.plan = plan
 	if plan.Profile == "expert-1.3k-fa-first-series-bank-ab-v1" && c.session.actionBudget < 36 {
 		c.session.actionBudget = 36
@@ -519,9 +522,32 @@ func (c *Controller) InstallPlan(token string, revision uint64, plan Plan) (Sess
 	return c.viewLocked(), nil
 }
 
+func matchesDiscoverySetupWaypoints(evidence []Evidence, expected []string) bool {
+	actual := make([]string, 0, len(expected))
+	for _, item := range evidence {
+		if item.Kind == ScreenSetup {
+			actual = append(actual, strings.TrimSpace(item.Selection))
+		}
+	}
+	if len(actual) != len(expected) {
+		return false
+	}
+	for index, want := range expected {
+		if strings.HasPrefix(want, "~") {
+			if !strings.Contains(strings.ToUpper(actual[index]), strings.ToUpper(strings.TrimPrefix(want, "~"))) {
+				return false
+			}
+		} else if !strings.EqualFold(actual[index], want) {
+			return false
+		}
+	}
+	return true
+}
+
 func validatePlan(p Plan) error {
 	profileCapability := map[string]Capability{
 		"expert-1.3k-fa-first-series-fan-v1":     CapabilityFan,
+		"expert-1.5k-fa-second-series-fan-v1":    CapabilityFan,
 		"expert-1.3k-fa-first-series-bank-ab-v1": CapabilityBank,
 	}[p.Profile]
 	if profileCapability == "" || profileCapability != p.Capability {

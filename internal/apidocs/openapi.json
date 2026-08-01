@@ -1990,6 +1990,14 @@
             "type": "string",
             "description": "Idle, failed, complete, or the exact expected display-navigation step."
           },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "expert-1.3k-fa-first-series-v1",
+              "expert-1.5k-fa-second-series-v1"
+            ],
+            "description": "Evidence-selected fan navigation profile. It appears only after the reported model and first verified SET-menu topology agree."
+          },
           "lastAction": {
             "type": "string",
             "enum": [
@@ -2620,7 +2628,7 @@
           },
           "automaticFanPolicyEnabled": {
             "type": "boolean",
-            "description": "Explicitly enables fan-policy evaluation. Defaults false and requires pollingMode both. Manual Fan Boost testing is recommended first. Navigation starts only for Expert-family model telemetry from a verified RX home screen, temporarily enters verified STANDBY when initially OPERATE, pauses all writes during TX, and restores OPERATE only after verified save completion."
+            "description": "Explicitly enables fan-policy evaluation. Defaults false and requires pollingMode both. Production navigation requires a promoted hardware profile and currently supports the verified First Series Expert 1.3K-FA; unsupported models are blocked before SET. The reported model and first verified setup topology must agree before selector movement. Navigation temporarily enters verified STANDBY when initially OPERATE, pauses all writes during TX, and restores OPERATE only after verified save completion."
           },
           "fanHighTemperatureC": {
             "type": "number",

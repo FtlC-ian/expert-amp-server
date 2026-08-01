@@ -492,14 +492,17 @@ func reviewedMenuDebugNoSaveExit(runtime menudebug.RuntimeSnapshot, capability m
 }
 
 // reviewedMenuDebugDiscoveryAction authorizes only a selector move that is
-// part of a reviewed model profile. Entering the First Series fan menu lands
-// on TEMPERATURE SCALE; one RIGHT selects FAN MANAGEMENT without changing a
-// value. Unknown layouts never receive this authorization.
+// part of a reviewed model-and-topology profile. Both captured NORMAL/CONTEST
+// profiles land on TEMPERATURE SCALE; one RIGHT selects FAN MANAGEMENT without
+// changing a value. Unknown layouts never receive this authorization.
 func reviewedMenuDebugDiscoveryAction(runtime menudebug.RuntimeSnapshot, capability menudebug.Capability) (menudebug.Action, bool) {
-	if capability != menudebug.CapabilityFan || runtime.Screen.Kind != menudebug.ScreenFan || !strings.EqualFold(strings.TrimSpace(runtime.Status.ModelName), "EXPERT 1.3K-FA") {
+	if capability != menudebug.CapabilityFan {
 		return "", false
 	}
-	selected, _, exactLayout := fanpolicy.FirstSeriesFanScreen(runtime.DisplayState)
+	if _, ok := reviewedFanProfileFor(runtime); !ok {
+		return "", false
+	}
+	selected, _, exactLayout := fanpolicy.NormalContestFanScreen(runtime.DisplayState)
 	if !exactLayout || selected != "TEMPERATURE SCALE" {
 		return "", false
 	}
@@ -715,46 +718,96 @@ func menuDebugEvidence(runtime menudebug.RuntimeSnapshot, capability menudebug.C
 	return menudebug.Evidence{Generation: runtime.DisplayGeneration, Fingerprint: runtime.Screen.Fingerprint, Kind: runtime.Screen.Kind, Rows: rows, Selection: runtime.Screen.SelectedText, Candidate: candidate, Value: value, SaveVisible: runtime.Screen.SaveVisible, StandbyHome: standbyHome, ObservedAt: runtime.DisplayObservedAt}
 }
 
+type reviewedFanProfile struct {
+	ID                    string
+	Model                 string
+	RestoreSetupWaypoints []string
+}
+
+var reviewedFanProfiles = []reviewedFanProfile{
+	{
+		ID:                    "expert-1.3k-fa-first-series-fan-v1",
+		Model:                 "EXPERT 1.3K-FA",
+		RestoreSetupWaypoints: []string{"ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP", "~START", "TEMP/FANS"},
+	},
+	{
+		ID:                    "expert-1.5k-fa-second-series-fan-v1",
+		Model:                 "EXPERT 1.5K-FA",
+		RestoreSetupWaypoints: []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP", "~START", "TEMP/FANS"},
+	},
+}
+
+func reviewedFanProfileFor(runtime menudebug.RuntimeSnapshot) (reviewedFanProfile, bool) {
+	if runtime.Screen.Kind != menudebug.ScreenFan {
+		return reviewedFanProfile{}, false
+	}
+	if _, _, exactLayout := fanpolicy.NormalContestFanScreen(runtime.DisplayState); !exactLayout {
+		return reviewedFanProfile{}, false
+	}
+	model := strings.TrimSpace(runtime.Status.ModelName)
+	for _, profile := range reviewedFanProfiles {
+		if strings.EqualFold(model, profile.Model) {
+			return profile, true
+		}
+	}
+	return reviewedFanProfile{}, false
+}
+
+func setupWaypointStep(action menudebug.Action, waypoint string) menudebug.Step {
+	step := menudebug.Step{Action: action, ExpectedKind: menudebug.ScreenSetup}
+	if action == menudebug.ActionSet {
+		step.Purpose = menudebug.PurposeEnterCandidate
+	} else {
+		step.Purpose = menudebug.PurposeEnumerate
+	}
+	if strings.HasPrefix(waypoint, "~") {
+		step.ExpectedSelectionContains = strings.TrimPrefix(waypoint, "~")
+	} else {
+		step.ExpectedSelection = waypoint
+	}
+	return step
+}
+
 func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudebug.Capability) (menudebug.Plan, error) {
 	if capability == menudebug.CapabilityBank {
 		return reviewedFirstSeriesBankPlan(runtime)
 	}
-	if capability != menudebug.CapabilityFan || runtime.Screen.Kind != menudebug.ScreenFan || !strings.EqualFold(strings.TrimSpace(runtime.Status.ModelName), "EXPERT 1.3K-FA") {
+	profile, profileOK := reviewedFanProfileFor(runtime)
+	if capability != menudebug.CapabilityFan || !profileOK {
 		return menudebug.Plan{}, errors.New("topology captured, but this model/capability has no reviewed action profile; no value-changing or SAVE command is authorized")
 	}
-	selected, exactPolicy, exactLayout := fanpolicy.FirstSeriesFanScreen(runtime.DisplayState)
+	selected, exactPolicy, exactLayout := fanpolicy.NormalContestFanScreen(runtime.DisplayState)
 	if !exactLayout || selected != "FAN MANAGEMENT" {
-		return menudebug.Plan{}, errors.New("topology captured, but this model/capability has no reviewed action profile; exact First Series fan layout did not match")
+		return menudebug.Plan{}, errors.New("topology captured, but this model/capability has no reviewed action profile; exact reviewed fan layout did not match")
 	}
 	original := strings.ToLower(strings.TrimSpace(runtime.Screen.SelectedValue))
 	candidate := map[string]string{"normal": "contest", "contest": "normal"}[original]
 	if candidate == "" || !strings.EqualFold(original, exactPolicy) {
 		return menudebug.Plan{}, errors.New("the reviewed fan profile requires FAN MANAGEMENT with a classified NORMAL or CONTEST value")
 	}
-	profile := "expert-1.3k-fa-first-series-fan-v1"
 	fan := menudebug.ScreenFan
-	setup := menudebug.ScreenSetup
 	home := menudebug.ScreenHome
 	apply := []menudebug.Step{
 		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeChangeValue, FromFingerprint: runtime.Screen.Fingerprint, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: candidate, ExpectedSelectionContains: "FAN MANAGEMENT"},
 		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: candidate, ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
 		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
 	}
-	restore := []menudebug.Step{
-		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeEnterCandidate, ExpectedKind: setup, ExpectedSelection: "ANTENNA"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: setup, ExpectedSelection: "CAT"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: setup, ExpectedSelection: "MANUAL TUNE"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: setup, ExpectedSelection: "DISPLAY"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: setup, ExpectedSelectionContains: "BEEP"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: setup, ExpectedSelectionContains: "START"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: setup, ExpectedSelection: "TEMP/FANS"},
-		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeEnterCandidate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: candidate, ExpectedSelection: "TEMPERATURE SCALE"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: candidate, ExpectedSelectionContains: "FAN MANAGEMENT"},
-		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeChangeValue, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: original, ExpectedSelectionContains: "FAN MANAGEMENT"},
-		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: original, ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
-		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
+	restore := make([]menudebug.Step, 0, len(profile.RestoreSetupWaypoints)+5)
+	for index, waypoint := range profile.RestoreSetupWaypoints {
+		action := menudebug.ActionRight
+		if index == 0 {
+			action = menudebug.ActionSet
+		}
+		restore = append(restore, setupWaypointStep(action, waypoint))
 	}
-	return menudebug.Plan{Profile: profile, Capability: capability, OriginalValue: original, CandidateValue: candidate, Apply: apply, Restore: restore}, nil
+	restore = append(restore,
+		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeEnterCandidate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: candidate, ExpectedSelection: "TEMPERATURE SCALE"},
+		menudebug.Step{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: candidate, ExpectedSelectionContains: "FAN MANAGEMENT"},
+		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeChangeValue, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: original, ExpectedSelectionContains: "FAN MANAGEMENT"},
+		menudebug.Step{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: original, ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
+		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: home, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
+	)
+	return menudebug.Plan{Profile: profile.ID, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), Apply: apply, Restore: restore}, nil
 }
 
 func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot) (menudebug.Plan, error) {

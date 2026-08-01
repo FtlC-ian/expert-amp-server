@@ -1698,7 +1698,7 @@
       <!-- Automatic Fan Policy -->
       <div class="settings-card">
         <div class="settings-card-title">Automatic Fan Cooling</div>
-        <p class="needs-restart-note">Experimental and disabled by default. We recommend testing Fan Boost manually before enabling automatic fan cooling. The server verifies each observed menu waypoint and stops if your amplifier's screens do not match the known path. If the test fails, disable fan control and report your amplifier model and firmware version. During a transaction it waits for verified RX, temporarily changes OPERATE to STANDBY when necessary, and restores OPERATE only when it owned that change.</p>
+        <p class="needs-restart-note">Experimental and disabled by default. Automatic fan cooling requires a promoted hardware profile and currently supports the verified First Series Expert 1.3K-FA path. Unsupported models are blocked before SET; use Menu Debug to capture candidate profiles. During a transaction the server verifies the model, first menu topology, and every later waypoint, waits for RX, temporarily changes OPERATE to STANDBY when necessary, and restores OPERATE only when it owned that change.</p>
 
         <div class="settings-section" style="margin-top:14px;">
           <div class="settings-checkbox-row">

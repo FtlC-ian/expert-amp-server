@@ -112,7 +112,7 @@ func matchesOperateHome(state display.State) bool {
 		strings.TrimSpace(rows[5]) == ""
 }
 
-func setupSelectionKey(state display.State) (string, bool) {
+func firstSeriesSetupSelectionKey(state display.State) (string, bool) {
 	rows := displayRows(state)
 	if !strings.HasPrefix(strings.TrimSpace(rows[0]), "SETUP OPTIONS vs. INPUT ") ||
 		strings.TrimSpace(rows[3]) != "MANUAL TUNE   TEMP/FANS      BANK" {
@@ -150,9 +150,112 @@ func setupSelectionKey(state display.State) (string, bool) {
 	return "", false
 }
 
+func normalizedDisplayRow(row string) string {
+	return strings.Join(strings.Fields(row), " ")
+}
+
+func secondSeriesSetupSelectionKey(state display.State) (string, bool) {
+	rows := displayRows(state)
+	if normalizedDisplayRow(rows[0]) != "SETUP OPTIONS vs. INPUT 1" ||
+		normalizedDisplayRow(rows[1]) != "CONFIG DISPLAY ALARMS LOG" ||
+		normalizedDisplayRow(rows[2]) != "ANTENNA BEEP Off TUN ANT" && normalizedDisplayRow(rows[2]) != "ANTENNA BEEP On TUN ANT" ||
+		normalizedDisplayRow(rows[3]) != "CAT START Stby RX ANT" && normalizedDisplayRow(rows[3]) != "CAT START Oper RX ANT" ||
+		normalizedDisplayRow(rows[4]) != "MANUAL TUNE TEMP/FANS EXIT" ||
+		normalizedDisplayRow(rows[5]) != "" ||
+		!strings.Contains(normalizedDisplayRow(rows[7]), ":SELECT") ||
+		!strings.Contains(normalizedDisplayRow(rows[7]), "[SET]:") {
+		return "", false
+	}
+	selection, ok := singleHighlightedSelection(state)
+	if !ok {
+		return "", false
+	}
+	type expectedSelection struct {
+		row, start, end int
+		values          []string
+		key             string
+	}
+	expected := []expectedSelection{
+		{1, 0, 13, []string{"CONFIG"}, "setup:CONFIG"},
+		{2, 0, 13, []string{"ANTENNA"}, "setup:ANTENNA"},
+		{3, 0, 13, []string{"CAT"}, "setup:CAT"},
+		{4, 0, 13, []string{"MANUAL TUNE"}, "setup:MANUAL TUNE"},
+		{1, 14, 28, []string{"DISPLAY"}, "setup:DISPLAY"},
+		{2, 14, 28, []string{"BEEP    On", "BEEP    Off"}, "setup:BEEP"},
+		{3, 14, 28, []string{"START   Stby", "START   Oper"}, "setup:START"},
+		{4, 14, 28, []string{"TEMP/FANS"}, "setup:TEMP/FANS"},
+	}
+	for _, candidate := range expected {
+		if selection.row != candidate.row || selection.start != candidate.start || selection.end != candidate.end {
+			continue
+		}
+		for _, value := range candidate.values {
+			if selection.text == value {
+				return candidate.key, true
+			}
+		}
+		return "", false
+	}
+	return "", false
+}
+
+func setupSelectionKey(state display.State) (string, bool) {
+	if key, ok := firstSeriesSetupSelectionKey(state); ok {
+		return key, true
+	}
+	return secondSeriesSetupSelectionKey(state)
+}
+
 func matchesSetupSelection(state display.State, key string) bool {
 	actual, ok := setupSelectionKey(state)
 	return ok && actual == key
+}
+
+type fanDisplayProfile struct {
+	id        string
+	model     string
+	setupKeys []string
+	verified  bool
+}
+
+var fanDisplayProfiles = []fanDisplayProfile{
+	{id: FirstSeriesDisplayProfile, model: "EXPERT 1.3K-FA", setupKeys: []string{"setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, verified: true},
+	{id: SecondSeriesDisplayProfile, model: "EXPERT 1.5K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}},
+}
+
+func fanDisplayProfileByID(id string) (fanDisplayProfile, bool) {
+	for _, profile := range fanDisplayProfiles {
+		if profile.id == id {
+			return profile, true
+		}
+	}
+	return fanDisplayProfile{}, false
+}
+
+func fanDisplayProfileForModel(model string) (fanDisplayProfile, bool) {
+	for _, profile := range fanDisplayProfiles {
+		if strings.EqualFold(strings.TrimSpace(model), profile.model) {
+			return profile, true
+		}
+	}
+	return fanDisplayProfile{}, false
+}
+
+func verifiedFanDisplayProfileForModel(model string) (fanDisplayProfile, bool) {
+	profile, ok := fanDisplayProfileForModel(model)
+	return profile, ok && profile.verified
+}
+
+func identifyFanDisplayProfile(state display.State, model string) (fanDisplayProfile, string, bool) {
+	key, ok := setupSelectionKey(state)
+	if !ok {
+		return fanDisplayProfile{}, "", false
+	}
+	profile, ok := verifiedFanDisplayProfileForModel(model)
+	if ok && len(profile.setupKeys) != 0 && key == profile.setupKeys[0] {
+		return profile, key, true
+	}
+	return fanDisplayProfile{}, "", false
 }
 
 func matchesSubmenuSelection(state display.State, selected string) bool {
@@ -179,16 +282,23 @@ func submenuPolicy(state display.State, selected string) (string, bool) {
 	}
 }
 
-// FirstSeriesFanScreen returns the selected waypoint and policy only when the
-// display exactly matches the captured First Series 1.3K-FA fan layout,
-// including its single highlighted selection geometry.
-func FirstSeriesFanScreen(state display.State) (selected, policy string, ok bool) {
+// NormalContestFanScreen returns the selected waypoint and policy only when
+// the display exactly matches the reviewed NORMAL/CONTEST fan-menu topology,
+// including its single highlighted selection geometry. Model-specific setup
+// navigation remains outside this matcher.
+func NormalContestFanScreen(state display.State) (selected, policy string, ok bool) {
 	for _, candidate := range []string{"TEMPERATURE SCALE", "FAN MANAGEMENT", "SAVE"} {
 		if value, matches := submenuPolicy(state, candidate); matches {
 			return candidate, value, true
 		}
 	}
 	return "", PolicyUnknown, false
+}
+
+// FirstSeriesFanScreen is retained for compatibility with callers that only
+// support the original First Series 1.3K-FA profile.
+func FirstSeriesFanScreen(state display.State) (selected, policy string, ok bool) {
+	return NormalContestFanScreen(state)
 }
 
 func matchesStoring(state display.State) bool {

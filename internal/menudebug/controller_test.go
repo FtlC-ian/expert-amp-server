@@ -312,6 +312,29 @@ func TestReviewedPlanProfilesAreCapabilityBound(t *testing.T) {
 	}
 }
 
+func TestReviewedPlanDiscoveryTopologyMustMatchExactly(t *testing.T) {
+	evidence := []Evidence{
+		{Kind: ScreenHome},
+		{Kind: ScreenSetup, Selection: "CONFIG"},
+		{Kind: ScreenSetup, Selection: "ANTENNA"},
+		{Kind: ScreenSetup, Selection: "BEEP    Off"},
+		{Kind: ScreenFan, Selection: "FAN MANAGEMENT"},
+	}
+	expected := []string{"CONFIG", "ANTENNA", "~BEEP"}
+	if !matchesDiscoverySetupWaypoints(evidence, expected) {
+		t.Fatal("captured setup topology did not match")
+	}
+	for _, nearMatch := range [][]string{
+		{"ANTENNA", "CONFIG", "~BEEP"},
+		{"CONFIG", "ANTENNA"},
+		{"CONFIG", "ANTENNA", "~START"},
+	} {
+		if matchesDiscoverySetupWaypoints(evidence, nearMatch) {
+			t.Fatalf("near-match topology was accepted: %v", nearMatch)
+		}
+	}
+}
+
 func evidence(generation uint64, fingerprint string) Evidence {
 	return Evidence{Generation: generation, Fingerprint: fingerprint}
 }

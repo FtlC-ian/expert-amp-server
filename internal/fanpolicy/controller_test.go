@@ -140,6 +140,62 @@ func TestControllerNavigatesCapturedFirstSeriesProfileOneVerifiedStepAtATime(t *
 	}
 }
 
+func TestControllerKeepsSecondSeriesCandidateOutOfAutomaticControl(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 1.5K-FA"
+	controller.Observe(status, settings)
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT 1.5K-FA")
+	result := controller.ObserveDisplay(rxObservation(home, 1))
+	if result.State != StateBlocked || result.ActionAvailable || len(buttons.actions) != 0 || !containsBlock(result.BlockedBy, "supported-fan-profile") {
+		t.Fatalf("candidate profile was promoted before hardware verification: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestControllerRejectsModelAndInitialSetupTopologyCrossPairs(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		model      string
+		setupState display.State
+	}{
+		{name: "1.3 model with second-series setup", model: "EXPERT 1.3K-FA", setupState: secondSeriesSetupScreen("CONFIG")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buttons := &recordingButtons{}
+			controller := NewController(buttons)
+			settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+			status := statusAt(81, "standby", false)
+			status.ModelName = tc.model
+			controller.Observe(status, settings)
+			home := homeScreen()
+			home.SetRow(1, "                       "+tc.model)
+			controller.ObserveDisplay(rxObservation(home, 1))
+			result := controller.ObserveDisplay(rxObservation(tc.setupState, 2))
+			if result.State != StateFailed || len(buttons.actions) != 1 || buttons.actions[0] != "set" || !result.Navigation.MayBeInMenu {
+				t.Fatalf("cross-pair did not fail before selector movement: result=%+v actions=%v", result, buttons.actions)
+			}
+		})
+	}
+}
+
+func TestControllerBlocksUnreviewedModelBeforeEnteringSetup(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT F-KFA"
+	controller.Observe(status, settings)
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT F-KFA")
+	result := controller.ObserveDisplay(rxObservation(home, 1))
+	if result.State != StateBlocked || result.ActionAvailable || len(buttons.actions) != 0 || !containsBlock(result.BlockedBy, "supported-fan-profile") {
+		t.Fatalf("unreviewed model was not blocked before SET: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
 func TestControllerAcceptsNewerHomeWhenStoringFrameIsMissed(t *testing.T) {
 	controller := NewController(&recordingButtons{})
 	settings := Settings{Enabled: true, DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 80, NormalTemperatureC: 75}
@@ -204,6 +260,33 @@ func TestControllerRejectsUncapturedSetupValues(t *testing.T) {
 		if key := semanticDisplayKey(state); key != "" {
 			t.Fatalf("uncaptured setup screen matched semantic key %q", key)
 		}
+	}
+}
+
+func TestSecondSeriesSetupProfileRequiresExactLayoutAndHighlightGeometry(t *testing.T) {
+	state := secondSeriesSetupScreen("CONFIG")
+	key, ok := secondSeriesSetupSelectionKey(state)
+	if !ok || key != "setup:CONFIG" {
+		t.Fatalf("captured Second Series setup was not recognized: key=%q ok=%v", key, ok)
+	}
+	for _, mutate := range []func(*display.State){
+		func(s *display.State) { s.SetRow(1, " CONFIG       DISPLAY       STATUS") },
+		func(s *display.State) { s.SetRow(4, " MANUAL TUNE  TEMP/FANS     BANK") },
+		func(s *display.State) {
+			for col := 0; col < display.Cols; col++ {
+				s.SetAttr(1, col, 0)
+			}
+			highlight(s, 1, 1, 13)
+		},
+	} {
+		nearMatch := state
+		mutate(&nearMatch)
+		if _, ok := secondSeriesSetupSelectionKey(nearMatch); ok {
+			t.Fatal("near-match Second Series setup selected a profile")
+		}
+	}
+	if _, _, ok := identifyFanDisplayProfile(state, "EXPERT 1.3K-FA"); ok {
+		t.Fatal("Second Series topology matched the First Series model")
 	}
 }
 
@@ -1262,6 +1345,32 @@ func setupScreenWithValues(selected, beep, start string) display.State {
 		"BEEP    On":   {1, 14, 28},
 		"START   Stby": {2, 14, 28},
 		"TEMP/FANS":    {3, 14, 28},
+	}
+	position := positions[selected]
+	highlight(&state, position[0], position[1], position[2])
+	return state
+}
+
+func secondSeriesSetupScreen(selected string) display.State {
+	state := screen(
+		"       SETUP OPTIONS vs. INPUT 1",
+		" CONFIG       DISPLAY       ALARMS LOG",
+		" ANTENNA      BEEP    Off   TUN ANT",
+		" CAT          START   Stby  RX ANT",
+		" MANUAL TUNE  TEMP/FANS     EXIT",
+		"",
+		"",
+		" [  ][  ]:SELECT          [SET]:CONFIRM",
+	)
+	positions := map[string][3]int{
+		"CONFIG":      {1, 0, 13},
+		"ANTENNA":     {2, 0, 13},
+		"CAT":         {3, 0, 13},
+		"MANUAL TUNE": {4, 0, 13},
+		"DISPLAY":     {1, 14, 28},
+		"BEEP":        {2, 14, 28},
+		"START":       {3, 14, 28},
+		"TEMP/FANS":   {4, 14, 28},
 	}
 	position := positions[selected]
 	highlight(&state, position[0], position[1], position[2])

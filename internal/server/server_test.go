@@ -1025,7 +1025,7 @@ func TestReviewedMenuDebugPlansAreServerOwnedAndExact(t *testing.T) {
 	nearMatch.SetRow(4, "SAVE CHANGES")
 	runtime.DisplayState = nearMatch
 	runtime.Screen = menudebug.Analyze(nearMatch)
-	if _, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "exact First Series") {
+	if _, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "reviewed action profile") {
 		t.Fatalf("near-match layout error = %v", err)
 	}
 
@@ -1047,7 +1047,29 @@ func TestReviewedMenuDebugPlansAreServerOwnedAndExact(t *testing.T) {
 	if reviewedMenuDebugNoSaveExit(runtime, menudebug.CapabilityFan) {
 		t.Fatal("unconfirmed model inherited DISPLAY no-save exit")
 	}
+	if action, ok := reviewedMenuDebugDiscoveryAction(runtime, menudebug.CapabilityFan); !ok || action != menudebug.ActionRight {
+		t.Fatalf("captured 1.5K temperature-scale discovery action = %q, %v", action, ok)
+	}
+	secondSeriesFan := state
+	runtime.DisplayState = secondSeriesFan
+	runtime.Screen = menudebug.Analyze(secondSeriesFan)
+	secondSeriesPlan, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondSeriesPlan.Profile != "expert-1.5k-fa-second-series-fan-v1" || len(secondSeriesPlan.Restore) != 13 || secondSeriesPlan.Restore[0].ExpectedSelection != "CONFIG" || secondSeriesPlan.Restore[1].ExpectedSelection != "ANTENNA" {
+		t.Fatalf("unsafe/incomplete Second Series plan: %+v", secondSeriesPlan)
+	}
+	runtime.Status.ModelName = "EXPERT F-KFA"
+	if _, ok := reviewedMenuDebugDiscoveryAction(runtime, menudebug.CapabilityFan); ok {
+		t.Fatal("F-KFA inherited NORMAL/CONTEST discovery action")
+	}
+	if _, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "no reviewed action profile") {
+		t.Fatalf("F-KFA plan error = %v", err)
+	}
 	runtime.Status.ModelName = "EXPERT 1.3K-FA"
+	runtime.DisplayState = temperatureScale
+	runtime.Screen = menudebug.Analyze(temperatureScale)
 	if action, ok := reviewedMenuDebugDiscoveryAction(runtime, menudebug.CapabilityFan); !ok || action != menudebug.ActionRight {
 		t.Fatalf("temperature-scale discovery action = %q, %v", action, ok)
 	}
@@ -1986,7 +2008,7 @@ func TestV1FanPolicyFailureResponsesExposeCauseAndRequireVerifiedRecovery(t *tes
 	tx := false
 	status := api.Status{
 		Telemetry: api.Telemetry{
-			ModelName:      "EXPERT 1.5K-FA",
+			ModelName:      "EXPERT 1.3K-FA",
 			OperatingState: "standby",
 			TX:             &tx,
 			Source:         "serial",
@@ -2009,7 +2031,7 @@ func TestV1FanPolicyFailureResponsesExposeCauseAndRequireVerifiedRecovery(t *tes
 	}
 	controller.Observe(status, settings)
 	home := display.NewState()
-	home.SetRow(1, "                       EXPERT 1.5K-FA")
+	home.SetRow(1, "                       EXPERT 1.3K-FA")
 	home.SetRow(2, "                       Solid State")
 	home.SetRow(3, "                       Fully Automatic")
 	home.SetRow(4, "                Standby")

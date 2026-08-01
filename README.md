@@ -90,7 +90,7 @@ The app also serves:
 
 Manual Fan Boost, Fan Normal, Fan Auto, and Verify controls use a display-verified transaction instead of a blind button macro. The controller temporarily enters STANDBY when necessary, pauses all menu writes during TX, verifies each expected LCD screen, saves the setting, and restores OPERATE only when it owned that transition. A timed Fan Boost begins its timer only after CONTEST mode is verified.
 
-This path is hardware-confirmed on a First Series Expert 1.3K-FA. Other Expert models are experimental until users verify their menu layouts. Test manual Fan Boost first; an unexpected screen stops the transaction rather than continuing.
+Production fan control is hardware-confirmed only on a First Series Expert 1.3K-FA and requires its model-bound SET-menu topology. Unsupported models stop before SET; an unexpected screen stops the transaction rather than continuing.
 
 Automatic fan cooling is disabled by default. Optional overtemperature standby is separately armed, requires fresh protocol-native OPERATE and RX status, sends one documented OPERATE toggle per hot episode, and never retries, powers off, or wakes the amplifier.
 
@@ -102,7 +102,7 @@ SPE documents a maximum rate of `115200` with automatic adaptation to lower spee
 
 The advanced Menu Debug wizard is disabled by default and intended for supervised compatibility testing. Arming requires the exact acknowledgement, fresh protocol STANDBY/RX, a checksum-valid STANDBY home display, inactive fan control, disarmed overtemperature standby, and an exclusive actuation lease. Each accepted step sends at most one reviewed command and then waits for newer verified display evidence.
 
-Only the reviewed First Series Expert 1.3K-FA fan and two-bank A/B layouts may propose a reversible value change and SAVE. Unknown models or layouts are topology-only: they may produce useful screen evidence, but they cannot inherit a value-changing profile. TX, stale evidence, an unexpected screen, timeout, or safety preemption stops the session fail-closed; the wizard never restores OPERATE or performs blind menu recovery.
+The reviewed First Series Expert 1.3K-FA profile may propose reversible fan and two-bank A/B tests. An evidence-backed Expert 1.5K-FA Second Series fan profile follows its captured CONFIG-first topology, but remains candidate-only until apply and restoration are physically verified. Unknown models and F-KFA NORMAL/QUIET layouts remain topology-only; QUIET is never treated as high cooling. TX, stale evidence, an unexpected screen, timeout, or safety preemption stops the session fail-closed; the wizard never restores OPERATE or performs blind menu recovery.
 
 Completed `menu-report.v1` reports can be previewed and downloaded locally. Optional upload requires explicit consent and a separately configured HTTPS collector endpoint through `-menu-report-collector-url` or `EXPERT_AMP_MENU_REPORT_COLLECTOR_URL`. Reports exclude network, host, callsign, session-token, and serial-device identity.
 

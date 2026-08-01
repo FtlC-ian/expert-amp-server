@@ -118,18 +118,18 @@ func TestEvaluateRejectsUnknownOperatingStateButAllowsOperateAndStandby(t *testi
 	}
 }
 
-func TestEvaluateAllowsExperimentalPathWithoutModelProfileGate(t *testing.T) {
+func TestEvaluateRequiresReviewedFanProfileBeforeNavigation(t *testing.T) {
 	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
 	status := statusAt(90, "standby", false)
 	status.ModelName = "EXPERT 2K-FA"
 	result := Evaluate(status, settings, "")
-	if len(result.BlockedBy) != 0 || result.State != StatePending {
-		t.Fatalf("experimental model path was blocked before display verification: %+v", result)
+	if !containsBlock(result.BlockedBy, "supported-fan-profile") || result.State != StateBlocked {
+		t.Fatalf("uncaptured Expert profile was not blocked before SET: %+v", result)
 	}
 	status.ModelName = "OTHER AMP"
 	result = Evaluate(status, settings, "")
-	if !containsBlock(result.BlockedBy, "supported-model-family") {
-		t.Fatalf("non-Expert model was not blocked: %+v", result)
+	if !containsBlock(result.BlockedBy, "supported-fan-profile") {
+		t.Fatalf("non-Expert profile was not blocked: %+v", result)
 	}
 }
 

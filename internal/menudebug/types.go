@@ -111,12 +111,13 @@ type Step struct {
 }
 
 type Plan struct {
-	Profile        string     `json:"profile"`
-	Capability     Capability `json:"capability"`
-	OriginalValue  string     `json:"originalValue"`
-	CandidateValue string     `json:"candidateValue"`
-	Apply          []Step     `json:"apply"`
-	Restore        []Step     `json:"restore"`
+	Profile                 string     `json:"profile"`
+	Capability              Capability `json:"capability"`
+	OriginalValue           string     `json:"originalValue"`
+	CandidateValue          string     `json:"candidateValue"`
+	DiscoverySetupWaypoints []string   `json:"-"`
+	Apply                   []Step     `json:"apply"`
+	Restore                 []Step     `json:"restore"`
 }
 
 type ActionAuthorization struct {
