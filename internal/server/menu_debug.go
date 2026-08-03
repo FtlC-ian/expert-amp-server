@@ -21,16 +21,27 @@ import (
 
 const menuDebugTokenHeader = "X-Menu-Debug-Token"
 
+const (
+	menuDebugStepReceiptTimeout = 8 * time.Second
+	menuDebugRunnerPollInterval = 25 * time.Millisecond
+)
+
 type MenuDebugUploader interface {
 	Upload(context.Context, menudebug.Report) error
 }
 
 type menuDebugAPI struct {
-	mu           sync.Mutex
-	opts         Options
-	firmware     string
-	capabilities []menudebug.Capability
-	uploads      map[string]bool
+	mu                sync.Mutex
+	dispatchMu        sync.Mutex
+	opts              Options
+	firmware          string
+	capabilities      []menudebug.Capability
+	uploads           map[string]bool
+	runners           map[string]bool
+	runnerPending     map[string]bool
+	runnerCancels     map[string]context.CancelFunc
+	stepTimeout       time.Duration
+	guardedTestRunner func(string)
 }
 
 type menuDebugArmRequest struct {
@@ -211,35 +222,16 @@ func (m *menuDebugAPI) advance(w http.ResponseWriter, r *http.Request) {
 		}
 		view, err = m.opts.MenuDebug.Begin(token, view.Revision, capability)
 		if err == nil {
-			view, err = m.sendDiscovery(r.Context(), token, view)
+			m.startGuardedTest(token, view)
 		}
 	case menudebug.PhaseDiscovering:
-		if req.Confirmation != "begin-discovery" {
-			writeAPIError(w, http.StatusBadRequest, "confirmation must be begin-discovery")
-			return
-		}
-		view, err = m.sendDiscovery(r.Context(), token, view)
+		err = errors.New("guarded discovery transaction is already running")
 	case menudebug.PhasePlanReady:
-		if req.Confirmation != "apply-proposed-change" {
-			writeAPIError(w, http.StatusBadRequest, "confirmation must be apply-proposed-change")
-			return
-		}
-		view, err = m.opts.MenuDebug.BeginApply(token, view.Revision)
-		if err == nil {
-			view, err = m.sendPlanned(r.Context(), token, view)
-		}
+		err = errors.New("guarded test is already preparing the automatic apply transaction")
 	case menudebug.PhaseApplying:
-		if req.Confirmation != "apply-proposed-change" {
-			writeAPIError(w, http.StatusBadRequest, "confirmation must be apply-proposed-change")
-			return
-		}
-		view, err = m.sendPlanned(r.Context(), token, view)
+		err = errors.New("automatic apply transaction is already running")
 	case menudebug.PhaseRestoring:
-		if req.Confirmation != "restore-original" {
-			writeAPIError(w, http.StatusBadRequest, "confirmation must be restore-original")
-			return
-		}
-		view, err = m.sendPlanned(r.Context(), token, view)
+		err = errors.New("automatic restore transaction is already running")
 	default:
 		err = fmt.Errorf("session phase %s has no advance action", view.Phase)
 	}
@@ -247,7 +239,11 @@ func (m *menuDebugAPI) advance(w http.ResponseWriter, r *http.Request) {
 		m.writeConflict(w, view, err)
 		return
 	}
-	writeAPI(w, http.StatusAccepted, api.Response{Success: true, Message: "bounded menu-debug action accepted; waiting for newer display evidence", Data: m.response(view, "")})
+	message := "bounded menu-debug discovery action accepted; waiting for newer display evidence"
+	if view.Phase == menudebug.PhaseDiscovering {
+		message = "guarded test started; discovery and apply commands remain individually authorized and display-verified"
+	}
+	writeAPI(w, http.StatusAccepted, api.Response{Success: true, Message: message, Data: m.response(view, "")})
 }
 
 func (m *menuDebugAPI) verification(w http.ResponseWriter, r *http.Request) {
@@ -283,14 +279,182 @@ func (m *menuDebugAPI) verification(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Phase == "candidate" {
 		view, err = m.opts.MenuDebug.BeginRestore(token, view.Revision)
-	} else if _, hasNext := m.nextCapability(view.Completed); !hasNext {
+		if err == nil {
+			m.startGuardedTest(token, view)
+		}
+	} else if capability, hasNext := m.nextCapability(view.Completed); hasNext {
+		view, err = m.opts.MenuDebug.Begin(token, view.Revision, capability)
+		if err == nil {
+			m.startGuardedTest(token, view)
+		}
+	} else {
 		view, err = m.opts.MenuDebug.Complete(token, view.Revision)
 	}
 	if err != nil {
 		m.writeConflict(w, view, err)
 		return
 	}
-	writeAPI(w, http.StatusOK, api.Response{Success: true, Message: "operator verification recorded", Data: m.response(view, "")})
+	message := "operator verification recorded"
+	if req.Phase == "candidate" {
+		message = "candidate behavior verified; automatic restore transaction started"
+	}
+	writeAPI(w, http.StatusOK, api.Response{Success: true, Message: message, Data: m.response(view, "")})
+}
+
+func (m *menuDebugAPI) startGuardedTest(token string, view menudebug.SessionView) {
+	// A session owns one runner across discovery, apply, and restore. The key
+	// must not include phase: verification can begin restore while the apply
+	// runner is still observing its terminal phase transition.
+	runnerKey := menuDebugRunnerKey(view)
+	m.mu.Lock()
+	if m.runners == nil {
+		m.runners = make(map[string]bool)
+	}
+	if m.runners[runnerKey] {
+		if m.runnerPending == nil {
+			m.runnerPending = make(map[string]bool)
+		}
+		m.runnerPending[runnerKey] = true
+		m.mu.Unlock()
+		return
+	}
+	m.runners[runnerKey] = true
+	if m.runnerCancels == nil {
+		m.runnerCancels = make(map[string]context.CancelFunc)
+	}
+	runnerCtx, cancel := context.WithCancel(context.Background())
+	m.runnerCancels[runnerKey] = cancel
+	m.mu.Unlock()
+	go func() {
+		defer cancel()
+		for {
+			if m.guardedTestRunner != nil {
+				m.guardedTestRunner(token)
+			} else {
+				m.runGuardedTestContext(runnerCtx, token)
+			}
+			m.mu.Lock()
+			if m.runnerPending[runnerKey] {
+				delete(m.runnerPending, runnerKey)
+				m.mu.Unlock()
+				continue
+			}
+			delete(m.runners, runnerKey)
+			delete(m.runnerCancels, runnerKey)
+			m.mu.Unlock()
+			return
+		}
+	}()
+}
+
+func menuDebugRunnerKey(view menudebug.SessionView) string {
+	return view.ID
+}
+
+// runGuardedTest preserves the controller's one-write authorization boundary:
+// it sends one discovery or frozen-plan step, waits for its newer verified
+// display receipt, and only then asks the controller to authorize the next.
+func (m *menuDebugAPI) runGuardedTest(token string) {
+	m.runGuardedTestContext(context.Background(), token)
+}
+
+func (m *menuDebugAPI) runGuardedTestContext(runnerCtx context.Context, token string) {
+	for {
+		if runnerCtx.Err() != nil {
+			return
+		}
+		view, err := m.opts.MenuDebug.Current(token)
+		if err != nil {
+			return
+		}
+		if view.Phase == menudebug.PhasePlanReady {
+			view, err = m.opts.MenuDebug.BeginApply(token, view.Revision)
+			if err != nil {
+				m.stopGuardedTest(token, err)
+				return
+			}
+		}
+		if view.Phase != menudebug.PhaseDiscovering && view.Phase != menudebug.PhaseApplying && view.Phase != menudebug.PhaseRestoring {
+			return
+		}
+		timeout := m.stepTimeout
+		if timeout <= 0 {
+			timeout = menuDebugStepReceiptTimeout
+		}
+		ctx, cancel := context.WithTimeout(runnerCtx, timeout)
+		var sent menudebug.SessionView
+		if view.Phase == menudebug.PhaseDiscovering {
+			sent, err = m.sendDiscovery(ctx, token, view)
+		} else {
+			sent, err = m.sendPlanned(ctx, token, view)
+		}
+		cancel()
+		if err != nil {
+			m.stopGuardedTest(token, err)
+			return
+		}
+		if sent.Phase == menudebug.PhasePlanReady || sent.Phase == menudebug.PhaseArmed || sent.Phase == menudebug.PhaseComplete {
+			continue
+		}
+		if _, err = m.waitForGuardedReceipt(runnerCtx, token, sent); err != nil {
+			return
+		}
+	}
+}
+
+func (m *menuDebugAPI) stopGuardedTest(token string, cause error) {
+	if cause == nil {
+		return
+	}
+	view, err := m.opts.MenuDebug.Current(token)
+	if err != nil {
+		return
+	}
+	switch view.Phase {
+	case menudebug.PhaseDiscovering, menudebug.PhasePlanReady, menudebug.PhaseApplying, menudebug.PhaseRestoring:
+		_, _ = m.opts.MenuDebug.Fail(token, view.Revision, cause.Error())
+	}
+}
+
+func (m *menuDebugAPI) waitForGuardedReceipt(ctx context.Context, token string, sent menudebug.SessionView) (menudebug.SessionView, error) {
+	timeout := m.stepTimeout
+	if timeout <= 0 {
+		timeout = menuDebugStepReceiptTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(menuDebugRunnerPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return sent, ctx.Err()
+		case <-timer.C:
+			return m.failPlannedTransaction(token, "timed out waiting for newer verified display evidence")
+		case <-ticker.C:
+			view, err := m.opts.MenuDebug.Current(token)
+			if err != nil {
+				return view, err
+			}
+			if view.Phase != sent.Phase || !view.WaitingForEvidence || (sent.StepNumber != 0 && view.StepNumber != sent.StepNumber) {
+				if view.Phase == menudebug.PhaseFailed || view.Phase == menudebug.PhaseExpired || view.Phase == menudebug.PhaseAborted {
+					return view, errors.New(view.Failure)
+				}
+				return view, nil
+			}
+			if err := m.validateWritePrerequisites(false); err != nil {
+				return m.failPlannedTransaction(token, err.Error())
+			}
+		}
+	}
+}
+
+func (m *menuDebugAPI) failPlannedTransaction(token, reason string) (menudebug.SessionView, error) {
+	view, err := m.opts.MenuDebug.Current(token)
+	if err != nil {
+		return view, err
+	}
+	return m.opts.MenuDebug.Fail(token, view.Revision, reason)
 }
 
 func (m *menuDebugAPI) abort(w http.ResponseWriter, r *http.Request) {
@@ -315,9 +479,28 @@ func (m *menuDebugAPI) abort(w http.ResponseWriter, r *http.Request) {
 		m.writeConflict(w, view, errors.New("stale or replayed menu-debug session revision"))
 		return
 	}
-	runtime := m.opts.MenuDebug.Runtime()
-	atHome := runtime.ChecksumValid && runtime.Screen.Kind == menudebug.ScreenHome && boolIs(runtime.DisplayTX, false) && boolIs(runtime.DisplayOperate, false)
-	view, err = m.opts.MenuDebug.Abort(token, view.Revision, atHome)
+	// Dispatch and abort share this boundary. If a write already crossed it,
+	// abort waits for that bounded write to finish; otherwise the revision
+	// recheck below prevents it from starting after abort is accepted.
+	m.dispatchMu.Lock()
+	view, err = m.opts.MenuDebug.Current(token)
+	if err == nil && req.ExpectedRevision != view.Revision {
+		err = errors.New("stale or replayed menu-debug session revision")
+	}
+	if err == nil {
+		runtime := m.opts.MenuDebug.Runtime()
+		atHome := runtime.ChecksumValid && runtime.Screen.Kind == menudebug.ScreenHome && boolIs(runtime.DisplayTX, false) && boolIs(runtime.DisplayOperate, false)
+		view, err = m.opts.MenuDebug.Abort(token, view.Revision, atHome)
+	}
+	if err == nil {
+		m.mu.Lock()
+		if cancel := m.runnerCancels[view.ID]; cancel != nil {
+			cancel()
+		}
+		delete(m.runnerPending, view.ID)
+		m.mu.Unlock()
+	}
+	m.dispatchMu.Unlock()
 	if err != nil {
 		m.writeConflict(w, view, err)
 		return
@@ -383,6 +566,10 @@ func (m *menuDebugAPI) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	report := m.currentReport()
+	if !report.Complete {
+		m.writeConflict(w, view, errors.New("incomplete menu-debug reports cannot be uploaded"))
+		return
+	}
 	if len(report.Capabilities) == 0 {
 		m.writeConflict(w, view, errors.New("menu-debug report has no completed capability evidence"))
 		return
@@ -526,6 +713,11 @@ func (m *menuDebugAPI) sendPlanned(ctx context.Context, token string, view menud
 }
 
 func (m *menuDebugAPI) sendAuthorized(ctx context.Context, token string, authorization menudebug.ActionAuthorization, requireHome bool) error {
+	m.dispatchMu.Lock()
+	defer m.dispatchMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := m.validateWritePrerequisites(requireHome); err != nil {
 		return err
 	}
@@ -637,11 +829,17 @@ func (m *menuDebugAPI) response(view menudebug.SessionView, token string) menuDe
 func proposalFor(view menudebug.SessionView) menuDebugProposal {
 	switch view.Phase {
 	case menudebug.PhaseArmed, menudebug.PhaseDiscovering:
-		return menuDebugProposal{Action: "continue bounded discovery", Description: "Send at most one server-authorized SET or RIGHT command, then wait for a newer verified display", Confirmation: "begin-discovery"}
+		if view.Phase == menudebug.PhaseArmed {
+			return menuDebugProposal{Action: "start guarded test", Description: "Automatically discover and apply the reviewed frozen plan; every command waits for newer verified display evidence", Confirmation: "begin-discovery"}
+		}
+		return menuDebugProposal{Action: "guarded discovery running", Description: "Waiting for the current discovery command's newer verified display receipt"}
 	case menudebug.PhasePlanReady, menudebug.PhaseApplying:
-		return menuDebugProposal{Action: "apply frozen plan", Description: "Send the next server-owned reviewed apply command and verify its newer display receipt", Confirmation: "apply-proposed-change"}
+		if view.Phase == menudebug.PhasePlanReady {
+			return menuDebugProposal{Action: "automatic apply preparing", Description: "The guarded runner is starting the frozen apply transaction"}
+		}
+		return menuDebugProposal{Action: "automatic apply running", Description: "Waiting for the current command's newer verified display receipt"}
 	case menudebug.PhaseRestoring:
-		return menuDebugProposal{Action: "restore original", Description: "Send the next server-owned reviewed restore command and verify its newer display receipt", Confirmation: "restore-original"}
+		return menuDebugProposal{Action: "automatic restore running", Description: "Waiting for the current command's newer verified display receipt"}
 	default:
 		return menuDebugProposal{}
 	}
@@ -655,8 +853,10 @@ func (m *menuDebugAPI) currentReport() menudebug.Report {
 	model := sanitizeModel(runtime.Status.ModelName)
 	serverVersion := sanitizeIdentity(selectedVersion(m.opts).Version)
 	report := m.opts.MenuDebug.Report(model, sanitizeIdentity(firmware), serverVersion)
+	report.Failure = redactReportText(report.Failure)
 	for capabilityIndex := range report.Capabilities {
 		capability := &report.Capabilities[capabilityIndex]
+		capability.Failure = redactReportText(capability.Failure)
 		capability.OriginalValue = redactReportText(capability.OriginalValue)
 		capability.CandidateValue = redactReportText(capability.CandidateValue)
 		for evidenceIndex := range capability.Evidence {
@@ -675,14 +875,14 @@ func (m *menuDebugAPI) authorizedReport(w http.ResponseWriter, r *http.Request) 
 	if !m.available(w) {
 		return menudebug.Report{}, false
 	}
-	view, err := m.opts.MenuDebug.Current(r.Header.Get(menuDebugTokenHeader))
+	view, err := m.opts.MenuDebug.CurrentForReport(r.Header.Get(menuDebugTokenHeader))
 	if err != nil {
 		m.writeConflict(w, view, err)
 		return menudebug.Report{}, false
 	}
 	report := m.currentReport()
 	if len(report.Capabilities) == 0 {
-		m.writeConflict(w, view, errors.New("menu-debug report has no completed capability evidence"))
+		m.writeConflict(w, view, errors.New("menu-debug report has no retained capability evidence"))
 		return menudebug.Report{}, false
 	}
 	return report, true

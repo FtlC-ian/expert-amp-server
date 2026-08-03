@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.3 - 2026-08-02
+
+Automatic guarded Menu Debug and retained diagnostics release.
+
+### Changed
+
+- One explicit **Start Guarded Test** now runs discovery and the frozen apply plan automatically while preserving one authorization and one newer matching LCD receipt per command.
+- Positive physical candidate confirmation starts the separately guarded automatic restore; physical restored confirmation remains mandatory.
+- The wizard shows the current transaction, command, expected screen, and display-evidence wait state instead of requiring a Continue click for every command.
+- Reports now use `menu-report.v2`. Ordinary failure, abort, and expiry retain an explicitly incomplete local diagnostic report; incomplete reports cannot be uploaded.
+
+### Safety hardening and fixes
+
+- A single session runner spans discovery, apply, and restore with an atomic queued-work handoff, preventing overlapping runners and dropped restore starts.
+- Any observed TX is latched immediately even if a later RX frame arrives before the runner polls again.
+- Abort is serialized with final command dispatch and cancels queued runner work before returning.
+- Transport errors stop immediately, and returned failure views now reflect the stored terminal state.
+- Reconnect and model changes still invalidate the entire session and destroy all report evidence.
+- The Node-RED guide explicitly rejects blind fixed command sequences, including the proposed 13-command Expert 1.5K-FA macro.
+
 ## v0.4.2 - 2026-08-01
 
 Menu Debug identity-binding corrective release.

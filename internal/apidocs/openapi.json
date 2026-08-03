@@ -63,16 +63,16 @@
     "/api/v1/menu-debug/session/advance": {
       "post": {
         "tags": ["Menu Debug"],
-        "summary": "Run one bounded server-owned wizard step",
-        "description": "Consumes the current revision, rechecks every safety prerequisite, sends at most one reviewed SET or RIGHT command, and waits for newer checksum-valid display evidence. Unknown profiles are topology-only and cannot change or SAVE a value.",
-        "responses": {"202": {"description": "One bounded step accepted"}, "409": {"description": "Stale revision, safety conflict, profile mismatch, or failed-closed stop"}}
+        "summary": "Start the guarded automatic menu test",
+        "description": "One explicit begin-discovery confirmation starts automatic discovery and, for a reviewed profile, the frozen apply transaction. Every internal command still consumes one authorization, rechecks safety/model/serial-session binding, and waits for newer matching checksum-valid display evidence before the next command. The transaction stops without retry or OPERATE restoration on any mismatch or safety failure. Unknown profiles remain topology-only and cannot change or SAVE a value. Poll the session route for currentStep and waitingForEvidence progress.",
+        "responses": {"202": {"description": "Guarded discovery and automatic apply started"}, "409": {"description": "Stale revision, duplicate start, safety conflict, profile mismatch, or failed-closed stop"}}
       }
     },
     "/api/v1/menu-debug/session/verification": {
       "post": {
         "tags": ["Menu Debug"],
         "summary": "Record operator verification",
-        "description": "Records candidate or restoration verification. A failed or uncertain answer stops with no recovery or OPERATE command.",
+        "description": "Records candidate or restoration verification. Positive candidate confirmation starts the separately guarded automatic restore transaction. A failed or uncertain answer stops with no recovery or OPERATE command.",
         "responses": {"200": {"description": "Verification recorded"}, "409": {"description": "Session or revision conflict"}}
       }
     },
@@ -87,22 +87,22 @@
       "get": {
         "tags": ["Menu Debug"],
         "summary": "Get the sanitized menu topology report",
-        "description": "Returns menu-report.v1 evidence produced by the server. Reports omit IPs, hostnames, callsigns, tokens, and serial-device identity and never enable a production profile automatically.",
-        "responses": {"200": {"description": "Sanitized candidate-profile report"}, "409": {"description": "Invalid or expired session token"}}
+        "description": "Returns token-authorized menu-report.v2 evidence produced by the server. Ordinary failure, abort, and expiry reports remain downloadable with complete=false plus the exact incomplete phase and cannot be uploaded or used as promotion evidence. Reconnect or model change still invalidates report access. Reports omit IPs, hostnames, callsigns, tokens, and serial-device identity.",
+        "responses": {"200": {"description": "Sanitized completed or explicitly incomplete diagnostic report"}, "409": {"description": "Invalid token, invalidated evidence, or no report evidence"}}
       }
     },
     "/api/v1/menu-debug/report.json": {
       "get": {
         "tags": ["Menu Debug"],
         "summary": "Download the sanitized report as JSON",
-        "responses": {"200": {"description": "menu-report.v1 JSON attachment"}, "409": {"description": "Invalid or expired session token"}}
+        "responses": {"200": {"description": "menu-report.v2 JSON attachment"}, "409": {"description": "Invalid token, invalidated evidence, or no report evidence"}}
       }
     },
     "/api/v1/menu-debug/report/upload": {
       "post": {
         "tags": ["Menu Debug"],
         "summary": "Upload one sanitized report with explicit consent",
-        "description": "The upload is one-shot per armed session and is unavailable unless a receive-only uploader is configured.",
+        "description": "The upload is one-shot per completed session and is unavailable unless a receive-only uploader is configured. Incomplete diagnostic reports are preview/download only and are rejected before upload.",
         "responses": {"202": {"description": "Sanitized report uploaded"}, "409": {"description": "Stale/replayed upload or invalid session"}, "503": {"description": "Uploader unavailable"}}
       }
     },

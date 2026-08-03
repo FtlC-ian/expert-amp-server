@@ -1747,7 +1747,7 @@
 
         <div id="menu-debug-body">
           <div class="settings-section">
-            <p class="settings-hint">The server runs two separate, bounded transactions in order: fan discovery and verification, then bank discovery and verification. It never combines the changes, sends arbitrary menu commands, or restores OPERATE.</p>
+            <p class="settings-hint">One guarded start automatically discovers and runs each frozen transaction. Every individual command still requires newer matching display evidence before the next command. The wizard pauses only for physical candidate and restored confirmation.</p>
             <ol class="menu-debug-plan">
               <li>Discover and temporarily change the fan setting; you verify it; the server restores the original.</li>
               <li>Discover and temporarily change the bank setting; you verify it; the server restores the original.</li>
@@ -1776,13 +1776,13 @@
               <p class="settings-hint" id="menu-debug-step-detail">No action is proposed.</p>
               <div class="settings-runtime" id="menu-debug-proposal">Exact next action: none</div>
               <div class="menu-debug-actions" id="menu-debug-advance-actions">
-                <button class="settings-save-btn" id="menu-debug-advance" type="button" disabled>Continue</button>
+                <button class="settings-save-btn" id="menu-debug-advance" type="button" disabled>Start Guarded Test</button>
               </div>
 
               <div id="menu-debug-candidate-verification" hidden>
                 <p class="settings-label">Did the temporary setting change work as described?</p>
                 <div class="menu-debug-actions">
-                  <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="true">Changed as Expected</button>
+                  <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="true">Changed as Expected — Restore Automatically</button>
                   <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="false" data-menu-debug-note="did not change">Did Not Change</button>
                   <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="false" data-menu-debug-note="operator unsure">Unsure</button>
                 </div>
@@ -1806,7 +1806,7 @@
             <div class="settings-runtime" id="menu-debug-recovery" hidden>Abort sends no recovery commands. If the amplifier is not on its STANDBY home screen, use the physical panel to return there. OPERATE will not be restored automatically.</div>
 
             <div id="menu-debug-report-section" hidden>
-              <p class="settings-label">Sanitized report preview</p>
+              <p class="settings-label" id="menu-debug-report-label">Sanitized report preview</p>
               <pre class="settings-runtime menu-debug-report" id="menu-debug-report-preview">Report not available.</pre>
               <p class="settings-hint">The report contains only output produced by Expert Amp Server. It excludes IP addresses, hostnames, callsigns, and serial-device paths or identifiers. Download works without uploading.</p>
               <div class="settings-action-row">
@@ -2826,7 +2826,7 @@
       menuDebugRequestActive = active;
       document.querySelectorAll('#menu-debug-body button').forEach(button => {
         if (button.id === 'menu-debug-upload-report') {
-          button.disabled = active || !document.getElementById('menu-debug-upload-consent').checked;
+          button.disabled = active || !document.getElementById('menu-debug-upload-consent').checked || !menuDebugReport || menuDebugReport.complete !== true;
           return;
         }
         if (button.id === 'menu-debug-advance') {
@@ -2884,6 +2884,12 @@
         ' Original: ' + original + '. Candidate: ' + candidate + '.';
       document.getElementById('menu-debug-proposal').textContent = [
         'Exact next action: ' + (proposal.description || proposal.action || 'none'),
+        ...(menuDebugSession.currentStep ? [
+          'Current transaction: ' + menuDebugSession.currentStep.transaction,
+          'Current command: ' + String(menuDebugSession.currentStep.action || '').toUpperCase() + ' — ' + menuDebugSession.currentStep.purpose,
+          'Expected screen: ' + menuDebugSession.currentStep.expected,
+          'Waiting for display evidence: ' + (menuDebugSession.waitingForEvidence ? 'yes' : 'no'),
+        ] : []),
         'Required confirmation: ' + (menuDebugConfirmation() || 'none'),
         'Verified screen: ' + (menuDebugSession.lastVerifiedScreen || 'not reported'),
         'Action budget: ' + (menuDebugSession.actionsAttempted ?? '–') + ' / ' + (menuDebugSession.actionBudget ?? menuDebugSession.maxActions ?? '–'),
@@ -2894,6 +2900,9 @@
         ) : []),
       ].join('\n');
       document.getElementById('menu-debug-advance').disabled = menuDebugRequestActive || !menuDebugConfirmation();
+      document.getElementById('menu-debug-advance-actions').hidden = !menuDebugConfirmation();
+      document.getElementById('menu-debug-advance').textContent =
+        menuDebugConfirmation() === 'begin-discovery' ? 'Start Guarded Test' : 'Start Automatic Transaction';
 
       const verificationPhase = String(menuDebugSession.verificationPhase || '').toLowerCase();
       const awaitingCandidateVerification = state === 'awaiting-apply-verification' ||
@@ -2963,6 +2972,12 @@
         if (!res.ok || !body.success) throw new Error(menuDebugError(body, 'Report unavailable'));
         menuDebugReport = body.data;
         document.getElementById('menu-debug-report-preview').textContent = JSON.stringify(menuDebugReport, null, 2);
+        const complete = menuDebugReport.complete === true;
+        document.getElementById('menu-debug-report-label').textContent = complete
+          ? 'Completed sanitized report — promotion evidence'
+          : 'INCOMPLETE sanitized diagnostic report — not promotion evidence';
+        document.getElementById('menu-debug-upload-consent').disabled = !complete;
+        document.getElementById('menu-debug-upload-report').disabled = !complete || !document.getElementById('menu-debug-upload-consent').checked;
       } catch (err) {
         setStatus('menu-debug-report-status', err.message, 'err');
       }
@@ -2994,19 +3009,19 @@
     document.getElementById('menu-debug-advance').addEventListener('click', async () => {
       const revision = menuDebugRevision();
       const confirmation = menuDebugConfirmation();
-      const confirmations = ['begin-discovery', 'apply-proposed-change', 'restore-original'];
+      const confirmations = ['begin-discovery'];
       if (revision === null || !confirmations.includes(confirmation)) {
         setStatus('menu-debug-action-status', 'The server has not supplied a valid current proposal.', 'err');
         return;
       }
-      setStatus('menu-debug-action-status', 'Submitting the exact displayed proposal…');
+      setStatus('menu-debug-action-status', 'Starting guarded discovery and automatic apply…');
       try {
         await menuDebugRequest('/api/v1/menu-debug/session/advance', {
           method: 'POST',
           headers: menuDebugHeaders(true),
           body: JSON.stringify({ expectedRevision: revision, confirmation }),
         });
-        setStatus('menu-debug-action-status', 'Proposal accepted; waiting for newer verified display evidence.', 'ok');
+        setStatus('menu-debug-action-status', 'Guarded test running; each command waits for newer verified display evidence.', 'ok');
       } catch (err) {
         setStatus('menu-debug-action-status', err.message, 'err');
       }
@@ -3066,7 +3081,7 @@
     });
 
     document.getElementById('menu-debug-upload-consent').addEventListener('change', event => {
-      document.getElementById('menu-debug-upload-report').disabled = menuDebugRequestActive || !event.target.checked;
+      document.getElementById('menu-debug-upload-report').disabled = menuDebugRequestActive || !event.target.checked || !menuDebugReport || menuDebugReport.complete !== true;
     });
 
     document.getElementById('menu-debug-upload-report').addEventListener('click', async () => {

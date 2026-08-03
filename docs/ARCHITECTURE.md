@@ -137,18 +137,18 @@ The HTTP server wires everything together. It:
 | `/api/v1/status` | GET | Canonical amp status JSON | Live, prefers protocol-native status poll data |
 | `/api/v1/status/ws` | GET | Canonical amp status websocket | Live |
 | `/api/v1/telemetry` | GET | Canonical telemetry snapshot route | Live runtime snapshot, mainly UI/fallback |
-| `/api/v1/alarms` | GET | Canonical alarms route | Protocol-native warnings/alarms, monitoring, and optional one-shot overtemperature standby state |
-| `/api/v1/fan-policy` | GET | Fan-policy state | Automatic/manual policy, verification confidence, and recovery state |
-| `/api/v1/fan-policy/override` | POST | Manual fan override | Requests automatic, Normal, or CONTEST through the verified transaction |
-| `/api/v1/fan-policy/verify` | POST | Fan-mode verification | Revalidates the saved amplifier fan mode |
-| `/api/v1/fan-policy/recover` | POST | Failed fan recovery | Clears only server state after fresh STANDBY/RX home evidence; sends no amplifier command |
-| `/api/v1/menu-debug/session` | GET/POST | Menu discovery session | Inspects or arms the disabled-by-default, memory-only STANDBY/RX wizard |
-| `/api/v1/menu-debug/session/advance` | POST | One bounded wizard step | Sends at most one reviewed action, then waits for newer checksum-valid display evidence |
-| `/api/v1/menu-debug/session/verification` | POST | Operator verification | Records candidate and restoration results; uncertainty stops fail-closed |
-| `/api/v1/menu-debug/session/abort` | POST | Abort wizard | Releases ownership without recovery or OPERATE commands |
-| `/api/v1/menu-debug/report` | GET | Sanitized candidate report | Returns model/firmware/display/action receipts without host or serial identity |
-| `/api/v1/menu-debug/report.json` | GET | Download sanitized report | Downloads the current `menu-report.v1` JSON document |
-| `/api/v1/menu-debug/report/upload` | POST | Consented report upload | One-shot upload to the separately configured receive-only HTTPS collector |
+| `/api/v1/alarms` | GET | Canonical alarms route | Protocol-native warnings/alarms, configurable monitoring, and read-only reporting of the separately armed one-shot overtemperature standby controller |
+| `/api/v1/fan-policy` | GET | Fan-policy state | Automatic hysteresis, manual override, persisted verification confidence/source, cooldown, ordered RX/TX pause-resume receipt, and explicit operator-recovery state |
+| `/api/v1/fan-policy/override` | POST | Manual fan override | Requests automatic, Normal, or CONTEST through the display-verified experimental transaction; optional expiry defaults to until changed |
+| `/api/v1/fan-policy/verify` | POST | Fan-mode verification | Queues a verified read/save transaction to refresh stale EEPROM-backed state |
+| `/api/v1/fan-policy/recover` | POST | Failed fan recovery | Clears the latch and manual override only after automatic control is disabled and fresh STANDBY/RX home evidence is observed; sends no amp command |
+| `/api/v1/menu-debug/session` | GET/POST | Menu discovery session | Inspects or arms a disabled-by-default, memory-only, revision-protected STANDBY/RX wizard; arming may clear only an inert, completed, display-verified Normal override without sending an amplifier command |
+| `/api/v1/menu-debug/session/advance` | POST | Start guarded automatic test | One confirmation starts discovery plus frozen apply; every internal command retains its own authorization and newer matching display receipt |
+| `/api/v1/menu-debug/session/verification` | POST | Operator verification | Records candidate/restoration results; positive candidate verification starts automatic restore, while failed or uncertain verification stops without recovery commands |
+| `/api/v1/menu-debug/session/abort` | POST | Abort wizard | Releases ownership and sends no recovery or OPERATE command |
+| `/api/v1/menu-debug/report` | GET | Sanitized diagnostic report | Returns completed evidence or an explicitly incomplete ordinary failure/abort/expiry report through the token-bearing UI; reconnect/model change invalidates access |
+| `/api/v1/menu-debug/report.json` | GET | Download sanitized report | Downloads the current `menu-report.v2` JSON document |
+| `/api/v1/menu-debug/report/upload` | POST | Consented report upload | Accepts only a complete report and explicit consent; incomplete diagnostics are never uploadable |
 | `/api/v1/runtime` | GET | Canonical runtime settings/status view | Live |
 | `/api/v1/runtime/snapshot` | GET | Canonical runtime snapshot route | Live |
 | `/api/v1/runtime/ingest` | GET | Canonical ingest diagnostics route | Live |
