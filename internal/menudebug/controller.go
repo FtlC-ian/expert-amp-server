@@ -68,6 +68,7 @@ type session struct {
 	transitions                    []TransitionReceipt
 	verifications                  []VerificationReceipt
 	applyVerified, restoreVerified bool
+	partialRetained                bool
 }
 
 func NewController(l lease) *Controller {
@@ -95,6 +96,7 @@ func (c *Controller) ObserveStatus(status api.Status, generation uint64) {
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
 	c.runtime.StatusSerialSessionGeneration = c.runtime.SerialSessionGeneration
+	c.failOnObservedTXLocked(status.Telemetry.TX)
 }
 
 // ObserveSerialSession invalidates cached protocol evidence as soon as a new
@@ -156,6 +158,13 @@ func (c *Controller) ObserveStatusFromSerialSession(status api.Status, generatio
 	c.runtime.StatusGeneration = generation
 	c.runtime.StatusObservedAt = c.now()
 	c.runtime.StatusSerialSessionGeneration = serialSessionGeneration
+	c.failOnObservedTXLocked(status.Telemetry.TX)
+}
+
+func (c *Controller) failOnObservedTXLocked(tx *bool) {
+	if tx != nil && *tx && c.activeLocked() {
+		_ = c.failLocked("TX observed during menu-debug transaction; STANDBY/RX safety prerequisite failed")
+	}
 }
 
 func (c *Controller) invalidateForModelChangeLocked(observedModel string) {
@@ -248,6 +257,10 @@ func (c *Controller) observeDisplay(state display.State, generation uint64, chec
 	c.runtime.DisplayTX = cloneBool(tx)
 	c.runtime.DisplayOperate = cloneBool(operate)
 	c.runtime.Screen = screen
+	if tx != nil && *tx && c.activeLocked() {
+		_ = c.failLocked("TX observed during menu-debug transaction; STANDBY/RX safety prerequisite failed")
+		return
+	}
 
 	if !checksumValid || c.session.phase == PhaseIdle || generation <= c.session.lastEvidenceGen {
 		return
@@ -386,6 +399,32 @@ func (c *Controller) Current(token string) (SessionView, error) {
 	return c.viewLocked(), nil
 }
 
+// CurrentForReport permits the memory-only token to read a terminal report
+// after the session deadline. It never reactivates or authorizes the session;
+// active sessions retain the ordinary expiry behavior used by Current.
+func (c *Controller) CurrentForReport(token string) (SessionView, error) {
+	if c == nil {
+		return SessionView{Phase: PhaseIdle}, errors.New("menu-debug controller unavailable")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.session.phase == PhaseIdle {
+		return c.viewLocked(), errors.New("menu-debug session is not armed")
+	}
+	switch c.session.phase {
+	case PhaseComplete, PhaseFailed, PhaseExpired, PhaseAborted:
+		if err := c.authorizeTokenHashLocked(token); err != nil {
+			return c.viewLocked(), err
+		}
+		return c.viewLocked(), nil
+	default:
+		if err := c.authorizeTokenLocked(token); err != nil {
+			return c.viewLocked(), err
+		}
+		return c.viewLocked(), nil
+	}
+}
+
 func (c *Controller) Tick(now time.Time) SessionView {
 	if c == nil {
 		return SessionView{Phase: PhaseIdle}
@@ -393,8 +432,10 @@ func (c *Controller) Tick(now time.Time) SessionView {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.activeLocked() && !now.Before(c.session.expiresAt) {
+		incompletePhase := c.session.phase
 		c.session.phase = PhaseExpired
 		c.session.failure = "menu-debug session expired"
+		c.retainIncompleteReportLocked(incompletePhase, c.session.failure)
 		c.releaseLocked()
 		c.bumpLocked()
 	}
@@ -511,6 +552,7 @@ func (c *Controller) Begin(token string, revision uint64, capability Capability)
 	c.session.failure = ""
 	c.session.applyVerified = false
 	c.session.restoreVerified = false
+	c.session.partialRetained = false
 	c.bumpLocked()
 	return c.viewLocked(), nil
 }
@@ -600,10 +642,10 @@ func (c *Controller) ObserveDiscoveryResult(token string, revision uint64, evide
 		return c.viewLocked(), errors.New("no discovery action awaits display verification")
 	}
 	if err := c.acceptNewEvidenceLocked(evidence); err != nil {
-		return c.viewLocked(), c.failLocked(err.Error())
+		return c.failViewLocked(err.Error())
 	}
 	if _, exists := c.session.seen[evidence.Fingerprint]; exists {
-		return c.viewLocked(), c.failLocked("menu loop detected")
+		return c.failViewLocked("menu loop detected")
 	}
 	c.session.seen[evidence.Fingerprint] = struct{}{}
 	c.session.evidence = append(c.session.evidence, evidence)
@@ -627,29 +669,29 @@ func (c *Controller) InstallPlan(token string, revision uint64, plan Plan) (Sess
 		return c.viewLocked(), errors.New("discovery action still awaits display verification")
 	}
 	if err := validatePlan(plan); err != nil {
-		return c.viewLocked(), c.failLocked(err.Error())
+		return c.failViewLocked(err.Error())
 	}
 	if !modelMatches(plan.ExpectedModel, c.runtime.Status.ModelName) {
-		return c.viewLocked(), c.failLocked("reviewed plan model does not match the connected amplifier")
+		return c.failViewLocked("reviewed plan model does not match the connected amplifier")
 	}
 	if !c.serialSessionMatchesLocked(plan.ExpectedSerialSessionGeneration) {
-		return c.viewLocked(), c.failLocked("reviewed plan status does not belong to the active serial session")
+		return c.failViewLocked("reviewed plan status does not belong to the active serial session")
 	}
 	if len(c.session.evidence) == 0 {
-		return c.viewLocked(), c.failLocked("plan requires server-derived capability evidence")
+		return c.failViewLocked("plan requires server-derived capability evidence")
 	}
 	latest := c.session.evidence[len(c.session.evidence)-1]
 	if latest.Candidate != c.session.capability || plan.Apply[0].FromFingerprint != latest.Fingerprint {
-		return c.viewLocked(), c.failLocked("plan is not bound to the latest server-derived capability screen")
+		return c.failViewLocked("plan is not bound to the latest server-derived capability screen")
 	}
 	if (c.session.capability == CapabilityFan && latest.Kind != ScreenFan) || (c.session.capability == CapabilityBank && latest.Kind != ScreenBank) {
-		return c.viewLocked(), c.failLocked("plan is not bound to a classified capability screen")
+		return c.failViewLocked("plan is not bound to a classified capability screen")
 	}
 	if latest.Value != plan.OriginalValue {
-		return c.viewLocked(), c.failLocked("plan original value does not match classified display evidence")
+		return c.failViewLocked("plan original value does not match classified display evidence")
 	}
 	if len(plan.DiscoverySetupWaypoints) != 0 && !matchesDiscoverySetupWaypoints(c.session.evidence, plan.DiscoverySetupTopology, plan.DiscoverySetupWaypoints) {
-		return c.viewLocked(), c.failLocked("reviewed profile does not match the observed setup-menu topology")
+		return c.failViewLocked("reviewed profile does not match the observed setup-menu topology")
 	}
 	c.session.plan = plan
 	if plan.Profile == "expert-1.3k-fa-first-series-bank-ab-v1" && c.session.actionBudget < 36 {
@@ -755,10 +797,10 @@ func (c *Controller) beginPlan(token string, revision uint64, from, to Phase) (S
 		return c.viewLocked(), fmt.Errorf("session is not ready for %s", to)
 	}
 	if !modelMatches(c.session.plan.ExpectedModel, c.runtime.Status.ModelName) {
-		return c.viewLocked(), c.failLocked("connected amplifier model changed after plan discovery")
+		return c.failViewLocked("connected amplifier model changed after plan discovery")
 	}
 	if !c.serialSessionMatchesLocked(c.session.plan.ExpectedSerialSessionGeneration) {
-		return c.viewLocked(), c.failLocked("serial session changed after plan discovery")
+		return c.failViewLocked("serial session changed after plan discovery")
 	}
 	if to == PhaseRestoring && !c.session.applyVerified {
 		return c.viewLocked(), errors.New("applied change has not been user verified")
@@ -771,7 +813,7 @@ func (c *Controller) beginPlan(token string, revision uint64, from, to Phase) (S
 		freshHome = c.runtime.Screen.Kind == ScreenHome && c.runtime.ChecksumValid && boolMatches(c.runtime.DisplayTX, false) && boolMatches(c.runtime.DisplayOperate, false)
 	}
 	if to == PhaseRestoring && !freshHome {
-		return c.viewLocked(), c.failLocked("restore requires a fresh verified STANDBY/RX home display")
+		return c.failViewLocked("restore requires a fresh verified STANDBY/RX home display")
 	}
 	c.bumpLocked()
 	return c.viewLocked(), nil
@@ -840,7 +882,7 @@ func (c *Controller) ObserveActionResult(token string, revision uint64, evidence
 		return c.viewLocked(), errors.New("no planned action awaits verification")
 	}
 	if err := c.acceptNewEvidenceLocked(evidence); err != nil {
-		return c.viewLocked(), c.failLocked(err.Error())
+		return c.failViewLocked(err.Error())
 	}
 	if c.session.pending.AllowStoringBeforeHome && evidence.Kind == ScreenStoring {
 		c.session.evidence = append(c.session.evidence, evidence)
@@ -849,13 +891,13 @@ func (c *Controller) ObserveActionResult(token string, revision uint64, evidence
 		return c.viewLocked(), nil
 	}
 	if c.session.pending.ExpectedFingerprint != "" && evidence.Fingerprint != c.session.pending.ExpectedFingerprint {
-		return c.viewLocked(), c.failLocked("unexpected display after planned action")
+		return c.failViewLocked("unexpected display after planned action")
 	}
 	if err := matchesStepExpectation(*c.session.pending, evidence); err != nil {
-		return c.viewLocked(), c.failLocked(err.Error())
+		return c.failViewLocked(err.Error())
 	}
 	if err := c.validateObservedTransitionLocked(evidence); err != nil {
-		return c.viewLocked(), c.failLocked(err.Error())
+		return c.failViewLocked(err.Error())
 	}
 	c.session.evidence = append(c.session.evidence, evidence)
 	c.recordTransitionLocked(evidence)
@@ -876,7 +918,7 @@ func (c *Controller) ObserveActionResult(token string, revision uint64, evidence
 	}
 	if c.session.stepIndex == len(steps) {
 		if !evidence.StandbyHome {
-			return c.viewLocked(), c.failLocked("planned transaction did not finish on verified STANDBY/RX home")
+			return c.failViewLocked("planned transaction did not finish on verified STANDBY/RX home")
 		}
 		c.session.phase = awaiting
 	}
@@ -891,7 +933,7 @@ func (c *Controller) Confirm(token string, revision uint64, worked bool) (Sessio
 	}
 	if !worked {
 		c.session.verifications = append(c.session.verifications, VerificationReceipt{Phase: c.session.phase, Verified: false, At: c.now().UTC()})
-		return c.viewLocked(), c.failLocked("operator verification failed")
+		return c.failViewLocked("operator verification failed")
 	}
 	c.session.verifications = append(c.session.verifications, VerificationReceipt{Phase: c.session.phase, Verified: true, At: c.now().UTC()})
 	switch c.session.phase {
@@ -900,7 +942,9 @@ func (c *Controller) Confirm(token string, revision uint64, worked bool) (Sessio
 	case PhaseAwaitingRestoreVerify:
 		c.session.restoreVerified = true
 		c.session.completed = append(c.session.completed, c.session.capability)
-		c.reports = append(c.reports, c.capabilityReportLocked())
+		report := c.capabilityReportLocked()
+		report.Complete = true
+		c.reports = append(c.reports, report)
 		c.releaseLocked()
 		c.session.phase = PhaseArmed
 		c.session.capability = ""
@@ -927,7 +971,7 @@ func (c *Controller) CompleteTopology(token string, revision uint64) (SessionVie
 	}
 	latest := c.session.evidence[len(c.session.evidence)-1]
 	if latest.Candidate != c.session.capability {
-		return c.viewLocked(), c.failLocked("topology observation does not match the active capability")
+		return c.failViewLocked("topology observation does not match the active capability")
 	}
 	c.completeTopologyLocked(false)
 	return c.viewLocked(), nil
@@ -941,7 +985,7 @@ func (c *Controller) completeTopologyLocked(atVerifiedHome bool) {
 			break
 		}
 	}
-	c.reports = append(c.reports, CapabilityReport{Profile: "topology-only", Capability: c.session.capability, OriginalValue: original, Evidence: append([]Evidence(nil), c.session.evidence...), Actions: append([]Action(nil), c.session.actions...), ActionReceipts: append([]ActionReceipt(nil), c.session.actionReceipts...), Transitions: append([]TransitionReceipt(nil), c.session.transitions...)})
+	c.reports = append(c.reports, CapabilityReport{Profile: "topology-only", Capability: c.session.capability, Complete: true, OriginalValue: original, Evidence: append([]Evidence(nil), c.session.evidence...), Actions: append([]Action(nil), c.session.actions...), ActionReceipts: append([]ActionReceipt(nil), c.session.actionReceipts...), Transitions: append([]TransitionReceipt(nil), c.session.transitions...)})
 	c.session.completed = append(c.session.completed, c.session.capability)
 	c.releaseLocked()
 	c.session.phase = PhaseArmed
@@ -972,11 +1016,13 @@ func (c *Controller) Abort(token string, revision uint64, atVerifiedHome bool) (
 	if err := c.authorizeLocked(token, revision); err != nil {
 		return c.viewLocked(), err
 	}
+	incompletePhase := c.session.phase
 	c.session.phase = PhaseAborted
 	if !atVerifiedHome {
 		c.session.mayBeInMenu = true
 		c.session.failure = "aborted away from verified home; physical-panel recovery required"
 	}
+	c.retainIncompleteReportLocked(incompletePhase, c.session.failure)
 	c.releaseLocked()
 	c.bumpLocked()
 	return c.viewLocked(), nil
@@ -988,7 +1034,8 @@ func (c *Controller) Fail(token string, revision uint64, reason string) (Session
 	if err := c.authorizeLocked(token, revision); err != nil {
 		return c.viewLocked(), err
 	}
-	return c.viewLocked(), c.failLocked(strings.TrimSpace(reason))
+	err := c.failLocked(strings.TrimSpace(reason))
+	return c.viewLocked(), err
 }
 
 func (c *Controller) consumeActionLocked(action Action, purpose Purpose, expectedModel string) (ActionAuthorization, error) {
@@ -1057,8 +1104,10 @@ func (c *Controller) authorizeLocked(token string, revision uint64) error {
 		return errors.New("menu-debug session is not armed")
 	}
 	if !c.now().Before(c.session.expiresAt) {
+		incompletePhase := c.session.phase
 		c.session.phase = PhaseExpired
 		c.session.failure = "menu-debug session expired"
+		c.retainIncompleteReportLocked(incompletePhase, c.session.failure)
 		c.releaseLocked()
 		c.bumpLocked()
 		return errors.New(c.session.failure)
@@ -1074,12 +1123,18 @@ func (c *Controller) authorizeLocked(token string, revision uint64) error {
 
 func (c *Controller) authorizeTokenLocked(token string) error {
 	if !c.now().Before(c.session.expiresAt) {
+		incompletePhase := c.session.phase
 		c.session.phase = PhaseExpired
 		c.session.failure = "menu-debug session expired"
+		c.retainIncompleteReportLocked(incompletePhase, c.session.failure)
 		c.releaseLocked()
 		c.bumpLocked()
 		return errors.New(c.session.failure)
 	}
+	return c.authorizeTokenHashLocked(token)
+}
+
+func (c *Controller) authorizeTokenHashLocked(token string) error {
 	want, got := []byte(c.session.tokenHash), []byte(tokenHash(token))
 	if len(want) != len(got) || subtle.ConstantTimeCompare(want, got) != 1 {
 		return errors.New("invalid menu-debug session token")
@@ -1091,15 +1146,22 @@ func (c *Controller) failLocked(reason string) error {
 	if reason == "" {
 		reason = "menu-debug transaction failed"
 	}
-	wasNavigating := c.session.phase == PhaseDiscovering ||
+	incompletePhase := c.session.phase
+	wasNavigating := incompletePhase == PhaseDiscovering ||
 		c.session.phase == PhaseApplying ||
 		c.session.phase == PhaseRestoring
 	c.session.phase = PhaseFailed
 	c.session.failure = reason
+	c.retainIncompleteReportLocked(incompletePhase, reason)
 	c.session.mayBeInMenu = c.session.mayBeInMenu || c.session.actionsAttempted > 0 || wasNavigating
 	c.releaseLocked()
 	c.bumpLocked()
 	return errors.New(reason)
+}
+
+func (c *Controller) failViewLocked(reason string) (SessionView, error) {
+	err := c.failLocked(reason)
+	return c.viewLocked(), err
 }
 
 func (c *Controller) releaseLocked() {
@@ -1129,9 +1191,20 @@ func (c *Controller) viewLocked() SessionView {
 	v := SessionView{ID: c.session.id, Phase: c.session.phase, Capability: c.session.capability, Revision: c.session.revision, ActionsAttempted: c.session.actionsAttempted, ActionBudget: c.session.actionBudget, MayBeInMenu: c.session.mayBeInMenu, Failure: c.session.failure, Completed: append([]Capability(nil), c.session.completed...), PlanProfile: c.session.plan.Profile, OriginalValue: c.session.plan.OriginalValue, CandidateValue: c.session.plan.CandidateValue}
 	if c.session.phase == PhaseApplying {
 		v.StepNumber, v.TotalSteps = c.session.stepIndex+1, len(c.session.plan.Apply)
+		v.Transaction = "apply"
+		if c.session.stepIndex < len(c.session.plan.Apply) {
+			step := summarizeStep("apply", c.session.stepIndex+1, c.session.plan.Apply[c.session.stepIndex])
+			v.CurrentStep = &step
+		}
 	} else if c.session.phase == PhaseRestoring {
 		v.StepNumber, v.TotalSteps = c.session.stepIndex+1, len(c.session.plan.Restore)
+		v.Transaction = "restore"
+		if c.session.stepIndex < len(c.session.plan.Restore) {
+			step := summarizeStep("restore", c.session.stepIndex+1, c.session.plan.Restore[c.session.stepIndex])
+			v.CurrentStep = &step
+		}
 	}
+	v.WaitingForEvidence = c.session.pending != nil || c.session.discoveryPending
 	for index, step := range c.session.plan.Apply {
 		v.PlanSummary = append(v.PlanSummary, summarizeStep("apply", index+1, step))
 	}
@@ -1172,6 +1245,17 @@ func summarizeStep(transaction string, number int, step Step) PlanStepSummary {
 
 func (c *Controller) capabilityReportLocked() CapabilityReport {
 	return CapabilityReport{Profile: c.session.plan.Profile, Capability: c.session.capability, OriginalValue: c.session.plan.OriginalValue, CandidateValue: c.session.plan.CandidateValue, AppliedVerified: c.session.applyVerified, RestoreVerified: c.session.restoreVerified, Evidence: append([]Evidence(nil), c.session.evidence...), Actions: append([]Action(nil), c.session.actions...), ActionReceipts: append([]ActionReceipt(nil), c.session.actionReceipts...), Transitions: append([]TransitionReceipt(nil), c.session.transitions...), Verifications: append([]VerificationReceipt(nil), c.session.verifications...)}
+}
+
+func (c *Controller) retainIncompleteReportLocked(phase Phase, reason string) {
+	if c.session.partialRetained || c.session.capability == "" || (len(c.session.evidence) == 0 && len(c.session.actions) == 0) {
+		return
+	}
+	report := c.capabilityReportLocked()
+	report.IncompletePhase = phase
+	report.Failure = strings.TrimSpace(reason)
+	c.reports = append(c.reports, report)
+	c.session.partialRetained = true
 }
 
 func (c *Controller) validateObservedTransitionLocked(evidence Evidence) error {
@@ -1233,7 +1317,7 @@ func observedScreenValue(screen ScreenObservation) string {
 func (c *Controller) Report(model, firmware, serverVersion string) Report {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return Report{SchemaVersion: ReportSchemaVersion, Model: strings.TrimSpace(model), Firmware: strings.TrimSpace(firmware), ServerVersion: strings.TrimSpace(serverVersion), Capabilities: append([]CapabilityReport(nil), c.reports...)}
+	return Report{SchemaVersion: ReportSchemaVersion, Model: strings.TrimSpace(model), Firmware: strings.TrimSpace(firmware), ServerVersion: strings.TrimSpace(serverVersion), Complete: c.session.phase == PhaseComplete, Phase: c.session.phase, Failure: c.session.failure, Capabilities: append([]CapabilityReport(nil), c.reports...)}
 }
 
 var _ lease = (transport.LeaseButtonTransport)(nil)

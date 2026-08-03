@@ -7,7 +7,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 )
 
-const ReportSchemaVersion = "menu-report.v1"
+const ReportSchemaVersion = "menu-report.v2"
 
 type Capability string
 
@@ -152,6 +152,9 @@ type SessionView struct {
 	CandidateValue       string            `json:"candidateValue,omitempty"`
 	StepNumber           int               `json:"stepNumber,omitempty"`
 	TotalSteps           int               `json:"totalSteps,omitempty"`
+	Transaction          string            `json:"transaction,omitempty"`
+	WaitingForEvidence   bool              `json:"waitingForEvidence,omitempty"`
+	CurrentStep          *PlanStepSummary  `json:"currentStep,omitempty"`
 	PlanSummary          []PlanStepSummary `json:"planSummary,omitempty"`
 	LastVerifiedScreen   string            `json:"lastVerifiedScreen,omitempty"`
 }
@@ -171,12 +174,18 @@ type Report struct {
 	Model         string             `json:"model"`
 	Firmware      string             `json:"firmware"`
 	ServerVersion string             `json:"serverVersion"`
+	Complete      bool               `json:"complete"`
+	Phase         Phase              `json:"phase"`
+	Failure       string             `json:"failure,omitempty"`
 	Capabilities  []CapabilityReport `json:"capabilities"`
 }
 
 type CapabilityReport struct {
 	Profile         string                `json:"profile"`
 	Capability      Capability            `json:"capability"`
+	Complete        bool                  `json:"complete"`
+	IncompletePhase Phase                 `json:"incompletePhase,omitempty"`
+	Failure         string                `json:"failure,omitempty"`
 	OriginalValue   string                `json:"originalValue"`
 	CandidateValue  string                `json:"candidateValue"`
 	AppliedVerified bool                  `json:"appliedVerified"`

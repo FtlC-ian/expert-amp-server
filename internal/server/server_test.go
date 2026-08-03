@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,15 +31,45 @@ import (
 )
 
 type stubButtonTransport struct {
+	mu     sync.Mutex
 	result api.ActionResult
 	err    error
 	action api.ButtonAction
 	calls  int
+	hook   func(api.ButtonAction, int)
 }
 
 type stubWakeTransport struct {
 	result api.ActionResult
 	err    error
+}
+
+type blockingButtonTransport struct{}
+
+type gatedButtonTransport struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	calls   int
+}
+
+func (s *gatedButtonTransport) SendButton(ctx context.Context, action api.ButtonAction) (api.ActionResult, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return api.ActionResult{Name: action.Name, Sent: true}, nil
+	case <-ctx.Done():
+		return api.ActionResult{Name: action.Name}, ctx.Err()
+	}
+}
+
+func (blockingButtonTransport) SendButton(ctx context.Context, action api.ButtonAction) (api.ActionResult, error) {
+	<-ctx.Done()
+	return api.ActionResult{Name: action.Name}, ctx.Err()
 }
 
 type stubMenuDebugUploader struct {
@@ -49,6 +80,489 @@ type stubMenuDebugUploader struct {
 func (s *stubMenuDebugUploader) Upload(context.Context, menudebug.Report) error {
 	s.calls++
 	return s.err
+}
+
+func TestMenuDebugAutomaticApplyAndRestoreRemainEvidenceGated(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err = mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	rx, operate := false, false
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	home := menuDebugTestHomeScreen()
+	controller.ObserveDisplay(home, 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, "EXPERT 1.3K-FA", menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalManagement := menuDebugTestFanScreen("FAN MANAGEMENT", fanpolicy.PolicyNormal)
+	controller.ObserveDisplay(normalManagement, 2, true, &rx, &operate)
+	view, err = controller.Current(token)
+	if err != nil || view.Revision <= auth.Revision {
+		t.Fatalf("discovery receipt view=%+v err=%v", view, err)
+	}
+
+	contestManagement := menuDebugTestFanScreen("FAN MANAGEMENT", fanpolicy.PolicyHigh)
+	contestSave := menuDebugTestFanScreen("SAVE", fanpolicy.PolicyHigh)
+	normalSave := menuDebugTestFanScreen("SAVE", fanpolicy.PolicyNormal)
+	plan := menudebug.Plan{
+		Profile: "expert-1.3k-fa-first-series-fan-v1", ExpectedModel: "EXPERT 1.3K-FA", ExpectedSerialSessionGeneration: 1,
+		Capability: menudebug.CapabilityFan, OriginalValue: "normal", CandidateValue: "contest",
+		Apply: []menudebug.Step{
+			{Action: menudebug.ActionSet, Purpose: menudebug.PurposeChangeValue, FromFingerprint: menudebug.Analyze(normalManagement).Fingerprint, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: menudebug.CapabilityFan, ExpectedValue: "contest", ExpectedSelectionContains: "FAN MANAGEMENT"},
+			{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: menudebug.CapabilityFan, ExpectedValue: "contest", ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
+			{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: menudebug.ScreenHome, ExpectedStandbyHome: true},
+		},
+		Restore: []menudebug.Step{
+			{Action: menudebug.ActionSet, Purpose: menudebug.PurposeEnterCandidate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: menudebug.CapabilityFan, ExpectedValue: "contest", ExpectedSelectionContains: "FAN MANAGEMENT"},
+			{Action: menudebug.ActionSet, Purpose: menudebug.PurposeChangeValue, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: menudebug.CapabilityFan, ExpectedValue: "normal", ExpectedSelectionContains: "FAN MANAGEMENT"},
+			{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: menudebug.CapabilityFan, ExpectedValue: "normal", ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
+			{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: menudebug.ScreenHome, ExpectedStandbyHome: true},
+		},
+	}
+	view, err = controller.InstallPlan(token, view.Revision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.BeginApply(token, view.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := []display.State{contestManagement, contestSave, home, contestManagement, normalManagement, normalSave, home}
+	raw.hook = func(_ api.ButtonAction, call int) {
+		controller.ObserveDisplay(states[call-1], uint64(call+2), true, &rx, &operate)
+	}
+	menuAPI := &menuDebugAPI{opts: Options{Config: mgr, MenuDebug: controller, MenuDebugTransport: lease}, stepTimeout: time.Second}
+	menuAPI.runGuardedTest(token)
+	view, err = controller.Current(token)
+	calls, _ := raw.snapshot()
+	if err != nil || view.Phase != menudebug.PhaseAwaitingApplyVerify || calls != 3 {
+		t.Fatalf("automatic apply view=%+v calls=%d err=%v", view, calls, err)
+	}
+	view, err = controller.Confirm(token, view.Revision, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.BeginRestore(token, view.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	menuAPI.runGuardedTest(token)
+	view, err = controller.Current(token)
+	calls, _ = raw.snapshot()
+	if err != nil || view.Phase != menudebug.PhaseAwaitingRestoreVerify || calls != 7 {
+		t.Fatalf("automatic restore view=%+v calls=%d err=%v", view, calls, err)
+	}
+}
+
+func TestMenuDebugRunnerOwnershipSpansApplyAndRestore(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	handoffRan := make(chan struct{})
+	var callsMu sync.Mutex
+	calls := 0
+	menuAPI := &menuDebugAPI{guardedTestRunner: func(string) {
+		callsMu.Lock()
+		calls++
+		call := calls
+		callsMu.Unlock()
+		if call == 1 {
+			close(firstStarted)
+			<-releaseFirst
+			return
+		}
+		if call == 2 {
+			close(handoffRan)
+		}
+	}}
+	apply := menudebug.SessionView{ID: "same-session", Phase: menudebug.PhaseApplying}
+	restore := menudebug.SessionView{ID: "same-session", Phase: menudebug.PhaseRestoring}
+	menuAPI.startGuardedTest("token", apply)
+	<-firstStarted
+	menuAPI.startGuardedTest("token", restore)
+	close(releaseFirst)
+	select {
+	case <-handoffRan:
+	case <-time.After(time.Second):
+		t.Fatal("restore handoff was dropped while the prior session runner exited")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		menuAPI.mu.Lock()
+		active := menuAPI.runners[apply.ID]
+		pending := menuAPI.runnerPending[apply.ID]
+		menuAPI.mu.Unlock()
+		if !active && !pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("session runner did not release after queued handoff")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if calls != 2 {
+		t.Fatalf("session runner calls=%d want=2", calls)
+	}
+}
+
+func TestMenuDebugAbortWaitsForDispatchBoundary(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err = mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+	rx, operate := false, false
+	raw := &gatedButtonTransport{started: make(chan struct{}), release: make(chan struct{})}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, "EXPERT 1.3K-FA", menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	menuAPI := &menuDebugAPI{opts: Options{Config: mgr, MenuDebug: controller, MenuDebugTransport: lease}}
+	sendDone := make(chan error, 1)
+	go func() {
+		sendDone <- menuAPI.sendAuthorized(context.Background(), token, authorization, true)
+	}()
+	<-raw.started
+	abortDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/session/abort", strings.NewReader(fmt.Sprintf(`{"expectedRevision":%d}`, authorization.Revision)))
+		req.Header.Set(menuDebugTokenHeader, token)
+		menuAPI.abort(rec, req)
+		abortDone <- rec
+	}()
+	select {
+	case rec := <-abortDone:
+		t.Fatalf("abort returned before in-flight dispatch stopped: status=%d body=%s", rec.Code, rec.Body.String())
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(raw.release)
+	if err = <-sendDone; err != nil {
+		t.Fatalf("bounded in-flight dispatch failed: %v", err)
+	}
+	rec := <-abortDone
+	if rec.Code != http.StatusOK {
+		t.Fatalf("abort status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	view, err = controller.Current(token)
+	if err != nil || view.Phase != menudebug.PhaseAborted {
+		t.Fatalf("abort did not become terminal: view=%+v err=%v", view, err)
+	}
+	raw.mu.Lock()
+	defer raw.mu.Unlock()
+	if raw.calls != 1 {
+		t.Fatalf("commands sent after abort boundary: %d", raw.calls)
+	}
+}
+
+func TestMenuDebugHTTPStartAutomaticallyDiscoversAndApplies(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err = mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+	rx, operate := false, false
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	states := []display.State{
+		menuDebugFirstSeriesSetupScreen("ANTENNA"),
+		menuDebugFirstSeriesSetupScreen("CAT"),
+		menuDebugFirstSeriesSetupScreen("MANUAL TUNE"),
+		menuDebugFirstSeriesSetupScreen("DISPLAY"),
+		menuDebugFirstSeriesSetupScreen("BEEP"),
+		menuDebugFirstSeriesSetupScreen("START"),
+		menuDebugFirstSeriesSetupScreen("TEMP/FANS"),
+		menuDebugTestFanScreen("TEMPERATURE SCALE", fanpolicy.PolicyNormal),
+		menuDebugTestFanScreen("FAN MANAGEMENT", fanpolicy.PolicyNormal),
+		menuDebugTestFanScreen("FAN MANAGEMENT", fanpolicy.PolicyHigh),
+		menuDebugTestFanScreen("SAVE", fanpolicy.PolicyHigh),
+		menuDebugTestHomeScreen(),
+		menuDebugFirstSeriesSetupScreen("ANTENNA"),
+		menuDebugFirstSeriesSetupScreen("CAT"),
+		menuDebugFirstSeriesSetupScreen("MANUAL TUNE"),
+		menuDebugFirstSeriesSetupScreen("DISPLAY"),
+		menuDebugFirstSeriesSetupScreen("BEEP"),
+		menuDebugFirstSeriesSetupScreen("START"),
+		menuDebugFirstSeriesSetupScreen("TEMP/FANS"),
+		menuDebugTestFanScreen("TEMPERATURE SCALE", fanpolicy.PolicyHigh),
+		menuDebugTestFanScreen("FAN MANAGEMENT", fanpolicy.PolicyHigh),
+		menuDebugTestFanScreen("FAN MANAGEMENT", fanpolicy.PolicyNormal),
+		menuDebugTestFanScreen("SAVE", fanpolicy.PolicyNormal),
+		menuDebugTestHomeScreen(),
+	}
+	raw.hook = func(_ api.ButtonAction, call int) {
+		controller.ObserveDisplay(states[call-1], uint64(call+1), true, &rx, &operate)
+	}
+	handler := NewHandler(Options{Config: mgr, FanPolicy: fanpolicy.NewController(), MenuDebug: controller, MenuDebugTransport: lease})
+	armRec := httptest.NewRecorder()
+	handler.ServeHTTP(armRec, httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/session", strings.NewReader(`{"acknowledgement":"I AM IN STANDBY AND WILL NOT TRANSMIT","firmwareVersion":"1.2.3","capabilities":["fan"]}`)))
+	if armRec.Code != http.StatusCreated {
+		t.Fatalf("arm status=%d body=%s", armRec.Code, armRec.Body.String())
+	}
+	var armed struct {
+		Data struct {
+			Token   string                `json:"token"`
+			Session menudebug.SessionView `json:"session"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(armRec.Body).Decode(&armed); err != nil {
+		t.Fatal(err)
+	}
+	startRec := httptest.NewRecorder()
+	startReq := httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/session/advance", strings.NewReader(fmt.Sprintf(`{"expectedRevision":%d,"confirmation":"begin-discovery"}`, armed.Data.Session.Revision)))
+	startReq.Header.Set(menuDebugTokenHeader, armed.Data.Token)
+	handler.ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusAccepted {
+		t.Fatalf("start status=%d body=%s", startRec.Code, startRec.Body.String())
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var view menudebug.SessionView
+	for time.Now().Before(deadline) {
+		view, err = controller.Current(armed.Data.Token)
+		if err == nil && view.Phase == menudebug.PhaseAwaitingApplyVerify {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	calls, _ := raw.snapshot()
+	const applyCalls = 12
+	if view.Phase != menudebug.PhaseAwaitingApplyVerify || calls != applyCalls {
+		t.Fatalf("automatic discovery/apply view=%+v calls=%d want=%d err=%v", view, calls, applyCalls, err)
+	}
+	verifyRec := httptest.NewRecorder()
+	verifyReq := httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/session/verification", strings.NewReader(fmt.Sprintf(`{"expectedRevision":%d,"phase":"candidate","verified":true}`, view.Revision)))
+	verifyReq.Header.Set(menuDebugTokenHeader, armed.Data.Token)
+	handler.ServeHTTP(verifyRec, verifyReq)
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("candidate verification status=%d body=%s", verifyRec.Code, verifyRec.Body.String())
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		view, err = controller.Current(armed.Data.Token)
+		if err == nil && view.Phase == menudebug.PhaseAwaitingRestoreVerify {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	calls, _ = raw.snapshot()
+	if view.Phase != menudebug.PhaseAwaitingRestoreVerify || calls != len(states) {
+		t.Fatalf("automatic restore handoff view=%+v calls=%d want=%d err=%v", view, calls, len(states), err)
+	}
+}
+
+func TestMenuDebugDiscoveryWriteHonorsBoundedContext(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err = mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+	rx, operate := false, false
+	lease := transport.NewActuationCoordinator(blockingButtonTransport{}).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	menuAPI := &menuDebugAPI{opts: Options{Config: mgr, MenuDebug: controller, MenuDebugTransport: lease}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	view, err = menuAPI.sendDiscovery(ctx, token, view)
+	if err == nil || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) || view.Phase != menudebug.PhaseFailed {
+		t.Fatalf("bounded write view=%+v err=%v", view, err)
+	}
+	if report := controller.Report("EXPERT 1.3K-FA", "unknown", "test"); report.Complete || len(report.Capabilities) != 1 {
+		t.Fatalf("bounded transport failure report=%+v", report)
+	}
+}
+
+func TestMenuDebugIncompleteReportIsVisibleButNotUploadable(t *testing.T) {
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, "EXPERT 1.3K-FA", menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Fail(token, auth.Revision, "operator stopped test")
+	if err == nil || view.Phase != menudebug.PhaseFailed {
+		t.Fatalf("failed view=%+v err=%v", view, err)
+	}
+	uploader := &stubMenuDebugUploader{}
+	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, MenuDebugUploader: uploader, Version: VersionInfo{Version: "test"}}, firmware: "1.2.3"}
+	preview := httptest.NewRecorder()
+	previewReq := httptest.NewRequest(http.MethodGet, "/api/v1/menu-debug/report", nil)
+	previewReq.Header.Set(menuDebugTokenHeader, token)
+	menuAPI.report(preview, previewReq)
+	if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `"complete":false`) || !strings.Contains(preview.Body.String(), `"incompletePhase":"discovering"`) {
+		t.Fatalf("partial preview status=%d body=%s", preview.Code, preview.Body.String())
+	}
+	upload := httptest.NewRecorder()
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/report/upload", strings.NewReader(fmt.Sprintf(`{"expectedRevision":%d,"consent":true}`, view.Revision)))
+	uploadReq.Header.Set(menuDebugTokenHeader, token)
+	menuAPI.upload(upload, uploadReq)
+	if upload.Code != http.StatusConflict || uploader.calls != 0 {
+		t.Fatalf("partial upload status=%d calls=%d body=%s", upload.Code, uploader.calls, upload.Body.String())
+	}
+}
+
+func TestMenuDebugExpiredReportRemainsTokenReadable(t *testing.T) {
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, "EXPERT 1.3K-FA", menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan)); err != nil {
+		t.Fatal(err)
+	}
+	view = controller.Tick(time.Now().Add(11 * time.Minute))
+	if view.Phase != menudebug.PhaseExpired {
+		t.Fatalf("expired view=%+v", view)
+	}
+	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, Version: VersionInfo{Version: "test"}}, firmware: "1.2.3"}
+	preview := httptest.NewRecorder()
+	previewReq := httptest.NewRequest(http.MethodGet, "/api/v1/menu-debug/report", nil)
+	previewReq.Header.Set(menuDebugTokenHeader, token)
+	menuAPI.report(preview, previewReq)
+	if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `"phase":"expired"`) || !strings.Contains(preview.Body.String(), `"complete":false`) {
+		t.Fatalf("expired preview status=%d body=%s", preview.Code, preview.Body.String())
+	}
+}
+
+func TestMenuDebugRunnerTurnsAnalyzerErrorIntoImmediateFailure(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err = mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{
+		DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true,
+		ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true,
+		DisplayGeneration: 1, StatusGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, "EXPERT 1.3K-FA", menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan)); err != nil {
+		t.Fatal(err)
+	}
+	unknown := display.NewState()
+	unknown.SetRow(0, "UNRECOGNIZED SCREEN")
+	controller.ObserveDisplay(unknown, 2, true, &rx, &operate)
+	menuAPI := &menuDebugAPI{opts: Options{Config: mgr, MenuDebug: controller, MenuDebugTransport: lease}, stepTimeout: time.Second}
+	menuAPI.runGuardedTest(token)
+	view, err = controller.Current(token)
+	if err != nil || view.Phase != menudebug.PhaseFailed || !strings.Contains(view.Failure, "not a recognized") {
+		t.Fatalf("runner analyzer failure view=%+v err=%v", view, err)
+	}
+	if report := controller.Report("EXPERT 1.3K-FA", "unknown", "test"); report.Complete || len(report.Capabilities) != 1 {
+		t.Fatalf("runner analyzer report=%+v", report)
+	}
 }
 
 type mockStatusOpener struct {
@@ -84,12 +598,26 @@ func (m *mockStatusPort) SetDTR(bool) error { return nil }
 func (m *mockStatusPort) SetRTS(bool) error { return nil }
 
 func (s *stubButtonTransport) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
+	s.mu.Lock()
 	s.action = action
 	s.calls++
+	call := s.calls
+	hook := s.hook
 	if s.result.Name == "" {
 		s.result.Name = action.Name
 	}
-	return s.result, s.err
+	result, err := s.result, s.err
+	s.mu.Unlock()
+	if hook != nil {
+		go hook(action, call)
+	}
+	return result, err
+}
+
+func (s *stubButtonTransport) snapshot() (int, api.ButtonAction) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls, s.action
 }
 
 func (s *stubWakeTransport) SendWake(context.Context) (api.ActionResult, error) {
@@ -654,8 +1182,13 @@ func TestMenuDebugSessionArmsAndRechecksSafetyBeforeEveryWrite(t *testing.T) {
 		return rec
 	}
 	first := advance(armed.Data.Session.Revision)
-	if first.Code != http.StatusAccepted || raw.calls != 1 || raw.action.Name != "set" {
-		t.Fatalf("first status=%d calls=%d action=%q body=%s", first.Code, raw.calls, raw.action.Name, first.Body.String())
+	deadline := time.Now().Add(time.Second)
+	for calls, _ := raw.snapshot(); calls == 0 && time.Now().Before(deadline); calls, _ = raw.snapshot() {
+		time.Sleep(time.Millisecond)
+	}
+	calls, action := raw.snapshot()
+	if first.Code != http.StatusAccepted || calls != 1 || action.Name != "set" {
+		t.Fatalf("first status=%d calls=%d action=%q body=%s", first.Code, calls, action.Name, first.Body.String())
 	}
 	var firstBody struct {
 		Data menuDebugSessionResponse `json:"data"`
@@ -664,6 +1197,8 @@ func TestMenuDebugSessionArmsAndRechecksSafetyBeforeEveryWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	tx := true
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &tx}, RecentContact: true}, 2)
 	setup := display.NewState()
 	setup.SetRow(0, "SETUP OPTIONS vs. INPUT 1")
 	setup.SetRow(3, "MANUAL TUNE   TEMP/FANS      BANK")
@@ -672,15 +1207,18 @@ func TestMenuDebugSessionArmsAndRechecksSafetyBeforeEveryWrite(t *testing.T) {
 		setup.SetAttr(1, col, 1)
 	}
 	controller.ObserveDisplay(setup, 2, true, &rx, &operate)
-	view, err := controller.Current(armed.Data.Token)
-	if err != nil {
-		t.Fatal(err)
+	deadline = time.Now().Add(time.Second)
+	var stopped menudebug.SessionView
+	for time.Now().Before(deadline) {
+		stopped, err = controller.Current(armed.Data.Token)
+		if err == nil && stopped.Phase == menudebug.PhaseFailed {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
-	tx := true
-	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &tx}, RecentContact: true}, 2)
-	second := advance(view.Revision)
-	if second.Code != http.StatusConflict || raw.calls != 1 || !strings.Contains(second.Body.String(), "STANDBY/RX") {
-		t.Fatalf("second status=%d calls=%d body=%s", second.Code, raw.calls, second.Body.String())
+	calls, _ = raw.snapshot()
+	if stopped.Phase != menudebug.PhaseFailed || calls != 1 || !strings.Contains(stopped.Failure, "STANDBY/RX") {
+		t.Fatalf("stopped=%+v calls=%d", stopped, calls)
 	}
 }
 

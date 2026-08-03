@@ -83,6 +83,44 @@ func TestArmRequiresEverySafetyPrerequisite(t *testing.T) {
 	}
 }
 
+func TestActiveSessionLatchesTransientTXObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		observe func(*Controller, *bool, *bool)
+	}{
+		{
+			name: "status",
+			observe: func(c *Controller, tx, rx *bool) {
+				c.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", TX: tx}}, 2)
+				c.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", TX: rx}}, 3)
+			},
+		},
+		{
+			name: "display",
+			observe: func(c *Controller, tx, rx *bool) {
+				operate := false
+				c.ObserveDisplay(display.State{}, 5, true, tx, &operate)
+				c.ObserveDisplay(display.State{}, 6, true, rx, &operate)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newDeterministicController(&fakeLease{})
+			view, token := arm(t, c)
+			view, err := c.Begin(token, view.Revision, CapabilityFan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tx, rx := true, false
+			tc.observe(c, &tx, &rx)
+			view, err = c.Current(token)
+			if err != nil || view.Phase != PhaseFailed || !strings.Contains(view.Failure, "TX observed") {
+				t.Fatalf("transient TX was not latched: view=%+v err=%v", view, err)
+			}
+		})
+	}
+}
+
 func TestArmClearsReportsFromPriorSession(t *testing.T) {
 	c, _ := newDeterministicController(&fakeLease{})
 	c.reports = []CapabilityReport{{Capability: CapabilityFan}}
@@ -110,6 +148,56 @@ func TestTokenAndRevisionPreventReplay(t *testing.T) {
 	}
 	if next.Revision == v.Revision {
 		t.Fatal("successful mutation did not advance revision")
+	}
+}
+
+func TestFailReturnsMutatedViewAndRetainsIncompleteReport(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: "home", Kind: ScreenHome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := c.Fail(token, auth.Revision, "transport stopped")
+	if err == nil || failed.Phase != PhaseFailed || failed.Failure != "transport stopped" || failed.Revision <= auth.Revision {
+		t.Fatalf("immediate failed view=%+v err=%v", failed, err)
+	}
+	stored, currentErr := c.Current(token)
+	if currentErr != nil || stored.Phase != failed.Phase || stored.Revision != failed.Revision || stored.Failure != failed.Failure {
+		t.Fatalf("stored view=%+v err=%v, immediate=%+v", stored, currentErr, failed)
+	}
+	report := c.Report("EXPERT 1.3K-FA", "unknown", "test")
+	if report.Complete || report.Phase != PhaseFailed || len(report.Capabilities) != 1 {
+		t.Fatalf("partial report=%+v", report)
+	}
+	partial := report.Capabilities[0]
+	if partial.Complete || partial.IncompletePhase != PhaseDiscovering || partial.Failure != "transport stopped" || len(partial.Actions) != 1 {
+		t.Fatalf("partial capability=%+v", partial)
+	}
+}
+
+func TestAbortRetainsIncompleteNonPromotableReport(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	v, token := arm(t, c)
+	v, err := c.Begin(token, v.Revision, CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", Evidence{Generation: 5, Fingerprint: "home", Kind: ScreenHome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted, err := c.Abort(token, auth.Revision, false)
+	if err != nil || aborted.Phase != PhaseAborted {
+		t.Fatalf("abort view=%+v err=%v", aborted, err)
+	}
+	report := c.Report("EXPERT 1.3K-FA", "unknown", "test")
+	if report.Complete || report.Phase != PhaseAborted || len(report.Capabilities) != 1 || report.Capabilities[0].IncompletePhase != PhaseDiscovering {
+		t.Fatalf("aborted report=%+v", report)
 	}
 }
 
