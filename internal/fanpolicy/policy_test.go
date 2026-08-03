@@ -1,6 +1,7 @@
 package fanpolicy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -130,6 +131,23 @@ func TestEvaluateRequiresReviewedFanProfileBeforeNavigation(t *testing.T) {
 	result = Evaluate(status, settings, "")
 	if !containsBlock(result.BlockedBy, "supported-fan-profile") {
 		t.Fatalf("non-Expert profile was not blocked: %+v", result)
+	}
+}
+
+func TestEvaluateAdvertisesModesOnlyForPromotedProfiles(t *testing.T) {
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	for _, model := range []string{"EXPERT 1.3K-FA", "EXPERT 1.5K-FA"} {
+		status := statusAt(90, "standby", false)
+		status.ModelName = model
+		result := Evaluate(status, settings, "")
+		if got := strings.Join(result.SupportedModes, ","); got != "normal,contest" {
+			t.Fatalf("%s supported modes = %q", model, got)
+		}
+	}
+	status := statusAt(90, "standby", false)
+	status.ModelName = "EXPERT F-KFA"
+	if modes := Evaluate(status, settings, "").SupportedModes; len(modes) != 0 {
+		t.Fatalf("unsupported model advertised modes: %v", modes)
 	}
 }
 

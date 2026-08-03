@@ -108,6 +108,7 @@ type FanPolicyRuntimeState struct {
 	LastVerifiedPolicy            string `json:"lastVerifiedPolicy,omitempty"`
 	LastVerifiedAt                string `json:"lastVerifiedAt,omitempty"`
 	LastVerifiedSource            string `json:"lastVerifiedSource,omitempty"`
+	LastVerifiedModel             string `json:"lastVerifiedModel,omitempty"`
 }
 
 type rawSettings struct {
@@ -696,6 +697,7 @@ func normalizeFanPolicyRuntimeState(in FanPolicyRuntimeState) FanPolicyRuntimeSt
 		LastVerifiedPolicy:            strings.ToLower(strings.TrimSpace(in.LastVerifiedPolicy)),
 		LastVerifiedAt:                strings.TrimSpace(in.LastVerifiedAt),
 		LastVerifiedSource:            strings.TrimSpace(in.LastVerifiedSource),
+		LastVerifiedModel:             strings.TrimSpace(in.LastVerifiedModel),
 	}
 	if out.ManualOverride != "normal" && out.ManualOverride != "high-cooling" {
 		out.ManualOverride = ""
@@ -717,12 +719,14 @@ func normalizeFanPolicyRuntimeState(in FanPolicyRuntimeState) FanPolicyRuntimeSt
 		out.LastVerifiedPolicy = ""
 		out.LastVerifiedAt = ""
 		out.LastVerifiedSource = ""
+		out.LastVerifiedModel = ""
 	}
 	if out.LastVerifiedAt != "" {
 		if _, err := time.Parse(time.RFC3339, out.LastVerifiedAt); err != nil {
 			out.LastVerifiedPolicy = ""
 			out.LastVerifiedAt = ""
 			out.LastVerifiedSource = ""
+			out.LastVerifiedModel = ""
 		}
 	}
 	return out

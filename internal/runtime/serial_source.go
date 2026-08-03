@@ -208,6 +208,9 @@ func (s *SerialSource) ConfigureFanPolicyController(controller *fanpolicy.Contro
 	s.fanController = controller
 	s.fanSettings = settings
 	s.mu.Unlock()
+	if evidence := s.SerialSessionEvidence(); controller != nil && evidence.Active {
+		controller.ObserveSerialSession(evidence.Generation)
+	}
 }
 
 func (s *SerialSource) ConfigureMenuDebugController(controller *menudebug.Controller) {
@@ -477,8 +480,12 @@ func (s *SerialSource) writeFrameForSerialSession(ctx context.Context, frame []b
 	if port == nil {
 		return transport.TransportUnavailableError()
 	}
-	if authorization.SessionGeneration != 0 && (currentGeneration != authorization.SessionGeneration || statusGeneration != authorization.SessionGeneration || !strings.EqualFold(strings.TrimSpace(statusModel), strings.TrimSpace(authorization.Model)) || !strings.EqualFold(strings.TrimSpace(statusOperatingState), "standby") || !statusTXKnown || statusTX) {
-		return errors.New("serial session, amplifier model, or STANDBY/RX status changed before button write")
+	expectedOperatingState := strings.TrimSpace(authorization.ExpectedOperatingState)
+	if expectedOperatingState == "" {
+		expectedOperatingState = "standby"
+	}
+	if authorization.SessionGeneration != 0 && (currentGeneration != authorization.SessionGeneration || statusGeneration != authorization.SessionGeneration || !strings.EqualFold(strings.TrimSpace(statusModel), strings.TrimSpace(authorization.Model)) || !strings.EqualFold(strings.TrimSpace(statusOperatingState), expectedOperatingState) || !statusTXKnown || statusTX) {
+		return fmt.Errorf("serial session, amplifier model, or expected %s/RX status changed before button write", strings.ToUpper(expectedOperatingState))
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, s.ioTimeout())
 	defer cancel()
@@ -540,8 +547,12 @@ func (s *SerialSource) beginSession(port serial.Port) (uint64, chan struct{}) {
 	s.portDone = done
 	s.portMu.Unlock()
 	s.mu.RLock()
+	fanController := s.fanController
 	menuDebug := s.menuDebug
 	s.mu.RUnlock()
+	if fanController != nil {
+		fanController.ObserveSerialSession(generation)
+	}
 	if menuDebug != nil {
 		menuDebug.ObserveSerialSession(generation)
 	}
@@ -679,7 +690,7 @@ func (s *SerialSource) applyFrameFromSession(frame []byte, sessionGeneration uin
 	s.mu.RUnlock()
 	if fanController != nil {
 		fanController.ObserveDisplay(fanpolicy.DisplayObservation{
-			State: state, Generation: generation, TX: displayTX, Operate: displayOperate,
+			State: state, Generation: generation, TX: displayTX, Operate: displayOperate, SerialSessionGeneration: sessionGeneration,
 		})
 	}
 	if menuDebug != nil {
@@ -792,11 +803,32 @@ func (s *SerialSource) applyStatusFrameFromSession(frame []byte, sessionGenerati
 	fanSettings := s.fanSettings
 	menuDebug := s.menuDebug
 	s.mu.RUnlock()
+	if sessionGeneration != 0 {
+		s.writeMu.Lock()
+		s.portMu.Lock()
+		if s.port != nil && s.portGeneration == sessionGeneration {
+			s.statusPortGeneration = sessionGeneration
+			s.statusModel = strings.TrimSpace(controllerStatus.ModelName)
+			s.statusOperatingState = strings.TrimSpace(controllerStatus.OperatingState)
+			if controllerStatus.TX != nil {
+				s.statusTX = *controllerStatus.TX
+				s.statusTXKnown = true
+			} else {
+				s.statusTXKnown = false
+			}
+		}
+		s.portMu.Unlock()
+		s.writeMu.Unlock()
+	}
 	if safetyController != nil && safetySettings != nil {
 		safetyController.Observe(context.Background(), controllerStatus, safetySettings())
 	}
 	if fanController != nil && fanSettings != nil {
-		fanController.Observe(controllerStatus, fanSettings())
+		if sessionGeneration == 0 {
+			fanController.Observe(controllerStatus, fanSettings())
+		} else {
+			fanController.ObserveFromSerialSession(controllerStatus, fanSettings(), sessionGeneration)
+		}
 	}
 	if menuDebug != nil {
 		statusGeneration := s.menuStatusGen.Add(1)
@@ -804,18 +836,6 @@ func (s *SerialSource) applyStatusFrameFromSession(frame []byte, sessionGenerati
 			menuDebug.ObserveStatus(controllerStatus, statusGeneration)
 		} else {
 			menuDebug.ObserveStatusFromSerialSession(controllerStatus, statusGeneration, sessionGeneration)
-			s.writeMu.Lock()
-			s.portMu.Lock()
-			if s.port != nil && s.portGeneration == sessionGeneration {
-				s.statusModel = strings.TrimSpace(controllerStatus.ModelName)
-				s.statusOperatingState = strings.TrimSpace(controllerStatus.OperatingState)
-				if controllerStatus.TX != nil {
-					s.statusTX = *controllerStatus.TX
-					s.statusTXKnown = true
-				}
-			}
-			s.portMu.Unlock()
-			s.writeMu.Unlock()
 		}
 	}
 }

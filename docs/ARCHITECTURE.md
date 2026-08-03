@@ -215,7 +215,7 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 | OpenAPI spec (`/api/v1/openapi.json`) | Working, served by the app as a conservative phase 1 artifact |
 | Local docs UI (`/api/v1/docs`) | Working, renders the served OpenAPI document into a built-in local reference page |
 | Temperature/SWR monitoring | Working; observational unless overtemperature standby is separately armed |
-| Display-verified fan policy | Production support is hardware-confirmed on a First Series 1.3K-FA; a Second Series 1.5K-FA profile is candidate-only in Menu Debug |
+| Display-verified fan policy | Production support is hardware-confirmed on the First Series 1.3K-FA and CONFIG-first Second Series 1.5K-FA; unsupported models remain blocked before SET |
 
 ---
 
@@ -227,4 +227,4 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 - **API must be boring and stable.** Prefer explicit JSON over cleverness. The canonical REST surface is the current `/api/v1/...` API; older non-v1 routes are compatibility holdovers, not the preferred contract.
 - **Every feature needs tests.** Decoder changes need regression tests against fixture files.
 - **Automatic standby is narrow and one-way.** It may send the documented OPERATE toggle once per latched overtemperature episode only with fresh protocol-native OPERATE and RX evidence. It never acts during TX, retries, powers off, or auto-wakes.
-- **Fan navigation is one verified transaction.** Production writes require a promoted profile and currently support the model- and topology-bound First Series Expert 1.3K-FA path. Automatic, manual, and verification requests share the same temporary-STANDBY path, pause every write during TX, stop on unexpected screens, and restore OPERATE only after verified SAVE/home completion when the controller owned the transition.
+- **Fan navigation is one verified transaction.** Production writes require a promoted profile and support the model- and topology-bound First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA paths. Automatic, manual, and verification requests share the same temporary-STANDBY path, pause every write during TX, stop on unexpected screens, and restore OPERATE only after verified SAVE/home completion when the controller owned the transition.

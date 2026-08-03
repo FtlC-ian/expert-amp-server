@@ -9,6 +9,7 @@ import (
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
 type recordingButtons struct {
@@ -20,6 +21,21 @@ type recordingButtons struct {
 type leaseRecordingButtons struct {
 	recordingButtons
 	releases int
+}
+
+type sessionRecordingButtons struct {
+	actions        []string
+	authorizations []transport.SerialSessionWriteAuthorization
+}
+
+func (r *sessionRecordingButtons) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
+	return api.ActionResult{Name: action.Name}, errors.New("unbound button path used")
+}
+
+func (r *sessionRecordingButtons) SendButtonForSerialSession(_ context.Context, action api.ButtonAction, authorization transport.SerialSessionWriteAuthorization) (api.ActionResult, error) {
+	r.actions = append(r.actions, action.Name)
+	r.authorizations = append(r.authorizations, authorization)
+	return api.ActionResult{Name: action.Name, Sent: true}, nil
 }
 
 func (r *leaseRecordingButtons) Acquire() bool      { return true }
@@ -140,7 +156,7 @@ func TestControllerNavigatesCapturedFirstSeriesProfileOneVerifiedStepAtATime(t *
 	}
 }
 
-func TestControllerKeepsSecondSeriesCandidateOutOfAutomaticControl(t *testing.T) {
+func TestControllerNavigatesCapturedSecondSeriesProfileOneVerifiedStepAtATime(t *testing.T) {
 	buttons := &recordingButtons{}
 	controller := NewController(buttons)
 	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
@@ -149,9 +165,70 @@ func TestControllerKeepsSecondSeriesCandidateOutOfAutomaticControl(t *testing.T)
 	controller.Observe(status, settings)
 	home := homeScreen()
 	home.SetRow(1, "                       EXPERT 1.5K-FA")
-	result := controller.ObserveDisplay(rxObservation(home, 1))
-	if result.State != StateBlocked || result.ActionAvailable || len(buttons.actions) != 0 || !containsBlock(result.BlockedBy, "supported-fan-profile") {
-		t.Fatalf("candidate profile was promoted before hardware verification: result=%+v actions=%v", result, buttons.actions)
+
+	generation := uint64(1)
+	observe := func(state display.State) Result {
+		result := controller.ObserveDisplay(rxObservation(state, generation))
+		t.Logf("generation=%d selected=%q state=%s nav=%+v", generation, selectedText(state), result.State, result.Navigation)
+		generation++
+		return result
+	}
+	observe(home)
+	for _, selected := range []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP", "START", "TEMP/FANS"} {
+		observe(secondSeriesSetupScreen(selected))
+	}
+	observe(submenuScreen("TEMPERATURE SCALE", "NORMAL"))
+	observe(submenuScreen("FAN MANAGEMENT", "NORMAL"))
+	observe(submenuScreen("FAN MANAGEMENT", "CONTEST"))
+	observe(submenuScreen("SAVE", "CONTEST"))
+	observe(storingScreen())
+	result := observe(home)
+
+	want := []string{"set", "right", "right", "right", "right", "right", "right", "right", "set", "right", "set", "right", "set"}
+	if strings.Join(buttons.actions, ",") != strings.Join(want, ",") {
+		t.Fatalf("actions = %v, want %v", buttons.actions, want)
+	}
+	if result.State != StateSucceeded || result.CurrentPolicy != PolicyHigh || result.Pending || result.Navigation.Profile != SecondSeriesDisplayProfile {
+		t.Fatalf("unexpected completed result: %+v", result)
+	}
+}
+
+func TestControllerRestoresNormalWithCapturedSecondSeriesProfile(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75}
+	if err := controller.SetManualOverride(PolicyNormal, 0); err != nil {
+		t.Fatal(err)
+	}
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 1.5K-FA"
+	controller.Observe(status, settings)
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT 1.5K-FA")
+
+	generation := uint64(1)
+	observe := func(state display.State) Result {
+		result := controller.ObserveDisplay(rxObservation(state, generation))
+		generation++
+		return result
+	}
+	observe(home)
+	for _, selected := range []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP", "START", "TEMP/FANS"} {
+		observe(secondSeriesSetupScreen(selected))
+	}
+	observe(submenuScreen("TEMPERATURE SCALE", "CONTEST"))
+	observe(submenuScreen("FAN MANAGEMENT", "CONTEST"))
+	observe(submenuScreen("FAN MANAGEMENT", "NORMAL"))
+	observe(submenuScreen("SAVE", "NORMAL"))
+	observe(storingScreen())
+	result := observe(home)
+
+	want := []string{"set", "right", "right", "right", "right", "right", "right", "right", "set", "right", "set", "right", "set"}
+	if strings.Join(buttons.actions, ",") != strings.Join(want, ",") {
+		t.Fatalf("actions = %v, want %v", buttons.actions, want)
+	}
+	if result.State != StateSucceeded || result.CurrentPolicy != PolicyNormal || result.Pending || result.Navigation.Profile != SecondSeriesDisplayProfile {
+		t.Fatalf("unexpected completed result: %+v", result)
 	}
 }
 
@@ -162,6 +239,7 @@ func TestControllerRejectsModelAndInitialSetupTopologyCrossPairs(t *testing.T) {
 		setupState display.State
 	}{
 		{name: "1.3 model with same-label second-series setup", model: "EXPERT 1.3K-FA", setupState: secondSeriesSetupScreen("ANTENNA")},
+		{name: "1.5 model with same-label first-series setup", model: "EXPERT 1.5K-FA", setupState: setupScreen("ANTENNA")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			buttons := &recordingButtons{}
@@ -191,6 +269,192 @@ func TestControllerRejectsWrongSetupFamilyAfterProfileSelection(t *testing.T) {
 	result := controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen("CAT"), 3))
 	if result.State != StateFailed || len(buttons.actions) != 2 || strings.Join(buttons.actions, ",") != "set,right" {
 		t.Fatalf("wrong setup family advanced navigation: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestControllerRejectsFirstSeriesSetupDuringSecondSeriesNavigation(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 1.5K-FA"
+	controller.Observe(status, settings)
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT 1.5K-FA")
+	controller.ObserveDisplay(rxObservation(home, 1))
+	controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen("CONFIG"), 2))
+	result := controller.ObserveDisplay(rxObservation(setupScreen("CAT"), 3))
+	if result.State != StateFailed || strings.Join(buttons.actions, ",") != "set,right" || !result.Navigation.MayBeInMenu {
+		t.Fatalf("wrong setup family advanced Second Series navigation: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestControllerFailsClosedWhenModelChangesDuringSecondSeriesNavigation(t *testing.T) {
+	for _, changedModel := range []string{"EXPERT 1.3K-FA", "EXPERT 2K-FA"} {
+		t.Run(changedModel, func(t *testing.T) {
+			buttons := &recordingButtons{}
+			controller := NewController(buttons)
+			settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+			status := statusAt(81, "standby", false)
+			status.ModelName = "EXPERT 1.5K-FA"
+			controller.Observe(status, settings)
+			home := homeScreen()
+			home.SetRow(1, "                       EXPERT 1.5K-FA")
+			controller.ObserveDisplay(rxObservation(home, 1))
+			if strings.Join(buttons.actions, ",") != "set" {
+				t.Fatalf("initial actions = %v", buttons.actions)
+			}
+
+			status.ModelName = changedModel
+			result := controller.Observe(status, settings)
+			if result.State != StateFailed || strings.Join(buttons.actions, ",") != "set" || !result.Navigation.MayBeInMenu {
+				t.Fatalf("model change did not fail closed before another write: result=%+v actions=%v", result, buttons.actions)
+			}
+		})
+	}
+}
+
+func TestControllerFailsClosedWhenFirstSeriesChangesToSecondSeries(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	status := statusAt(81, "standby", false)
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	if strings.Join(buttons.actions, ",") != "set" {
+		t.Fatalf("initial actions = %v", buttons.actions)
+	}
+
+	status.ModelName = "EXPERT 1.5K-FA"
+	result := controller.Observe(status, settings)
+	if result.State != StateFailed || strings.Join(buttons.actions, ",") != "set" || !result.Navigation.MayBeInMenu {
+		t.Fatalf("supported model change did not fail closed before another write: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestControllerUsesAtomicSerialSessionAuthorizationForMenuAndOperateWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		statusState   string
+		display       display.State
+		wantAction    string
+		wantOperating string
+	}{
+		{name: "standby menu entry", statusState: "standby", display: homeScreen(), wantAction: "set", wantOperating: "standby"},
+		{name: "operate transition", statusState: "operate", display: operateHomeScreen(), wantAction: "operate", wantOperating: "operate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buttons := &sessionRecordingButtons{}
+			controller := NewController(buttons)
+			controller.ObserveSerialSession(7)
+			settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+			status := statusAt(81, tc.statusState, false)
+			controller.ObserveFromSerialSession(status, settings, 7)
+			observation := rxObservation(tc.display, 1)
+			observation.SerialSessionGeneration = 7
+			controller.ObserveDisplay(observation)
+			if strings.Join(buttons.actions, ",") != tc.wantAction || len(buttons.authorizations) != 1 {
+				t.Fatalf("actions=%v authorizations=%+v", buttons.actions, buttons.authorizations)
+			}
+			authorization := buttons.authorizations[0]
+			if authorization.SessionGeneration != 7 || authorization.Model != "EXPERT 1.3K-FA" || authorization.ExpectedOperatingState != tc.wantOperating {
+				t.Fatalf("authorization=%+v", authorization)
+			}
+		})
+	}
+}
+
+func TestControllerPreservesNonSessionCoordinatorTransport(t *testing.T) {
+	buttons := &recordingButtons{}
+	coordinator := transport.NewActuationCoordinator(buttons)
+	controller := NewController(coordinator.Owner(transport.ActuationOwnerFan, false))
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	controller.Observe(statusAt(81, "standby", false), settings)
+	result := controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	if strings.Join(buttons.actions, ",") != "set" || result.State != StateNavigating {
+		t.Fatalf("coordinator-wrapped non-session transport was blocked: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestControllerRequiresStatusAndDisplayFromBoundSerialSession(t *testing.T) {
+	buttons := &sessionRecordingButtons{}
+	controller := NewController(buttons)
+	controller.ObserveSerialSession(7)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	controller.ObserveFromSerialSession(statusAt(81, "standby", false), settings, 7)
+	observation := rxObservation(homeScreen(), 1)
+	observation.SerialSessionGeneration = 8
+	result := controller.ObserveDisplay(observation)
+	if len(buttons.actions) != 0 || result.State != StateBlocked || controller.lastDisplayGen != 0 {
+		t.Fatalf("mismatched display session authorized navigation: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestControllerIgnoresStaleSerialSessionNotification(t *testing.T) {
+	controller := NewController()
+	controller.ObserveSerialSession(8)
+	controller.ObserveSerialSession(7)
+	if controller.serialSessionGeneration != 8 {
+		t.Fatalf("serial session rewound to %d", controller.serialSessionGeneration)
+	}
+}
+
+func TestControllerIgnoresStatusFromRetiredSerialSession(t *testing.T) {
+	controller := NewController()
+	settings := Settings{}
+	controller.ObserveSerialSession(8)
+	current := statusAt(30, "standby", false)
+	current.ModelName = "EXPERT 1.5K-FA"
+	controller.ObserveFromSerialSession(current, settings, 8)
+	wantGeneration := controller.statusGeneration
+
+	stale := statusAt(90, "operate", true)
+	stale.ModelName = "EXPERT 1.3K-FA"
+	controller.ObserveFromSerialSession(stale, settings, 7)
+	if controller.statusGeneration != wantGeneration || controller.statusSerialSessionGeneration != 8 ||
+		controller.status.ModelName != "EXPERT 1.5K-FA" || controller.status.OperatingState != "standby" {
+		t.Fatalf("retired status replaced current evidence: generation=%d session=%d status=%+v", controller.statusGeneration, controller.statusSerialSessionGeneration, controller.status)
+	}
+}
+
+func TestControllerIgnoresDisplaysFromRetiredSerialSession(t *testing.T) {
+	controller := NewController()
+	disabled := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 80, NormalTemperatureC: 75}
+	status := statusAt(30, "standby", false)
+	controller.ObserveSerialSession(8)
+	controller.ObserveFromSerialSession(status, disabled, 8)
+	controller.nav = navState{failed: true, failureAfterGen: 0}
+	controller.mayBeInMenu = true
+
+	for generation, state := range []display.State{
+		submenuScreen("FAN MANAGEMENT", "CONTEST"),
+		submenuScreen("SAVE", "CONTEST"),
+		storingScreen(),
+		homeScreen(),
+	} {
+		observation := rxObservation(state, uint64(generation+1))
+		observation.SerialSessionGeneration = 7
+		controller.ObserveDisplay(observation)
+	}
+	if controller.lastDisplayGen != 0 || controller.passive != (passiveSaveState{}) || controller.current != PolicyUnknown {
+		t.Fatalf("retired display mutated evidence: display=%d passive=%+v current=%q", controller.lastDisplayGen, controller.passive, controller.current)
+	}
+	if err := controller.Recover(status, disabled); err == nil || !strings.Contains(err.Error(), "newer checksum-valid home") {
+		t.Fatalf("retired home display authorized recovery: %v", err)
+	}
+}
+
+func TestControllerClearsVerifiedReceiptWhenSupportedModelChanges(t *testing.T) {
+	controller := NewController()
+	controller.current = PolicyHigh
+	controller.currentConfidence = "verified-live"
+	controller.currentVerifiedAt = time.Now().Add(-time.Minute)
+	controller.currentModel = "EXPERT 1.5K-FA"
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 1.3K-FA"
+	result := controller.Observe(status, Settings{})
+	if result.CurrentPolicy != PolicyUnknown || result.CurrentPolicyConfidence != "unknown" || controller.currentModel != "" {
+		t.Fatalf("replacement model inherited verified receipt: %+v", result)
 	}
 }
 

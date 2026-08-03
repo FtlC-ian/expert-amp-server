@@ -18,14 +18,21 @@ type ButtonTransport interface {
 }
 
 type SerialSessionWriteAuthorization struct {
-	SessionGeneration uint64
-	Model             string
+	SessionGeneration      uint64
+	Model                  string
+	ExpectedOperatingState string
 }
 
 // SerialSessionButtonTransport atomically binds a button write to the live
 // serial session and status/model evidence that authorized it.
 type SerialSessionButtonTransport interface {
 	SendButtonForSerialSession(ctx context.Context, action api.ButtonAction, authorization SerialSessionWriteAuthorization) (api.ActionResult, error)
+}
+
+// SerialSessionWriteCapability lets wrappers expose whether their underlying
+// transport can actually honor SerialSessionButtonTransport.
+type SerialSessionWriteCapability interface {
+	SerialSessionWritesAvailable() bool
 }
 
 type WakeTransport interface {

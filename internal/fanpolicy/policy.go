@@ -89,6 +89,7 @@ type Result struct {
 	CooldownUntil           string         `json:"cooldownUntil,omitempty"`
 	Pending                 bool           `json:"pending"`
 	ActionAvailable         bool           `json:"actionAvailable"`
+	SupportedModes          []string       `json:"supportedModes"`
 	Navigation              Navigation     `json:"navigation"`
 }
 
@@ -121,6 +122,7 @@ func Evaluate(status api.Status, settings Settings, previousDesired string) Resu
 		CurrentPolicy:           PolicyUnknown,
 		CurrentPolicyConfidence: "unknown",
 		BlockedBy:               []string{},
+		SupportedModes:          supportedFanModesForModel(status.ModelName),
 		Navigation:              Navigation{State: "idle", ActionsTaken: []string{}},
 		ManualOverride:          ManualOverride{Active: overridePolicy != PolicyUnknown},
 		Verification:            Verification{Requested: settings.VerifyRequested},

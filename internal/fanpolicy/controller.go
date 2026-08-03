@@ -2,6 +2,7 @@ package fanpolicy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
 const (
@@ -36,36 +38,39 @@ type DisplayObservation struct {
 	TX *bool
 	// Operate is populated from the same checksum-valid LCD flag word. Nil
 	// cannot prove either OPERATE or STANDBY.
-	Operate *bool
+	Operate                 *bool
+	SerialSessionGeneration uint64
 }
 
 type navState struct {
-	active           bool
-	failed           bool
-	step             string
-	target           string
-	observedPolicy   string
-	afterGeneration  uint64
-	previousKey      string
-	deadline         time.Time
-	lastAction       string
-	lastError        string
-	actions          []string
-	paused           bool
-	pauseReason      string
-	pauseStatusGen   uint64
-	rxStatusGen      uint64
-	resumeAfterGen   uint64
-	resumeDeadline   time.Time
-	afterStatusGen   uint64
-	restoreOperate   bool
-	changedOperate   bool
-	controlUncertain bool
-	leaseHeld        bool
-	verifyOnly       bool
-	failureAfterGen  uint64
-	profile          string
-	setupIndex       int
+	active                  bool
+	failed                  bool
+	model                   string
+	serialSessionGeneration uint64
+	step                    string
+	target                  string
+	observedPolicy          string
+	afterGeneration         uint64
+	previousKey             string
+	deadline                time.Time
+	lastAction              string
+	lastError               string
+	actions                 []string
+	paused                  bool
+	pauseReason             string
+	pauseStatusGen          uint64
+	rxStatusGen             uint64
+	resumeAfterGen          uint64
+	resumeDeadline          time.Time
+	afterStatusGen          uint64
+	restoreOperate          bool
+	changedOperate          bool
+	controlUncertain        bool
+	leaseHeld               bool
+	verifyOnly              bool
+	failureAfterGen         uint64
+	profile                 string
+	setupIndex              int
 }
 
 type passiveSaveState struct {
@@ -81,6 +86,7 @@ type PersistentState struct {
 	LastVerifiedPolicy            string
 	LastVerifiedAt                string
 	LastVerifiedSource            string
+	LastVerifiedModel             string
 }
 
 type StatePersistence func(PersistentState) error
@@ -98,26 +104,29 @@ type Controller struct {
 	nav          navState
 	now          func() time.Time
 
-	currentVerifiedAt      time.Time
-	currentConfidence      string
-	currentSource          string
-	lastVerifiedHighAt     time.Time
-	normalRestoreAfter     time.Time
-	lastVerifiedScreen     string
-	mayBeInMenu            bool
-	displayTX              *bool
-	displayOperate         *bool
-	statusGeneration       uint64
-	lastDisplayGen         uint64
-	lastDisplayKey         string
-	manualOverride         string
-	manualOverrideDuration time.Duration
-	manualOverrideUntil    time.Time
-	verifyRequested        bool
-	verifyReason           string
-	passive                passiveSaveState
-	persist                StatePersistence
-	persistenceError       string
+	currentVerifiedAt             time.Time
+	currentConfidence             string
+	currentSource                 string
+	currentModel                  string
+	serialSessionGeneration       uint64
+	statusSerialSessionGeneration uint64
+	lastVerifiedHighAt            time.Time
+	normalRestoreAfter            time.Time
+	lastVerifiedScreen            string
+	mayBeInMenu                   bool
+	displayTX                     *bool
+	displayOperate                *bool
+	statusGeneration              uint64
+	lastDisplayGen                uint64
+	lastDisplayKey                string
+	manualOverride                string
+	manualOverrideDuration        time.Duration
+	manualOverrideUntil           time.Time
+	verifyRequested               bool
+	verifyReason                  string
+	passive                       passiveSaveState
+	persist                       StatePersistence
+	persistenceError              string
 }
 
 func NewController(transports ...ButtonTransport) *Controller {
@@ -173,6 +182,7 @@ func (c *Controller) ConfigurePersistence(initial PersistentState, verifyOnStart
 			c.currentVerifiedAt = verifiedAt
 			c.currentConfidence = "persisted-stale"
 			c.currentSource = strings.TrimSpace(initial.LastVerifiedSource)
+			c.currentModel = strings.TrimSpace(initial.LastVerifiedModel)
 		}
 	}
 	if verifyOnStartup {
@@ -383,21 +393,48 @@ func (c *Controller) Recover(status api.Status, settings Settings) error {
 }
 
 func (c *Controller) Observe(status api.Status, settings Settings) Result {
-	return c.observe(status, settings, true)
+	return c.observe(status, settings, true, 0)
+}
+
+func (c *Controller) ObserveFromSerialSession(status api.Status, settings Settings, serialSessionGeneration uint64) Result {
+	return c.observe(status, settings, true, serialSessionGeneration)
+}
+
+func (c *Controller) ObserveSerialSession(serialSessionGeneration uint64) {
+	if c == nil || serialSessionGeneration == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if serialSessionGeneration <= c.serialSessionGeneration {
+		return
+	}
+	c.serialSessionGeneration = serialSessionGeneration
+	c.statusSerialSessionGeneration = 0
+	if c.nav.active {
+		c.failLocked("serial session changed during fan-policy navigation")
+	}
+	if c.currentConfidence == "verified-live" {
+		c.clearVerifiedPolicyLocked()
+		c.persistLocked()
+	}
 }
 
 // UpdateSettings reevaluates the controller with a cached status snapshot
 // without treating that snapshot as a new protocol observation.
 func (c *Controller) UpdateSettings(status api.Status, settings Settings) Result {
-	return c.observe(status, settings, false)
+	return c.observe(status, settings, false, 0)
 }
 
-func (c *Controller) observe(status api.Status, settings Settings, protocolObservation bool) Result {
+func (c *Controller) observe(status api.Status, settings Settings, protocolObservation bool, serialSessionGeneration uint64) Result {
 	if c == nil {
 		return Evaluate(status, settings, PolicyUnknown)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if serialSessionGeneration != 0 && serialSessionGeneration != c.serialSessionGeneration {
+		return c.result
+	}
 
 	now := c.now()
 	c.expireOverrideLocked(now)
@@ -410,6 +447,13 @@ func (c *Controller) observe(status api.Status, settings Settings, protocolObser
 	c.settings = settings
 	if protocolObservation {
 		c.statusGeneration++
+		if serialSessionGeneration != 0 {
+			c.statusSerialSessionGeneration = serialSessionGeneration
+		}
+		if c.currentModel != "" && strings.TrimSpace(status.ModelName) != "" && !strings.EqualFold(c.currentModel, strings.TrimSpace(status.ModelName)) {
+			c.clearVerifiedPolicyLocked()
+			c.persistLocked()
+		}
 	}
 
 	switch {
@@ -462,6 +506,9 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if observation.SerialSessionGeneration != 0 && observation.SerialSessionGeneration != c.serialSessionGeneration {
+		return c.result
+	}
 
 	now := c.now()
 	key := semanticDisplayKey(observation.State)
@@ -485,6 +532,12 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 	status := c.currentStatusLocked(now)
 	base := Evaluate(status, c.settings, c.desired)
 	blocks := c.navigationBlocksLocked(status, c.settings)
+	if c.nav.active && c.nav.serialSessionGeneration != 0 && observation.SerialSessionGeneration != c.nav.serialSessionGeneration {
+		c.failLocked("serial session changed during fan-policy display navigation")
+		base = Evaluate(status, c.settings, c.desired)
+		c.result = c.decorateLocked(base, c.settings)
+		return c.result
+	}
 	if !base.ControlActive || base.State == StateUnavailable || len(fatalNavigationBlocks(blocks)) != 0 {
 		if c.nav.active {
 			c.failLocked("safety precondition changed during display navigation")
@@ -600,6 +653,15 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
+		if _, sessionBound := availableSerialSessionTransport(c.transport); sessionBound &&
+			(c.serialSessionGeneration == 0 || c.statusSerialSessionGeneration != c.serialSessionGeneration || observation.SerialSessionGeneration != c.serialSessionGeneration) {
+			base.State = StateBlocked
+			base.Pending = false
+			base.BlockedBy = appendUnique(base.BlockedBy, "serial-session")
+			base.Reason = "fan-policy change is waiting for status and display evidence from the same live serial session"
+			c.result = c.decorateLocked(base, c.settings)
+			return c.result
+		}
 		if !c.acquireLeaseLocked() {
 			base.State = StateBlocked
 			base.Pending = false
@@ -611,6 +673,8 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 		c.lastVerifiedScreen = key
 		c.nav.active = true
 		c.nav.leaseHeld = true
+		c.nav.model = strings.TrimSpace(status.ModelName)
+		c.nav.serialSessionGeneration = c.serialSessionGeneration
 		c.nav.verifyOnly = c.verifyRequested
 		c.nav.target = c.desired
 		operatingState := normalizeOperatingState(status.OperatingState)
@@ -859,7 +923,7 @@ func (c *Controller) sendLocked(action, nextStep string, generation uint64, prev
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
-	result, err := c.transport.SendButton(ctx, api.ButtonAction{Name: action})
+	result, err := c.sendButtonForNavigationLocked(ctx, action, "standby")
 	if err != nil || !result.Sent {
 		if err != nil {
 			c.failLocked(fmt.Sprintf("send %s: %v", action, err))
@@ -900,7 +964,7 @@ func (c *Controller) sendControlLocked(action string) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
-	result, err := c.transport.SendButton(ctx, api.ButtonAction{Name: action})
+	result, err := c.sendButtonForNavigationLocked(ctx, action, expectedCurrent)
 	if err != nil || !result.Sent {
 		if err != nil {
 			c.failLocked(fmt.Sprintf("send %s: %v", action, err))
@@ -912,6 +976,31 @@ func (c *Controller) sendControlLocked(action string) bool {
 	c.nav.lastAction = action
 	c.nav.actions = append(c.nav.actions, action)
 	return true
+}
+
+func (c *Controller) sendButtonForNavigationLocked(ctx context.Context, action, expectedOperatingState string) (api.ActionResult, error) {
+	if sessionTransport, ok := availableSerialSessionTransport(c.transport); ok {
+		if c.nav.serialSessionGeneration == 0 || strings.TrimSpace(c.nav.model) == "" {
+			return api.ActionResult{Name: action}, errors.New("fan-policy serial session and model are not bound")
+		}
+		return sessionTransport.SendButtonForSerialSession(ctx, api.ButtonAction{Name: action}, transport.SerialSessionWriteAuthorization{
+			SessionGeneration:      c.nav.serialSessionGeneration,
+			Model:                  c.nav.model,
+			ExpectedOperatingState: expectedOperatingState,
+		})
+	}
+	return c.transport.SendButton(ctx, api.ButtonAction{Name: action})
+}
+
+func availableSerialSessionTransport(buttonTransport ButtonTransport) (transport.SerialSessionButtonTransport, bool) {
+	sessionTransport, ok := buttonTransport.(transport.SerialSessionButtonTransport)
+	if !ok {
+		return nil, false
+	}
+	if capability, wrapped := buttonTransport.(transport.SerialSessionWriteCapability); wrapped && !capability.SerialSessionWritesAvailable() {
+		return nil, false
+	}
+	return sessionTransport, true
 }
 
 func (c *Controller) observeOperatingTransitionLocked(status api.Status, expectedState, displayStep string, now time.Time) {
@@ -1003,6 +1092,13 @@ func (c *Controller) currentStatusLocked(now time.Time) api.Status {
 
 func (c *Controller) navigationBlocksLocked(status api.Status, settings Settings) []string {
 	blocks := actionBlocks(status, settings)
+	if c.nav.active && !strings.EqualFold(strings.TrimSpace(status.ModelName), c.nav.model) {
+		blocks = appendUnique(blocks, "model-changed")
+	}
+	if c.nav.active && c.nav.serialSessionGeneration != 0 &&
+		(c.serialSessionGeneration != c.nav.serialSessionGeneration || c.statusSerialSessionGeneration != c.nav.serialSessionGeneration) {
+		blocks = appendUnique(blocks, "serial-session-changed")
+	}
 	if c.nav.active && requiresStandby(c.nav.step) && normalizeOperatingState(status.OperatingState) != "standby" {
 		blocks = appendUnique(blocks, "standby-required")
 	}
@@ -1073,6 +1169,10 @@ func (c *Controller) recordVerifiedPolicyLocked(policy string, verifiedAt time.T
 	c.currentVerifiedAt = verifiedAt
 	c.currentConfidence = "verified-live"
 	c.currentSource = strings.TrimSpace(source)
+	c.currentModel = strings.TrimSpace(c.status.ModelName)
+	if c.nav.model != "" {
+		c.currentModel = c.nav.model
+	}
 	if c.currentSource == "manual-override" && c.manualOverrideDuration > 0 && c.manualOverrideUntil.IsZero() {
 		c.manualOverrideUntil = verifiedAt.Add(c.manualOverrideDuration)
 		c.manualOverrideDuration = 0
@@ -1083,6 +1183,15 @@ func (c *Controller) recordVerifiedPolicyLocked(policy string, verifiedAt time.T
 		c.lastVerifiedHighAt = time.Time{}
 	}
 	c.persistLocked()
+}
+
+func (c *Controller) clearVerifiedPolicyLocked() {
+	c.current = PolicyUnknown
+	c.currentVerifiedAt = time.Time{}
+	c.currentConfidence = "unknown"
+	c.currentSource = ""
+	c.currentModel = ""
+	c.lastVerifiedHighAt = time.Time{}
 }
 
 func (c *Controller) observePassiveSaveLocked(observation DisplayObservation) {
@@ -1124,6 +1233,7 @@ func (c *Controller) persistentStateLocked() PersistentState {
 		state.LastVerifiedPolicy = c.current
 		state.LastVerifiedAt = c.currentVerifiedAt.UTC().Format(time.RFC3339)
 		state.LastVerifiedSource = c.currentSource
+		state.LastVerifiedModel = c.currentModel
 	}
 	return state
 }

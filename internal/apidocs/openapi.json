@@ -1802,6 +1802,7 @@
           "verification",
           "pending",
           "actionAvailable",
+          "supportedModes",
           "blockedBy",
           "navigation"
         ],
@@ -1908,6 +1909,17 @@
             "type": "boolean",
             "description": "True when a live button transport exists. The transaction still requires recognized live display waypoints before each write."
           },
+          "supportedModes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "normal",
+                "contest"
+              ]
+            },
+            "description": "Manual fan modes supported by the promoted profile for the reported model. An empty array means no production fan-navigation profile is available; exact setup topology is still verified before any selector movement."
+          },
           "navigation": {
             "$ref": "#/components/schemas/FanPolicyNavigation"
           }
@@ -1993,7 +2005,8 @@
           "profile": {
             "type": "string",
             "enum": [
-              "expert-1.3k-fa-first-series-v1"
+              "expert-1.3k-fa-first-series-v1",
+              "expert-1.5k-fa-second-series-v1"
             ],
             "description": "Promoted production fan-navigation profile selected after the reported model and first verified SET-menu topology agree. Candidate Menu Debug profiles are reported separately and never appear here."
           },
@@ -2627,7 +2640,7 @@
           },
           "automaticFanPolicyEnabled": {
             "type": "boolean",
-            "description": "Explicitly enables fan-policy evaluation. Defaults false and requires pollingMode both. Production navigation requires a promoted hardware profile and currently supports the verified First Series Expert 1.3K-FA; unsupported models are blocked before SET. The reported model and first verified setup topology must agree before selector movement. Navigation temporarily enters verified STANDBY when initially OPERATE, pauses all writes during TX, and restores OPERATE only after verified save completion."
+            "description": "Explicitly enables fan-policy evaluation. Defaults false and requires pollingMode both. Production navigation requires a promoted hardware profile and supports the verified First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA; unsupported models are blocked before SET. The reported model and first verified setup topology must agree before selector movement. Navigation temporarily enters verified STANDBY when initially OPERATE, pauses all writes during TX, and restores OPERATE only after verified save completion."
           },
           "fanHighTemperatureC": {
             "type": "number",
