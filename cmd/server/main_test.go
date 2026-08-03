@@ -839,7 +839,8 @@ func TestSettingsPageHasGuardedMenuDebugWizard(t *testing.T) {
 		"Disabled by default. This reveals the separate, short-lived STANDBY-only wizard",
 		"X-Menu-Debug-Token",
 		"expectedRevision",
-		"capabilities: ['fan', 'bank']",
+		"capabilities: ['fan']",
+		"Session armed; the guarded fan transaction is ready.",
 		"begin-discovery",
 		"Start Guarded Test",
 		"Waiting for display evidence",
@@ -857,6 +858,9 @@ func TestSettingsPageHasGuardedMenuDebugWizard(t *testing.T) {
 		if !strings.Contains(body, required) {
 			t.Errorf("menu debug wizard missing safety or workflow text %q", required)
 		}
+	}
+	if strings.Contains(body, "capabilities: ['fan', 'bank']") || strings.Contains(body, "temporarily change the bank setting") {
+		t.Error("built-in fan validation wizard must not silently start bank discovery")
 	}
 
 	for _, endpoint := range []string{

@@ -1747,10 +1747,9 @@
 
         <div id="menu-debug-body">
           <div class="settings-section">
-            <p class="settings-hint">One guarded start automatically discovers and runs each frozen transaction. Every individual command still requires newer matching display evidence before the next command. The wizard pauses only for physical candidate and restored confirmation.</p>
+            <p class="settings-hint">One guarded start automatically discovers and runs the frozen fan transaction. Every individual command still requires newer matching display evidence before the next command. The wizard pauses only for physical candidate and restored confirmation.</p>
             <ol class="menu-debug-plan">
               <li>Discover and temporarily change the fan setting; you verify it; the server restores the original.</li>
-              <li>Discover and temporarily change the bank setting; you verify it; the server restores the original.</li>
             </ol>
 
             <div id="menu-debug-arm">
@@ -2995,12 +2994,12 @@
         const body = await menuDebugRequest('/api/v1/menu-debug/session', {
           method: 'POST',
           headers: menuDebugHeaders(true),
-          body: JSON.stringify({ acknowledgement, firmwareVersion, capabilities: ['fan', 'bank'] }),
+          body: JSON.stringify({ acknowledgement, firmwareVersion, capabilities: ['fan'] }),
         });
         const clearedNormalOverride = !!(body.data && body.data.fanOverrideAutoCleared);
         setStatus('menu-debug-arm-status', clearedNormalOverride
           ? 'Session armed; the completed Normal fan override was cleared without touching the amplifier.'
-          : 'Session armed; fan and bank will run as separate transactions.', 'ok');
+          : 'Session armed; the guarded fan transaction is ready.', 'ok');
       } catch (err) {
         setStatus('menu-debug-arm-status', err.message, 'err');
       }
