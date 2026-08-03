@@ -842,6 +842,31 @@ func TestSerialSourceAllowsNewerSameModelStatusForAuthorizedWrite(t *testing.T) 
 	}
 }
 
+func TestSerialSourceAuthorizationSupportsExplicitOperateState(t *testing.T) {
+	status13K := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
+	operateStatus := statusFrameWithState(t, status13K, 'O', 'R')
+	port := &mockSerialPort{}
+	src := NewSerialSource(SerialSourceConfig{Port: "/dev/ttyTEST0", ReadTimeout: 25 * time.Millisecond}, &mockSerialOpener{port: port}, Update{})
+	sessionGeneration, _ := src.beginSession(port)
+	src.applyStatusFrameFromSession(operateStatus, sessionGeneration)
+	operateAuthorization := transport.SerialSessionWriteAuthorization{
+		SessionGeneration:      sessionGeneration,
+		Model:                  "EXPERT 1.3K-FA",
+		ExpectedOperatingState: "operate",
+	}
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "operate"}, operateAuthorization); err != nil {
+		t.Fatalf("explicit OPERATE authorization rejected: %v", err)
+	}
+	standbyAuthorization := operateAuthorization
+	standbyAuthorization.ExpectedOperatingState = "standby"
+	if _, err := src.SendButtonForSerialSession(context.Background(), api.ButtonAction{Name: "set"}, standbyAuthorization); err == nil || !strings.Contains(err.Error(), "STANDBY/RX") {
+		t.Fatalf("standby authorization accepted OPERATE status: %v", err)
+	}
+	if writes := port.writtenSnapshot(); len(writes) != 1 {
+		t.Fatalf("unexpected writes: %v", writes)
+	}
+}
+
 func TestSerialSourceRejectsUnknownModelUntilSameModelRecovery(t *testing.T) {
 	status13K := mustDecodeHex(t, "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a")
 	unknownModel := statusFrameWithPAIdentifier(t, status13K, "ZZZ")

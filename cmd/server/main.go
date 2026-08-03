@@ -285,6 +285,7 @@ func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop
 		LastVerifiedPolicy:            persistedFanState.LastVerifiedPolicy,
 		LastVerifiedAt:                persistedFanState.LastVerifiedAt,
 		LastVerifiedSource:            persistedFanState.LastVerifiedSource,
+		LastVerifiedModel:             persistedFanState.LastVerifiedModel,
 	}, snapshot.Settings.VerifyFanModeOnStartup, func(state fanpolicy.PersistentState) error {
 		return cfg.UpdateFanPolicyState(config.FanPolicyRuntimeState{
 			ManualOverride:                state.ManualOverride,
@@ -293,6 +294,7 @@ func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop
 			LastVerifiedPolicy:            state.LastVerifiedPolicy,
 			LastVerifiedAt:                state.LastVerifiedAt,
 			LastVerifiedSource:            state.LastVerifiedSource,
+			LastVerifiedModel:             state.LastVerifiedModel,
 		})
 	})
 	if serialSource != nil {

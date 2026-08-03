@@ -160,6 +160,14 @@ func (t *ownedButtonTransport) SendButtonForSerialSession(ctx context.Context, a
 	return transport.SendButtonForSerialSession(ctx, action, authorization)
 }
 
+func (t *ownedButtonTransport) SerialSessionWritesAvailable() bool {
+	if t == nil || t.coordinator == nil || t.coordinator.transport == nil {
+		return false
+	}
+	_, ok := t.coordinator.transport.(SerialSessionButtonTransport)
+	return ok
+}
+
 func (t *gatedWakeTransport) SendWake(ctx context.Context) (api.ActionResult, error) {
 	if t == nil || t.coordinator == nil || t.transport == nil {
 		return api.ActionResult{Name: "wake"}, WakeTransportUnavailableError()

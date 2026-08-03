@@ -223,15 +223,16 @@ func matchesProfileSetupSelection(state display.State, profileID, key string) bo
 }
 
 type fanDisplayProfile struct {
-	id        string
-	model     string
-	setupKeys []string
-	verified  bool
+	id             string
+	model          string
+	setupKeys      []string
+	supportedModes []string
+	verified       bool
 }
 
 var fanDisplayProfiles = []fanDisplayProfile{
-	{id: FirstSeriesDisplayProfile, model: "EXPERT 1.3K-FA", setupKeys: []string{"setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, verified: true},
-	{id: SecondSeriesDisplayProfile, model: "EXPERT 1.5K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}},
+	{id: FirstSeriesDisplayProfile, model: "EXPERT 1.3K-FA", setupKeys: []string{"setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true},
+	{id: SecondSeriesDisplayProfile, model: "EXPERT 1.5K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true},
 }
 
 func fanDisplayProfileByID(id string) (fanDisplayProfile, bool) {
@@ -255,6 +256,14 @@ func fanDisplayProfileForModel(model string) (fanDisplayProfile, bool) {
 func verifiedFanDisplayProfileForModel(model string) (fanDisplayProfile, bool) {
 	profile, ok := fanDisplayProfileForModel(model)
 	return profile, ok && profile.verified
+}
+
+func supportedFanModesForModel(model string) []string {
+	profile, ok := verifiedFanDisplayProfileForModel(model)
+	if !ok {
+		return []string{}
+	}
+	return append([]string(nil), profile.supportedModes...)
 }
 
 func identifyFanDisplayProfile(state display.State, model string) (fanDisplayProfile, string, bool) {
