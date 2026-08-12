@@ -38,17 +38,26 @@ var (
 	Channel   = "dev"
 )
 
+const defaultMenuReportCollectorURL = "https://expert-amp-menu-reports.sociallabs.workers.dev/v1/menu-reports"
+
 func main() {
 	addr := flag.String("addr", ":8088", "listen address")
 	configPath := flag.String("config", "config/expert-amp-server.json", "path to local runtime config")
 	pollInterval := flag.Duration("poll-interval", 200*time.Millisecond, "snapshot poll interval")
 	lcdFlagDebug := flag.Bool("lcd-flag-debug", false, "log changes in unknown GetLCD flag bits for protocol investigation")
-	collectorURL := flag.String("menu-report-collector-url", os.Getenv("EXPERT_AMP_MENU_REPORT_COLLECTOR_URL"), "HTTPS endpoint for consented sanitized menu reports")
+	collectorURL := flag.String("menu-report-collector-url", menuReportCollectorURL(), "HTTPS endpoint for consented sanitized menu reports (empty disables uploads)")
 	flag.Parse()
 
 	if err := run(*addr, *configPath, *pollInterval, *lcdFlagDebug, *collectorURL); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func menuReportCollectorURL() string {
+	if value := strings.TrimSpace(os.Getenv("EXPERT_AMP_MENU_REPORT_COLLECTOR_URL")); value != "" {
+		return value
+	}
+	return defaultMenuReportCollectorURL
 }
 
 func run(addr, configPath string, pollInterval time.Duration, lcdFlagDebug bool, collectorURL string) error {

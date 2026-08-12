@@ -134,13 +134,13 @@ journalctl -u expert-amp-server -f
 
 The unit uses `Restart=always`, so `POST /api/v1/runtime/restart` causes the process to exit cleanly and systemd brings it back automatically. With the default `RestartSec=5`, the UI/API may be unavailable for a few seconds during restart; that is expected. For an intentional shutdown, use `sudo systemctl stop expert-amp-server`.
 
-To enable explicit, consented uploads of sanitized Menu Debug reports, add the full collector endpoint to the service environment and restart:
+Explicit, consented uploads of sanitized Menu Debug reports use the project's public receive-only collector by default. No systemd setting is required. To use a different collector, add the full endpoint to the service environment and restart:
 
 ```ini
 Environment=EXPERT_AMP_MENU_REPORT_COLLECTOR_URL=https://collector.example/v1/menu-reports
 ```
 
-Leave this unset to keep uploads disabled. Local JSON report download remains available without a collector.
+The report is not uploaded unless the operator explicitly checks the consent box and clicks Upload Report. To disable upload support entirely, add `-menu-report-collector-url=` to the service's `ExecStart` command. Local JSON report download remains available without a collector.
 
 Common gotchas from the first radio-host smoke test:
 
