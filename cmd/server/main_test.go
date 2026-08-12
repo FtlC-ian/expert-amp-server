@@ -58,6 +58,19 @@ func htmlHasClasses(body string, classes ...string) bool {
 	return false
 }
 
+func TestMenuReportCollectorURL(t *testing.T) {
+	t.Setenv("EXPERT_AMP_MENU_REPORT_COLLECTOR_URL", "")
+	if got := menuReportCollectorURL(); got != defaultMenuReportCollectorURL {
+		t.Fatalf("menuReportCollectorURL() = %q, want %q", got, defaultMenuReportCollectorURL)
+	}
+
+	const override = "https://collector.example/v1/menu-reports"
+	t.Setenv("EXPERT_AMP_MENU_REPORT_COLLECTOR_URL", "  "+override+"  ")
+	if got := menuReportCollectorURL(); got != override {
+		t.Fatalf("menuReportCollectorURL() = %q, want override %q", got, override)
+	}
+}
+
 func TestSettingsEndpointFirstRun(t *testing.T) {
 	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
 	if err != nil {
