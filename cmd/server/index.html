@@ -2829,6 +2829,7 @@
     let menuDebugRequestActive = false;
     let menuDebugAnnouncementKey = '';
     let menuDebugReportLoadKey = '';
+    let menuDebugReportLoadInFlight = '';
 
     function menuDebugHeaders(json) {
       const headers = {};
@@ -2977,9 +2978,8 @@
       const reportAvailable = !!menuDebugSession.reportAvailable || state === 'complete';
       document.getElementById('menu-debug-report-section').hidden = !reportAvailable;
       const reportLoadKey = reportAvailable ? announcementSessionKey + ':' + state : '';
-      if (reportAvailable && reportLoadKey !== menuDebugReportLoadKey) {
-        menuDebugReportLoadKey = reportLoadKey;
-        loadMenuDebugReport();
+      if (reportAvailable && reportLoadKey !== menuDebugReportLoadKey && reportLoadKey !== menuDebugReportLoadInFlight) {
+        loadMenuDebugReport(reportLoadKey);
       }
       updateMenuDebugPolling();
     }
@@ -3032,13 +3032,15 @@
       }
     }
 
-    async function loadMenuDebugReport() {
+    async function loadMenuDebugReport(reportLoadKey = '') {
       if (!menuDebugToken) return;
+      menuDebugReportLoadInFlight = reportLoadKey;
       try {
         const res = await fetch('/api/v1/menu-debug/report', { headers: menuDebugHeaders(false) });
         const body = await res.json();
         if (!res.ok || !body.success) throw new Error(menuDebugError(body, 'Report unavailable'));
         menuDebugReport = body.data;
+        menuDebugReportLoadKey = reportLoadKey;
         setTextIfChanged(document.getElementById('menu-debug-report-preview'), JSON.stringify(menuDebugReport, null, 2));
         const complete = menuDebugReport.complete === true;
         document.getElementById('menu-debug-report-label').textContent = complete
@@ -3048,6 +3050,8 @@
         document.getElementById('menu-debug-upload-report').disabled = !complete || !document.getElementById('menu-debug-upload-consent').checked;
       } catch (err) {
         setStatus('menu-debug-report-status', err.message, 'err');
+      } finally {
+        if (menuDebugReportLoadInFlight === reportLoadKey) menuDebugReportLoadInFlight = '';
       }
     }
 
@@ -3383,6 +3387,7 @@
           renderOperatorFanPolicy(body.data);
         }
       } catch (err) {
+        lastFanPolicyRenderJSON = '';
         renderFanPolicyRuntime({ state: 'unavailable', reason: err.message });
       }
     }

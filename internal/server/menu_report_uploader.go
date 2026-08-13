@@ -21,7 +21,7 @@ import (
 const maxCollectorResponseBytes = 8 << 10
 const maxCollectorErrorRunes = 240
 
-var collectorErrorPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()\[\]-]*$`)
+var collectorErrorPattern = regexp.MustCompile(`^(?:unsupported schemaVersion|menu-report\.v2 upload must be complete|[A-Za-z]+(?:\[[0-9]+\])?(?:\.[A-Za-z]+|\[[0-9]+\])*(?: is invalid| must be (?:true|boolean|an object)| must contain [0-9]+-[0-9]+ items| contains unsupported field [A-Za-z]+| is missing [A-Za-z]+| contains private identity data))$`)
 
 type menuReportHTTPUploader struct {
 	endpoint string

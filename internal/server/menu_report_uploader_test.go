@@ -69,6 +69,9 @@ func TestMenuReportHTTPUploaderRejectsUnsafeStructuredFailureDetail(t *testing.T
 		"<script>alert(1)</script>",
 		"validation failed at https://collector.example/private",
 		"validation failed\u001b[31m",
+		"backend 192.168.1.175 unavailable",
+		"internal-host.local unavailable",
+		"API token ABC123",
 		strings.Repeat("x", maxCollectorErrorRunes+1),
 	} {
 		t.Run(detail[:min(len(detail), 20)], func(t *testing.T) {
