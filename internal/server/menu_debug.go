@@ -374,6 +374,18 @@ func (m *menuDebugAPI) runGuardedTestContext(runnerCtx context.Context, token st
 				return
 			}
 		}
+		if view.Phase == menudebug.PhaseAwaitingPhysicalHome {
+			if _, err = m.waitForPhysicalHome(runnerCtx, token, view); err != nil {
+				return
+			}
+			continue
+		}
+		if view.Phase == menudebug.PhaseArmed {
+			if _, ok := m.nextCapability(view.Completed); !ok {
+				_, _ = m.opts.MenuDebug.Complete(token, view.Revision)
+			}
+			return
+		}
 		if view.Phase != menudebug.PhaseDiscovering && view.Phase != menudebug.PhaseApplying && view.Phase != menudebug.PhaseRestoring {
 			return
 		}
@@ -393,11 +405,36 @@ func (m *menuDebugAPI) runGuardedTestContext(runnerCtx context.Context, token st
 			m.stopGuardedTest(token, err)
 			return
 		}
+		if sent.Phase == menudebug.PhaseAwaitingPhysicalHome {
+			if _, err = m.waitForPhysicalHome(runnerCtx, token, sent); err != nil {
+				return
+			}
+			continue
+		}
 		if sent.Phase == menudebug.PhasePlanReady || sent.Phase == menudebug.PhaseArmed || sent.Phase == menudebug.PhaseComplete {
 			continue
 		}
 		if _, err = m.waitForGuardedReceipt(runnerCtx, token, sent); err != nil {
 			return
+		}
+	}
+}
+
+func (m *menuDebugAPI) waitForPhysicalHome(ctx context.Context, token string, sent menudebug.SessionView) (menudebug.SessionView, error) {
+	ticker := time.NewTicker(menuDebugRunnerPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return sent, ctx.Err()
+		case <-ticker.C:
+			view, err := m.opts.MenuDebug.Current(token)
+			if err != nil {
+				return view, err
+			}
+			if view.Phase != menudebug.PhaseAwaitingPhysicalHome {
+				return view, nil
+			}
 		}
 	}
 }
@@ -649,7 +686,7 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 				if topologyErr != nil {
 					return topologyView, topologyErr
 				}
-				return m.opts.MenuDebug.Complete(token, topologyView.Revision)
+				return topologyView, nil
 			}
 			return view, planErr
 		}
@@ -672,14 +709,24 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 }
 
 func validateMenuDebugCandidateEntry(runtime menudebug.RuntimeSnapshot, capability menudebug.Capability) error {
-	if runtime.Screen.SetupTopology != menudebug.SetupTopologyThirdSeries2K {
+	if capability != menudebug.CapabilityFan {
 		return nil
 	}
-	if capability != menudebug.CapabilityFan || !strings.EqualFold(strings.TrimSpace(runtime.Screen.SelectedText), "FAN NOISE") {
-		return errors.New("Third Series 2K-FA topology does not authorize this menu entry")
+	if strings.Count(runtime.Screen.SelectedText, "\n") != 0 {
+		return errors.New("unreviewed fan-menu entry requires exactly one highlighted menu item")
+	}
+	selected := strings.ToUpper(strings.Join(strings.Fields(runtime.Screen.SelectedText), " "))
+	if runtime.Screen.SetupTopology == menudebug.SetupTopologyThirdSeries2K && selected != "FAN NOISE" {
+		return errors.New("Third Series 2K-FA topology authorizes entry only from FAN NOISE")
+	}
+	if runtime.Screen.SetupTopology == menudebug.SetupTopologyFirstSeries || runtime.Screen.SetupTopology == menudebug.SetupTopologySecondSeries {
+		return nil
+	}
+	if selected != "TEMP/FANS" && selected != "FAN NOISE" && selected != "COOLING FAN" && selected != "FAN MANAGEMENT" {
+		return errors.New("unreviewed fan-menu entry requires an exact recognized fan submenu label")
 	}
 	if len(runtime.Screen.Rows) != display.Rows || !strings.Contains(strings.ToUpper(strings.Join(strings.Fields(runtime.Screen.Rows[7]), " ")), "[SET]:CONFIRM") {
-		return errors.New("Third Series 2K-FA FAN NOISE entry requires a current [SET]:CONFIRM legend")
+		return errors.New("unreviewed fan-menu entry requires a current [SET]:CONFIRM legend; [SET]:CHANGE may write immediately")
 	}
 	return nil
 }
@@ -856,6 +903,8 @@ func proposalFor(view menudebug.SessionView) menuDebugProposal {
 		return menuDebugProposal{Action: "automatic apply running", Description: "Waiting for the current command's newer verified display receipt"}
 	case menudebug.PhaseRestoring:
 		return menuDebugProposal{Action: "automatic restore running", Description: "Waiting for the current command's newer verified display receipt"}
+	case menudebug.PhaseAwaitingPhysicalHome:
+		return menuDebugProposal{Action: "physical return home required", Description: "Use the physical DISPLAY key to return to STANDBY home; no further serial command will be sent"}
 	default:
 		return menuDebugProposal{}
 	}

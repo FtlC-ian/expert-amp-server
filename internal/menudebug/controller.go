@@ -261,10 +261,23 @@ func (c *Controller) observeDisplay(state display.State, generation uint64, chec
 		_ = c.failLocked("TX observed during menu-debug transaction; STANDBY/RX safety prerequisite failed")
 		return
 	}
-
 	if !checksumValid || c.session.phase == PhaseIdle || generation <= c.session.lastEvidenceGen {
 		return
 	}
+	if c.session.phase == PhaseAwaitingPhysicalHome && evidence.StandbyHome {
+		if err := c.acceptNewEvidenceLocked(evidence); err != nil {
+			_ = c.failLocked(err.Error())
+			return
+		}
+		c.session.evidence = append(c.session.evidence, evidence)
+		c.recordTransitionLocked(evidence)
+		c.session.mayBeInMenu = false
+		c.releaseLocked()
+		c.session.phase = PhaseArmed
+		c.bumpLocked()
+		return
+	}
+
 	if c.session.phase == PhaseDiscovering && c.session.discoveryPending {
 		// Serial display polling can deliver another checksum-valid copy of the
 		// pre-action screen before the amplifier applies the keypress. That is
@@ -958,8 +971,8 @@ func (c *Controller) Confirm(token string, revision uint64, worked bool) (Sessio
 }
 
 // CompleteTopology records a read-only capability observation when no reviewed
-// action profile exists. It releases the lease and never authorizes a value
-// change or SAVE.
+// action profile exists. It never authorizes a value change or SAVE and retains
+// the lease until a newer checksum-valid STANDBY home screen is observed.
 func (c *Controller) CompleteTopology(token string, revision uint64) (SessionView, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -987,8 +1000,12 @@ func (c *Controller) completeTopologyLocked(atVerifiedHome bool) {
 	}
 	c.reports = append(c.reports, CapabilityReport{Profile: "topology-only", Capability: c.session.capability, Complete: true, OriginalValue: original, Evidence: append([]Evidence(nil), c.session.evidence...), Actions: append([]Action(nil), c.session.actions...), ActionReceipts: append([]ActionReceipt(nil), c.session.actionReceipts...), Transitions: append([]TransitionReceipt(nil), c.session.transitions...)})
 	c.session.completed = append(c.session.completed, c.session.capability)
-	c.releaseLocked()
-	c.session.phase = PhaseArmed
+	if atVerifiedHome {
+		c.releaseLocked()
+		c.session.phase = PhaseArmed
+	} else {
+		c.session.phase = PhaseAwaitingPhysicalHome
+	}
 	c.session.capability = ""
 	c.session.plan = Plan{}
 	c.session.discoveryPurpose = ""

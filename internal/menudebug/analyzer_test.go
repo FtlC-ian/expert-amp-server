@@ -183,6 +183,35 @@ func TestAnalyzeThirdSeriesFanReadsRawActiveMarker(t *testing.T) {
 	if got := Analyze(state); got.ActiveValue != "" {
 		t.Fatalf("unknown radio marker produced active value %q", got.ActiveValue)
 	}
+
+	for row := 0; row < display.Rows; row++ {
+		for col := 0; col < display.Cols; col++ {
+			state.SetAttr(row, col, 0)
+		}
+	}
+	for col := 3; col < 29; col++ {
+		state.SetAttr(2, col, 1)
+	}
+	state.Chars[2][4] = 0xae
+	state.Chars[3][4] = 0x60
+	if got := Analyze(state); got.SelectedValue != "quiet" || got.ActiveValue != "quiet" {
+		t.Fatalf("QUIET selection observation = %+v", got)
+	}
+}
+
+func TestAnalyzeGenericFanPageRemainsCandidateOnly(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(0, "             COOLING FAN")
+	state.SetRow(2, "             LOW SPEED")
+	state.SetRow(3, "             HIGH SPEED       SAVE")
+	state.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	got := Analyze(state)
+	if got.Kind != ScreenFan || got.Capability != "fan" || !got.CandidateOnly || !got.SaveVisible {
+		t.Fatalf("generic fan observation = %+v", got)
+	}
+	if got.SelectedValue != "" || got.ActiveValue != "" {
+		t.Fatalf("generic fan page guessed values: %+v", got)
+	}
 }
 
 func TestAnalyzeBankSaveConfirmationRetainsActiveBank(t *testing.T) {

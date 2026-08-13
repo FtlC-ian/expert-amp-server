@@ -1653,6 +1653,30 @@ func TestThirdSeriesCandidateEntryRequiresFanNoiseConfirmLegend(t *testing.T) {
 	}
 }
 
+func TestUnknownTopologyCandidateEntryRequiresConfirmLegend(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(0, "       SETUP OPTIONS vs. INPUT 1")
+	state.SetRow(2, "              COOLING FAN")
+	state.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	start := strings.Index("              COOLING FAN", "COOLING FAN")
+	for col := start; col < start+len("COOLING FAN"); col++ {
+		state.SetAttr(2, col, 1)
+	}
+	runtime := menudebug.RuntimeSnapshot{Screen: menudebug.Analyze(state)}
+	if runtime.Screen.SetupTopology != "" {
+		t.Fatalf("synthetic cross-model setup unexpectedly matched %q", runtime.Screen.SetupTopology)
+	}
+	if err := validateMenuDebugCandidateEntry(runtime, menudebug.CapabilityFan); err != nil {
+		t.Fatalf("generic confirmed fan entry rejected: %v", err)
+	}
+
+	state.SetRow(7, " [  ][  ]:SELECT           [SET]:CHANGE")
+	runtime.Screen = menudebug.Analyze(state)
+	if err := validateMenuDebugCandidateEntry(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "write immediately") {
+		t.Fatalf("generic immediate-write entry error = %v", err)
+	}
+}
+
 func TestMenuDebugThirdSeriesHomeCanArmWithNativeFirmware(t *testing.T) {
 	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
 	if err != nil {
@@ -1901,6 +1925,11 @@ func TestMenuDebugUploaderFailureDoesNotCrashAndCanRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 4, true, &rx, &operate)
+	view, err = controller.Current(token)
+	if err != nil {
+		t.Fatal(err)
+	}
 	view, err = controller.Complete(token, view.Revision)
 	if err != nil {
 		t.Fatal(err)
@@ -1946,6 +1975,11 @@ func TestMenuDebugReconnectBlocksCompletedReportAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err = controller.CompleteTopology(token, view.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 4, true, &rx, &operate)
+	view, err = controller.Current(token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2020,6 +2054,11 @@ func TestMenuDebugUnknownModelStatusPreservesCompletedReportAttributionAndAccess
 	if err != nil {
 		t.Fatal(err)
 	}
+	controller.ObserveDisplay(menuDebugTestHomeScreen(), 4, true, &rx, &operate)
+	view, err = controller.Current(token)
+	if err != nil {
+		t.Fatal(err)
+	}
 	view, err = controller.Complete(token, view.Revision)
 	if err != nil {
 		t.Fatal(err)
@@ -2047,7 +2086,8 @@ func TestMenuDebugUnknownModelStatusPreservesCompletedReportAttributionAndAccess
 
 func TestTopologyOnlyCaptureEndsSessionBeforeAnotherCapability(t *testing.T) {
 	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
-	lease := transport.NewActuationCoordinator(raw).Owner(transport.ActuationOwnerMenuDebug, false)
+	coordinator := transport.NewActuationCoordinator(raw)
+	lease := coordinator.Owner(transport.ActuationOwnerMenuDebug, false)
 	controller := menudebug.NewController(lease)
 	rx, operate := false, false
 	home := display.NewState()
@@ -2082,11 +2122,82 @@ func TestTopologyOnlyCaptureEndsSessionBeforeAnotherCapability(t *testing.T) {
 	}
 	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, MenuDebugTransport: lease}, capabilities: []menudebug.Capability{menudebug.CapabilityBank, menudebug.CapabilityFan}}
 	view, err = menuAPI.sendDiscovery(context.Background(), token, view)
-	if err != nil || view.Phase != menudebug.PhaseComplete || !view.MayBeInMenu || view.RecoveryInstructions == "" {
-		t.Fatalf("topology terminal view=%+v err=%v", view, err)
+	if err != nil || view.Phase != menudebug.PhaseAwaitingPhysicalHome || !view.MayBeInMenu || view.RecoveryInstructions == "" {
+		t.Fatalf("topology home wait view=%+v err=%v", view, err)
 	}
 	if raw.calls != 0 {
 		t.Fatalf("topology completion sent %d unexpected commands", raw.calls)
+	}
+	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "operate"}); err == nil {
+		t.Fatal("manual actuation was allowed before physical home verification")
+	}
+	controller.ObserveDisplay(home, 3, true, &rx, &operate)
+	view, err = controller.Current(token)
+	if err != nil || view.Phase != menudebug.PhaseArmed || view.MayBeInMenu {
+		t.Fatalf("physical home verification view=%+v err=%v", view, err)
+	}
+	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "operate"}); err != nil {
+		t.Fatalf("manual actuation remained blocked after verified home: %v", err)
+	}
+}
+
+func TestTopologyRunnerRetainsLeasePastReceiptTimeoutUntilPhysicalHome(t *testing.T) {
+	raw := &stubButtonTransport{result: api.ActionResult{Sent: true}}
+	coordinator := transport.NewActuationCoordinator(raw)
+	lease := coordinator.Owner(transport.ActuationOwnerMenuDebug, false)
+	controller := menudebug.NewController(lease)
+	rx, operate := false, false
+	home := display.NewState()
+	home.SetRow(6, "IN  BAND ANT CAT   OUT   SWR   TEMP")
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 2K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(home, 1, true, &rx, &operate)
+	view, token, err := controller.Arm(menudebug.Acknowledgement, menudebug.Prerequisites{DebugEnabled: true, RecentProtocolStatus: true, ProtocolStandby: true, ProtocolRX: true, ChecksumValidDisplay: true, DisplayStandby: true, DisplayRX: true, HomeDisplay: true, DisplayGeneration: 1, StatusGeneration: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = controller.Begin(token, view.Revision, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := controller.AuthorizeDiscovery(token, view.Revision, menudebug.ActionSet, "EXPERT 2K-FA", menuDebugEvidence(controller.Runtime(), menudebug.CapabilityFan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fan := display.NewState()
+	fan.SetRow(0, "            POWER-SUPPLY FAN")
+	fan.SetRow(2, "   [ ] QUIET  MODE (SSB ONLY)")
+	fan.SetRow(3, "   [ ] NORMAL MODE (ALL MODES)   SAVE")
+	fan.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	fan.Chars[3][4] = 0xae
+	controller.ObserveDisplay(fan, 2, true, &rx, &operate)
+	view, err = controller.Current(token)
+	if err != nil || view.Revision == auth.Revision {
+		t.Fatalf("fan evidence view=%+v err=%v", view, err)
+	}
+
+	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, MenuDebugTransport: lease}, capabilities: []menudebug.Capability{menudebug.CapabilityFan}, stepTimeout: 10 * time.Millisecond}
+	done := make(chan struct{})
+	go func() {
+		menuAPI.runGuardedTestContext(context.Background(), token)
+		close(done)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	view, err = controller.Current(token)
+	if err != nil || view.Phase != menudebug.PhaseAwaitingPhysicalHome {
+		t.Fatalf("runner applied receipt timeout while awaiting home: view=%+v err=%v", view, err)
+	}
+	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "operate"}); err == nil {
+		t.Fatal("manual actuation was allowed while runner awaited physical home")
+	}
+	controller.ObserveDisplay(home, 3, true, &rx, &operate)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not complete after physical home verification")
+	}
+	view, err = controller.Current(token)
+	if err != nil || view.Phase != menudebug.PhaseComplete || view.MayBeInMenu {
+		t.Fatalf("completed topology runner view=%+v err=%v", view, err)
 	}
 }
 

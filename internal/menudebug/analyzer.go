@@ -84,7 +84,7 @@ func Analyze(state display.State) ScreenObservation {
 		result.Kind = ScreenFan
 		result.Capability = "fan"
 		result.Values = knownFanValues(joined)
-		result.SelectedValue = selectedFanValue(selected, joined)
+		result.SelectedValue = selectedFanValue(state, rows, selected, joined)
 		result.ActiveValue = activeFanValue(state, rows)
 	case isHomeHeader(rows[6]):
 		result.Kind = ScreenHome
@@ -161,10 +161,16 @@ func isFanScreen(joined string) bool {
 	if strings.Contains(joined, "FAN") && (strings.Contains(joined, "TEMPERATURE") || strings.Contains(joined, "TEMP/")) {
 		return true
 	}
-	return strings.Contains(joined, "POWER-SUPPLY FAN") &&
+	if strings.Contains(joined, "POWER-SUPPLY FAN") &&
 		strings.Contains(joined, "QUIET") &&
 		strings.Contains(joined, "NORMAL") &&
-		containsWord(joined, "SAVE")
+		containsWord(joined, "SAVE") {
+		return true
+	}
+	return containsWord(joined, "FAN") &&
+		containsWord(joined, "SAVE") &&
+		strings.Contains(joined, ":SELECT") &&
+		strings.Contains(joined, "[SET]:")
 }
 
 func decodeRows(state display.State) [display.Rows]string {
@@ -282,13 +288,34 @@ func knownFanValues(joined string) []string {
 	return values
 }
 
-func selectedFanValue(selected, joined string) string {
-	for _, text := range []string{strings.ToUpper(selected), joined} {
-		for _, value := range []string{"NORMAL", "CONTEST", "QUIET"} {
-			if containsWord(text, value) {
-				return strings.ToLower(value)
+func selectedFanValue(state display.State, rows [display.Rows]string, selected, joined string) string {
+	// Some reviewed screens highlight only the setting label while placing its
+	// current value later on the same row. Restrict the fallback to highlighted
+	// rows so an unselected NORMAL option cannot mask a selected QUIET option.
+	selectedContext := selected
+	for row := 0; row < display.Rows; row++ {
+		highlighted := false
+		for col := 0; col < display.Cols; col++ {
+			if state.Attrs[row][col]&0x7f != 0 {
+				highlighted = true
+				break
 			}
 		}
+		if highlighted {
+			selectedContext += "\n" + rows[row]
+		}
+	}
+	upper := strings.ToUpper(selectedContext)
+	for _, value := range []string{"NORMAL", "CONTEST", "QUIET"} {
+		if containsWord(upper, value) {
+			return strings.ToLower(value)
+		}
+	}
+	// Legacy screens show one global current value even when SAVE is selected.
+	// Accept that only when the entire page contains exactly one known value.
+	values := knownFanValues(joined)
+	if len(values) == 1 {
+		return values[0]
 	}
 	return ""
 }
