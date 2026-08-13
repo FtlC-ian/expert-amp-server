@@ -271,6 +271,11 @@ func (c *Controller) observeDisplay(state display.State, generation uint64, chec
 		}
 		c.session.evidence = append(c.session.evidence, evidence)
 		c.recordTransitionLocked(evidence)
+		if count := len(c.reports); count > 0 && c.reports[count-1].Profile == "topology-only" {
+			report := &c.reports[count-1]
+			report.Evidence = append(report.Evidence, evidence)
+			report.Transitions = append(report.Transitions, c.session.transitions[len(c.session.transitions)-1])
+		}
 		c.session.mayBeInMenu = false
 		c.releaseLocked()
 		c.session.phase = PhaseArmed

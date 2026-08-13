@@ -2199,6 +2199,10 @@ func TestTopologyRunnerRetainsLeasePastReceiptTimeoutUntilPhysicalHome(t *testin
 	if err != nil || view.Phase != menudebug.PhaseComplete || view.MayBeInMenu {
 		t.Fatalf("completed topology runner view=%+v err=%v", view, err)
 	}
+	report := controller.Report("EXPERT 2K-FA", "Rel.26_03_24_A", "test")
+	if len(report.Capabilities) != 1 || len(report.Capabilities[0].Evidence) == 0 || !report.Capabilities[0].Evidence[len(report.Capabilities[0].Evidence)-1].StandbyHome {
+		t.Fatalf("topology report omitted physical-home receipt: %+v", report.Capabilities)
+	}
 }
 
 func TestV1SettingsRejectsExplicitZeroFanThresholdWhileEnabled(t *testing.T) {
