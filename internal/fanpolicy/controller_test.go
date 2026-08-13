@@ -546,6 +546,16 @@ func TestSecondSeriesSetupProfileRequiresExactLayoutAndHighlightGeometry(t *test
 	if !ok || key != "setup:CONFIG" {
 		t.Fatalf("captured Second Series setup was not recognized: key=%q ok=%v", key, ok)
 	}
+	input2 := state
+	input2.SetRow(0, "       SETUP OPTIONS vs. INPUT 2")
+	if key, ok := secondSeriesSetupSelectionKey(input2); !ok || key != "setup:CONFIG" {
+		t.Fatalf("Second Series Input 2 setup was not recognized: key=%q ok=%v", key, ok)
+	}
+	unknownInput := state
+	unknownInput.SetRow(0, "       SETUP OPTIONS vs. INPUT X")
+	if key, ok := secondSeriesSetupSelectionKey(unknownInput); ok {
+		t.Fatalf("unknown Second Series input matched key %q", key)
+	}
 	for _, mutate := range []func(*display.State){
 		func(s *display.State) { s.SetRow(1, " CONFIG       DISPLAY       STATUS") },
 		func(s *display.State) { s.SetRow(4, " MANUAL TUNE  TEMP/FANS     BANK") },

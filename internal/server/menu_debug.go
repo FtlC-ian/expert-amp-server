@@ -133,7 +133,7 @@ func (m *menuDebugAPI) session(w http.ResponseWriter, r *http.Request) {
 		}
 		firmware := strings.TrimSpace(req.FirmwareVersion)
 		if !validFirmwareVersion(firmware) {
-			writeAPIError(w, http.StatusBadRequest, "firmwareVersion must be unknown or a version beginning with a number, v, FW, or firmware and must not contain an address, path, URL, hostname, or callsign")
+			writeAPIError(w, http.StatusBadRequest, "firmwareVersion must be unknown or a version beginning with a number, v, FW, firmware, or Rel. and must not contain an address, path, URL, hostname, or callsign")
 			return
 		}
 		pre, _ := m.prerequisites()
@@ -605,6 +605,9 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 	case menudebug.ScreenSetup:
 		selected := strings.ToUpper(runtime.Screen.SelectedText)
 		if (view.Capability == menudebug.CapabilityFan && strings.Contains(selected, "FAN")) || (view.Capability == menudebug.CapabilityBank && strings.Contains(selected, "BANK")) {
+			if err := validateMenuDebugCandidateEntry(runtime, view.Capability); err != nil {
+				return view, err
+			}
 			action = menudebug.ActionSet
 			evidence.Candidate = view.Capability
 		} else {
@@ -666,6 +669,19 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 		return failed, err
 	}
 	return m.opts.MenuDebug.Current(token)
+}
+
+func validateMenuDebugCandidateEntry(runtime menudebug.RuntimeSnapshot, capability menudebug.Capability) error {
+	if runtime.Screen.SetupTopology != menudebug.SetupTopologyThirdSeries2K {
+		return nil
+	}
+	if capability != menudebug.CapabilityFan || !strings.EqualFold(strings.TrimSpace(runtime.Screen.SelectedText), "FAN NOISE") {
+		return errors.New("Third Series 2K-FA topology does not authorize this menu entry")
+	}
+	if len(runtime.Screen.Rows) != display.Rows || !strings.Contains(strings.ToUpper(strings.Join(strings.Fields(runtime.Screen.Rows[7]), " ")), "[SET]:CONFIRM") {
+		return errors.New("Third Series 2K-FA FAN NOISE entry requires a current [SET]:CONFIRM legend")
+	}
+	return nil
 }
 
 // reviewedMenuDebugNoSaveExit is deliberately model-scoped. Controlled live
@@ -1102,7 +1118,7 @@ func boolIs(value *bool, want bool) bool { return value != nil && *value == want
 
 var (
 	reportIdentityPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,63}$`)
-	firmwareVersionPattern = regexp.MustCompile(`(?i)^(?:unknown|(?:(?:fw|firmware)[ _-]*)?v?[0-9][A-Za-z0-9 ._()+-]{0,63})$`)
+	firmwareVersionPattern = regexp.MustCompile(`(?i)^(?:unknown|(?:(?:fw|firmware)[ _-]*)?v?[0-9][A-Za-z0-9 ._()+-]{0,63}|rel\.[0-9][A-Za-z0-9 ._()+-]{0,59})$`)
 	hostnamePattern        = regexp.MustCompile(`(?i)(?:^|[ ._-])(?:[a-z0-9-]+\.)+[a-z]{2,63}(?:$|[ ._-])`)
 	ipv4Pattern            = regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`)
 	urlOrEmailPattern      = regexp.MustCompile(`(?i)(?:https?://|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\S*`)

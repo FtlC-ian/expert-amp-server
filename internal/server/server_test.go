@@ -1577,7 +1577,7 @@ func TestMenuDebugRejectsHostileFirmwareAndUploadWithoutConfiguredUploader(t *te
 	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 1.3K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
 	controller.ObserveDisplay(home, 1, true, &rx, &operate)
 	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/session", strings.NewReader(`{"acknowledgement":"I AM IN STANDBY AND WILL NOT TRANSMIT","firmwareVersion":"1.2.3","capabilities":["fan"]}`)))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/session", strings.NewReader(`{"acknowledgement":"I AM IN STANDBY AND WILL NOT TRANSMIT","firmwareVersion":"Rel.26_03_24_A","capabilities":["fan"]}`)))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("valid arm status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1600,8 +1600,88 @@ func TestMenuDebugRejectsHostileFirmwareAndUploadWithoutConfiguredUploader(t *te
 	}
 }
 
+func TestThirdSeriesCandidateEntryRequiresFanNoiseConfirmLegend(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(0, "       SETUP OPTIONS vs. INPUT 2")
+	state.SetRow(1, " CONFIG        DISPLAY      ALARMS LOG")
+	state.SetRow(2, " ANTENNA       BEEP    On   TUN ANT")
+	state.SetRow(3, " CAT           START   Oprt RX ANT")
+	state.SetRow(4, " MANUAL TUNE   TEMP.   F    FAN NOISE")
+	state.SetRow(5, "                              EXIT")
+	state.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	start := strings.Index(" MANUAL TUNE   TEMP.   F    FAN NOISE", "FAN NOISE")
+	for col := start; col < start+len("FAN NOISE"); col++ {
+		state.SetAttr(4, col, 1)
+	}
+	runtime := menudebug.RuntimeSnapshot{Screen: menudebug.Analyze(state)}
+	if err := validateMenuDebugCandidateEntry(runtime, menudebug.CapabilityFan); err != nil {
+		t.Fatalf("confirmed FAN NOISE entry rejected: %v", err)
+	}
+
+	state.SetRow(7, " [  ][  ]:SELECT           [SET]:CHANGE")
+	runtime.Screen = menudebug.Analyze(state)
+	if err := validateMenuDebugCandidateEntry(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "[SET]:CONFIRM") {
+		t.Fatalf("unsafe Third Series entry error = %v", err)
+	}
+
+	fan := display.NewState()
+	fan.SetRow(0, "            POWER-SUPPLY FAN")
+	fan.SetRow(2, "   [ ] QUIET  MODE (SSB ONLY)")
+	fan.SetRow(3, "   [ ] NORMAL MODE (ALL MODES)   SAVE")
+	fan.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	fan.Chars[3][4] = 0xae
+	rx, operate := false, false
+	runtime = menudebug.RuntimeSnapshot{
+		Status:                         api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 2K-FA", TX: &rx}},
+		SerialSessionGeneration:        1,
+		StatusSerialSessionGeneration:  1,
+		DisplaySerialSessionGeneration: 1,
+		DisplayState:                   fan,
+		ChecksumValid:                  true,
+		DisplayTX:                      &rx,
+		DisplayOperate:                 &operate,
+		Screen:                         menudebug.Analyze(fan),
+	}
+	if _, ok := reviewedMenuDebugDiscoveryAction(runtime, menudebug.CapabilityFan); ok {
+		t.Fatal("Third Series 2K-FA inherited a reviewed selector write")
+	}
+	if _, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "no reviewed action profile") {
+		t.Fatalf("Third Series 2K-FA plan error = %v", err)
+	}
+	if reviewedMenuDebugNoSaveExit(runtime, menudebug.CapabilityFan) {
+		t.Fatal("Third Series 2K-FA inherited DISPLAY no-save recovery")
+	}
+}
+
+func TestMenuDebugThirdSeriesHomeCanArmWithNativeFirmware(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mgr.Get().Settings
+	settings.MenuDebugEnabled = true
+	if _, err := mgr.Update(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := menudebug.NewController(nil)
+	rx, operate := false, false
+	home := display.NewState()
+	home.SetRow(6, " IN   BAND  ANT  CAT   OUT   SWR   TEMP")
+	home.SetRow(7, "  2   80 m   2  FLEX   MID  --.--  81 F")
+	controller.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 2K-FA", OperatingState: "standby", TX: &rx}, RecentContact: true}, 1)
+	controller.ObserveDisplay(home, 1, true, &rx, &operate)
+
+	handler := NewHandler(Options{Config: mgr, MenuDebug: controller})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/menu-debug/session", strings.NewReader(`{"acknowledgement":"I AM IN STANDBY AND WILL NOT TRANSMIT","firmwareVersion":"Rel.26_03_24_A","capabilities":["fan"]}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Third Series arm status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMenuDebugFirmwareVersionValidation(t *testing.T) {
-	for _, value := range []string{"unknown", "1.2.3", "v1.2.3", "FW 1.2.3", "firmware 1.2.3", "Firmware v1.2.3"} {
+	for _, value := range []string{"unknown", "1.2.3", "v1.2.3", "FW 1.2.3", "firmware 1.2.3", "Firmware v1.2.3", "Rel.26_03_24_A"} {
 		if !validFirmwareVersion(value) {
 			t.Fatalf("valid firmware version %q was rejected", value)
 		}

@@ -38,8 +38,9 @@ type ScreenObservation struct {
 }
 
 const (
-	SetupTopologyFirstSeries  = "expert-first-series-setup-v1"
-	SetupTopologySecondSeries = "expert-second-series-setup-v1"
+	SetupTopologyFirstSeries   = "expert-first-series-setup-v1"
+	SetupTopologySecondSeries  = "expert-second-series-setup-v1"
+	SetupTopologyThirdSeries2K = "expert-2k-fa-third-series-setup-v1"
 )
 
 var bankValuePattern = regexp.MustCompile(`(?i)\bBNK\s+([A-Z0-9]+)\b`)
@@ -79,12 +80,13 @@ func Analyze(state display.State) ScreenObservation {
 		result.Values = bankValues(rows)
 		result.SelectedValue = selectedBankValue(selected)
 		result.ActiveValue = activeBankValue(state, rows)
-	case strings.Contains(joined, "FAN") && (strings.Contains(joined, "TEMPERATURE") || strings.Contains(joined, "TEMP/")):
+	case isFanScreen(joined):
 		result.Kind = ScreenFan
 		result.Capability = "fan"
 		result.Values = knownFanValues(joined)
 		result.SelectedValue = selectedFanValue(selected, joined)
-	case strings.Contains(joined, "IN  BAND ANT BNK"):
+		result.ActiveValue = activeFanValue(state, rows)
+	case isHomeHeader(rows[6]):
 		result.Kind = ScreenHome
 		result.ActiveValue = homeBankValue(rows)
 	}
@@ -95,12 +97,20 @@ func Analyze(state display.State) ScreenObservation {
 
 func setupTopology(rows [display.Rows]string) string {
 	normalized := func(row int) string { return strings.Join(strings.Fields(rows[row]), " ") }
-	if normalized(0) == "SETUP OPTIONS vs. INPUT 1" &&
+	if knownSetupInputHeader(normalized(0)) &&
 		normalized(1) == "CONFIG DISPLAY ALARMS LOG" &&
 		(normalized(2) == "ANTENNA BEEP Off TUN ANT" || normalized(2) == "ANTENNA BEEP On TUN ANT") &&
 		(normalized(3) == "CAT START Stby RX ANT" || normalized(3) == "CAT START Oper RX ANT") &&
 		normalized(4) == "MANUAL TUNE TEMP/FANS EXIT" {
 		return SetupTopologySecondSeries
+	}
+	if knownSetupInputHeader(normalized(0)) &&
+		normalized(1) == "CONFIG DISPLAY ALARMS LOG" &&
+		(normalized(2) == "ANTENNA BEEP Off TUN ANT" || normalized(2) == "ANTENNA BEEP On TUN ANT") &&
+		(normalized(3) == "CAT START Stby RX ANT" || normalized(3) == "CAT START Oper RX ANT" || normalized(3) == "CAT START Oprt RX ANT") &&
+		thirdSeriesTemperatureFanRow(normalized(4)) &&
+		normalized(5) == "EXIT" {
+		return SetupTopologyThirdSeries2K
 	}
 	if strings.HasPrefix(normalized(0), "SETUP OPTIONS vs. INPUT ") &&
 		normalized(3) == "MANUAL TUNE TEMP/FANS BANK" &&
@@ -110,6 +120,51 @@ func setupTopology(rows [display.Rows]string) string {
 		return SetupTopologyFirstSeries
 	}
 	return ""
+}
+
+func knownSetupInputHeader(row string) bool {
+	return row == "SETUP OPTIONS vs. INPUT 1" || row == "SETUP OPTIONS vs. INPUT 2"
+}
+
+func thirdSeriesTemperatureFanRow(row string) bool {
+	fields := strings.Fields(row)
+	if len(fields) != 6 || fields[0] != "MANUAL" || fields[1] != "TUNE" || fields[2] != "TEMP." || fields[4] != "FAN" || fields[5] != "NOISE" {
+		return false
+	}
+	return fields[3] == "C" || fields[3] == "F" || fields[3] == "°C" || fields[3] == "°F"
+}
+
+func isHomeHeader(row string) bool {
+	fields := strings.Fields(strings.ToUpper(row))
+	for _, expected := range [][]string{
+		{"IN", "BAND", "ANT", "BNK", "CAT", "OUT", "SWR", "TEMP"},
+		{"IN", "BAND", "ANT", "CAT", "OUT", "SWR", "TEMP"},
+	} {
+		if len(fields) != len(expected) {
+			continue
+		}
+		matched := true
+		for i := range expected {
+			if fields[i] != expected[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func isFanScreen(joined string) bool {
+	if strings.Contains(joined, "FAN") && (strings.Contains(joined, "TEMPERATURE") || strings.Contains(joined, "TEMP/")) {
+		return true
+	}
+	return strings.Contains(joined, "POWER-SUPPLY FAN") &&
+		strings.Contains(joined, "QUIET") &&
+		strings.Contains(joined, "NORMAL") &&
+		containsWord(joined, "SAVE")
 }
 
 func decodeRows(state display.State) [display.Rows]string {
@@ -219,7 +274,7 @@ func homeBankValue(rows [display.Rows]string) string {
 
 func knownFanValues(joined string) []string {
 	var values []string
-	for _, value := range []string{"NORMAL", "CONTEST"} {
+	for _, value := range []string{"NORMAL", "CONTEST", "QUIET"} {
 		if containsWord(joined, value) {
 			values = append(values, strings.ToLower(value))
 		}
@@ -229,13 +284,35 @@ func knownFanValues(joined string) []string {
 
 func selectedFanValue(selected, joined string) string {
 	for _, text := range []string{strings.ToUpper(selected), joined} {
-		for _, value := range []string{"NORMAL", "CONTEST"} {
+		for _, value := range []string{"NORMAL", "CONTEST", "QUIET"} {
 			if containsWord(text, value) {
 				return strings.ToLower(value)
 			}
 		}
 	}
 	return ""
+}
+
+// activeFanValue reads the non-ASCII check marker used by the Third Series
+// 2K-FA radio group. Text decoding deliberately leaves the marker blank, so
+// the raw grid is the only reliable source of the active value.
+func activeFanValue(state display.State, rows [display.Rows]string) string {
+	active := ""
+	for row, text := range rows {
+		upper := strings.ToUpper(text)
+		for _, candidate := range []string{"QUIET", "NORMAL", "CONTEST"} {
+			start := strings.Index(upper, candidate)
+			if start < 4 || upper[start-4] != '[' || upper[start-2] != ']' || state.Chars[row][start-3] != 0xae {
+				continue
+			}
+			value := strings.ToLower(candidate)
+			if active != "" && active != value {
+				return ""
+			}
+			active = value
+		}
+	}
+	return active
 }
 
 func containsWord(text, word string) bool {

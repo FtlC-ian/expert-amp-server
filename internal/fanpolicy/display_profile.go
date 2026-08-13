@@ -154,9 +154,13 @@ func normalizedDisplayRow(row string) string {
 	return strings.Join(strings.Fields(row), " ")
 }
 
+func knownSecondSeriesInputHeader(row string) bool {
+	return row == "SETUP OPTIONS vs. INPUT 1" || row == "SETUP OPTIONS vs. INPUT 2"
+}
+
 func secondSeriesSetupSelectionKey(state display.State) (string, bool) {
 	rows := displayRows(state)
-	if normalizedDisplayRow(rows[0]) != "SETUP OPTIONS vs. INPUT 1" ||
+	if !knownSecondSeriesInputHeader(normalizedDisplayRow(rows[0])) ||
 		normalizedDisplayRow(rows[1]) != "CONFIG DISPLAY ALARMS LOG" ||
 		normalizedDisplayRow(rows[2]) != "ANTENNA BEEP Off TUN ANT" && normalizedDisplayRow(rows[2]) != "ANTENNA BEEP On TUN ANT" ||
 		normalizedDisplayRow(rows[3]) != "CAT START Stby RX ANT" && normalizedDisplayRow(rows[3]) != "CAT START Oper RX ANT" ||
