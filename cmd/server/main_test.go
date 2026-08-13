@@ -934,6 +934,9 @@ func TestSettingsPageHasGuardedMenuDebugWizard(t *testing.T) {
 			t.Errorf("settings page missing accessibility or change-only rendering contract %q", required)
 		}
 	}
+	if announcer, step := strings.Index(body, `id="menu-debug-announcer"`), strings.Index(body, `id="menu-debug-step"`); announcer < 0 || step < 0 || announcer > step {
+		t.Error("menu debug announcer must remain outside the step panel hidden for terminal states")
+	}
 	if strings.Contains(body, "updateOperatorStatus(") {
 		t.Error("settings page retains undefined duplicate operator-status renderer")
 	}
