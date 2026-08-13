@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
@@ -47,7 +48,9 @@ func TestMenuReportHTTPUploaderRequiresHTTPSOutsideLoopback(t *testing.T) {
 
 func TestMenuReportHTTPUploaderRejectsCollectorFailure(t *testing.T) {
 	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "no", http.StatusTooManyRequests)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"success":false,"error":"capabilities[0].evidence[1].setupTopology is invalid"}`))
 	}))
 	defer collector.Close()
 	uploader, err := NewMenuReportHTTPUploader(collector.URL, collector.Client())
@@ -56,6 +59,51 @@ func TestMenuReportHTTPUploaderRejectsCollectorFailure(t *testing.T) {
 	}
 	if err := uploader.Upload(context.Background(), menudebug.Report{}); err == nil {
 		t.Fatal("collector failure was accepted")
+	} else if err.Error() != "collector returned HTTP 429: capabilities[0].evidence[1].setupTopology is invalid" {
+		t.Fatalf("collector failure = %q", err)
+	}
+}
+
+func TestMenuReportHTTPUploaderRejectsUnsafeStructuredFailureDetail(t *testing.T) {
+	for _, detail := range []string{
+		"<script>alert(1)</script>",
+		"validation failed at https://collector.example/private",
+		"validation failed\u001b[31m",
+		strings.Repeat("x", maxCollectorErrorRunes+1),
+	} {
+		t.Run(detail[:min(len(detail), 20)], func(t *testing.T) {
+			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": detail})
+			}))
+			defer collector.Close()
+			uploader, err := NewMenuReportHTTPUploader(collector.URL, collector.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := uploader.Upload(context.Background(), menudebug.Report{}); err == nil {
+				t.Fatal("collector failure was accepted")
+			} else if err.Error() != "collector returned HTTP 400" {
+				t.Fatalf("collector failure = %q", err)
+			}
+		})
+	}
+}
+
+func TestMenuReportHTTPUploaderDoesNotExposeUnstructuredFailureBody(t *testing.T) {
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upstream diagnostic must stay private", http.StatusBadGateway)
+	}))
+	defer collector.Close()
+	uploader, err := NewMenuReportHTTPUploader(collector.URL, collector.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uploader.Upload(context.Background(), menudebug.Report{}); err == nil {
+		t.Fatal("collector failure was accepted")
+	} else if err.Error() != "collector returned HTTP 502" {
+		t.Fatalf("collector failure = %q", err)
 	}
 }
 

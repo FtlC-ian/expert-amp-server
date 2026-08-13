@@ -75,6 +75,17 @@
     }
     .view { display: none; }
     .view.active { display: block; }
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
 
     /* ── Settings page layout ── */
     .settings-card {
@@ -1133,7 +1144,7 @@
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <main class="wrap">
 
     <!-- Page header -->
     <div class="page-header">
@@ -1146,15 +1157,16 @@
     </div>
 
     <!-- Tab navigation -->
-    <nav class="tab-nav">
-      <button class="tab-btn active" id="tab-watch" onclick="switchTab('watch')">Watch</button>
-      <button class="tab-btn" id="tab-settings" onclick="switchTab('settings')">Settings</button>
+    <nav class="tab-nav" aria-label="Primary">
+      <button class="tab-btn active" id="tab-watch" type="button" aria-controls="view-watch" aria-current="page" onclick="switchTab('watch')">Watch</button>
+      <button class="tab-btn" id="tab-settings" type="button" aria-controls="view-settings" onclick="switchTab('settings')">Settings</button>
     </nav>
 
     <!-- ==================================================
          WATCH view
     ================================================== -->
-    <div class="view active" id="view-watch">
+    <div class="view active" id="view-watch" aria-labelledby="watch-heading">
+    <h2 class="visually-hidden" id="watch-heading">Watch</h2>
 
     <!-- First-run setup (shown when serial port not configured) -->
     <div id="setup" class="setup-card hidden">
@@ -1500,11 +1512,12 @@
     <!-- ==================================================
          SETTINGS view
     ================================================== -->
-    <div class="view" id="view-settings">
+    <div class="view" id="view-settings" aria-labelledby="settings-heading">
+      <h2 class="visually-hidden" id="settings-heading">Settings</h2>
 
       <!-- Display Preferences (browser-local) -->
       <div class="settings-card">
-        <div class="settings-card-title">Display Preferences</div>
+        <h3 class="settings-card-title">Display Preferences</h3>
         <p class="needs-restart-note">These preferences are stored in your browser only. They do not affect the server.</p>
 
         <div class="settings-section" style="margin-top:14px;">
@@ -1548,7 +1561,7 @@
 
       <!-- Connection Settings (server config) -->
       <div class="settings-card">
-        <div class="settings-card-title">Connection</div>
+        <h3 class="settings-card-title">Connection</h3>
         <p class="needs-restart-note">Saved to the server config file. Serial port, listen address, polling mode, and poll interval require a server restart to take effect.</p>
 
         <div class="settings-section" style="margin-top:14px;">
@@ -1642,7 +1655,7 @@
 
       <!-- Safety Monitoring -->
       <div class="settings-card">
-        <div class="settings-card-title">Safety Monitoring</div>
+        <h3 class="settings-card-title">Safety Monitoring</h3>
         <p class="needs-restart-note">Evaluates protocol-native temperature and SWR readings. Monitoring is observational by default. Active standby requires a separate explicit opt-in and sends one state-gated OPERATE command; it never navigates menus, acts during TX, powers off, retries, or turns the amplifier back on.</p>
 
         <div class="settings-section" style="margin-top:14px;">
@@ -1697,7 +1710,7 @@
 
       <!-- Automatic Fan Policy -->
       <div class="settings-card">
-        <div class="settings-card-title">Automatic Fan Cooling</div>
+        <h3 class="settings-card-title">Automatic Fan Cooling</h3>
         <p class="needs-restart-note">Experimental and disabled by default. Automatic fan cooling requires a promoted hardware profile and supports the verified First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA paths. Unsupported models are blocked before SET; use Menu Debug to capture candidate profiles. During a transaction the server verifies the model, first menu topology, and every later waypoint, waits for RX, temporarily changes OPERATE to STANDBY when necessary, and restores OPERATE only when it owned that change.</p>
 
         <div class="settings-section" style="margin-top:14px;">
@@ -1739,10 +1752,10 @@
 
       <!-- Menu Debug & Reporting (advanced, disabled by default) -->
       <div class="settings-card" id="menu-debug-card" hidden>
-        <div class="settings-card-title">
+        <h3 class="settings-card-title">
           Menu Debug &amp; Reporting
-          <button class="advanced-toggle" id="menu-debug-toggle" type="button" onclick="toggleMenuDebug()">show</button>
-        </div>
+          <button class="advanced-toggle" id="menu-debug-toggle" type="button" aria-controls="menu-debug-body" aria-expanded="false" onclick="toggleMenuDebug()">Show Menu Debug &amp; Reporting</button>
+        </h3>
         <p class="needs-restart-note">Advanced diagnostic wizard. It can change and restore amplifier settings. Do not transmit or enable OPERATE until the wizard is finished or aborted.</p>
 
         <div id="menu-debug-body">
@@ -1771,15 +1784,16 @@
             <div class="settings-runtime" id="menu-debug-prerequisites">Session not armed. Safety prerequisites have not been checked.</div>
 
             <div class="menu-debug-step" id="menu-debug-step" hidden>
-              <p class="menu-debug-step-title" id="menu-debug-step-title">Waiting for server state</p>
+              <h4 class="menu-debug-step-title" id="menu-debug-step-title">Waiting for server state</h4>
               <p class="settings-hint" id="menu-debug-step-detail">No action is proposed.</p>
+              <div class="visually-hidden" id="menu-debug-announcer" role="status" aria-live="polite" aria-atomic="true"></div>
               <div class="settings-runtime" id="menu-debug-proposal">Exact next action: none</div>
               <div class="menu-debug-actions" id="menu-debug-advance-actions">
                 <button class="settings-save-btn" id="menu-debug-advance" type="button" disabled>Start Guarded Test</button>
               </div>
 
-              <div id="menu-debug-candidate-verification" hidden>
-                <p class="settings-label">Did the temporary setting change work as described?</p>
+              <div id="menu-debug-candidate-verification" role="group" aria-labelledby="menu-debug-candidate-prompt" hidden>
+                <p class="settings-label" id="menu-debug-candidate-prompt">Did the temporary setting change work as described?</p>
                 <div class="menu-debug-actions">
                   <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="true">Changed as Expected — Restore Automatically</button>
                   <button class="settings-save-btn" type="button" data-menu-debug-phase="candidate" data-menu-debug-verified="false" data-menu-debug-note="did not change">Did Not Change</button>
@@ -1787,8 +1801,8 @@
                 </div>
               </div>
 
-              <div id="menu-debug-restored-verification" hidden>
-                <p class="settings-label">Is the exact original setting restored?</p>
+              <div id="menu-debug-restored-verification" role="group" aria-labelledby="menu-debug-restored-prompt" hidden>
+                <p class="settings-label" id="menu-debug-restored-prompt">Is the exact original setting restored?</p>
                 <div class="menu-debug-actions">
                   <button class="settings-save-btn" type="button" data-menu-debug-phase="restored" data-menu-debug-verified="true">Original Value Restored</button>
                   <button class="settings-save-btn" type="button" data-menu-debug-phase="restored" data-menu-debug-verified="false" data-menu-debug-note="not restored">Not Restored</button>
@@ -1807,7 +1821,7 @@
             <div id="menu-debug-report-section" hidden>
               <p class="settings-label" id="menu-debug-report-label">Sanitized report preview</p>
               <pre class="settings-runtime menu-debug-report" id="menu-debug-report-preview">Report not available.</pre>
-              <p class="settings-hint">The report contains only output produced by Expert Amp Server. It excludes IP addresses, hostnames, callsigns, and serial-device paths or identifiers. Download works without uploading.</p>
+              <p class="settings-hint">The report contains only output produced by Expert Amp Server. Common IP, URL, email, callsign, and serial-device patterns are redacted, and session tokens are omitted. Review the local preview before consenting to upload. Download works without uploading.</p>
               <div class="settings-action-row">
                 <button class="settings-save-btn" id="menu-debug-download-report" type="button">Download JSON</button>
               </div>
@@ -1826,10 +1840,10 @@
 
       <!-- Advanced Serial (server config) -->
       <div class="settings-card">
-        <div class="settings-card-title">
+        <h3 class="settings-card-title">
           Advanced Serial
-          <button class="advanced-toggle" id="advanced-serial-toggle" onclick="toggleAdvancedSerial()">show</button>
-        </div>
+          <button class="advanced-toggle" id="advanced-serial-toggle" type="button" aria-controls="advanced-serial-body" aria-expanded="false" onclick="toggleAdvancedSerial()">Show Advanced Serial settings</button>
+        </h3>
         <p class="needs-restart-note">Advanced serial connection parameters. Saved to server config; take effect after restart. Legacy status poll fields remain for compatibility, but normal operation should use Polling mode and Poll interval above.</p>
 
         <div id="advanced-serial-body">
@@ -1917,19 +1931,23 @@
 
     </div><!-- /view-settings -->
 
-  </div><!-- /wrap -->
+  </main><!-- /wrap -->
 
   <script>
     // ─── Tab management ───────────────────────────────────────────────────────
     function switchTab(tab) {
       ['watch', 'settings'].forEach(t => {
         document.getElementById('view-' + t).classList.toggle('active', t === tab);
-        document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+        const button = document.getElementById('tab-' + t);
+        button.classList.toggle('active', t === tab);
+        if (t === tab) button.setAttribute('aria-current', 'page');
+        else button.removeAttribute('aria-current');
       });
       // When switching to settings, refresh the fields from current config
       if (tab === 'settings') {
         loadSettingsPage();
       }
+      updateFanPolicyPolling();
     }
     window.switchTab = switchTab;
 
@@ -1948,6 +1966,9 @@
     const DEFAULT_OPERATOR_HELP_MODE = false;
     const DEFAULT_OPERATOR_SHOW_MENU_CONTROLS = true;
     const DEFAULT_OPERATOR_FAULT_PREVIEW = 'off';
+    let fanPolicyPollTimer = null;
+    let fanPolicyPollInFlight = false;
+    let lastFanPolicyRenderJSON = '';
     const WATCH_LAYOUTS = {
       panel: {
         rootId: 'layout-panel',
@@ -2023,6 +2044,7 @@
         if (!root) return;
         root.classList.toggle('hidden', name !== activeLayout);
       });
+      updateFanPolicyPolling();
     }
 
     function applyPolarity(polarity) {
@@ -2110,12 +2132,12 @@
       root.classList.toggle('display-hidden', !active);
       root.hidden = !active;
       root.setAttribute('aria-hidden', active ? 'false' : 'true');
-      state.textContent = label;
+      setTextIfChanged(state, label);
       if (!active) {
-        list.innerHTML = '';
+        setHTMLIfChanged(list, '');
         return false;
       }
-      list.innerHTML = values.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+      setHTMLIfChanged(list, values.map(item => `<li>${escapeHtml(item)}</li>`).join(''));
       return true;
     }
 
@@ -2169,12 +2191,12 @@
 
       const bank = document.getElementById('op-antenna-bank');
       if (bank) {
-        bank.textContent = antennaMeta.length ? antennaMeta.join(' • ') : 'ATU unknown';
+        setTextIfChanged(bank, antennaMeta.length ? antennaMeta.join(' • ') : 'ATU unknown');
       }
       const powerNote = document.getElementById('op-power-note');
-      if (powerNote) powerNote.textContent = powerWatts || 'Output reference unavailable';
+      setTextIfChanged(powerNote, powerWatts || 'Output reference unavailable');
       const operateState = document.getElementById('op-operate-state');
-      if (operateState) operateState.textContent = operateDisplay;
+      setTextIfChanged(operateState, operateDisplay);
       const operateButton = document.getElementById('op-operate-button');
       if (operateButton) {
         operateButton.classList.toggle('operator-operate-active', isOperate && !isTx);
@@ -2183,21 +2205,21 @@
         operateButton.classList.toggle('operator-operate-tx-standby', !isOperate && isTx);
       }
       const operateActionLabel = document.getElementById('op-operate-action');
-      if (operateActionLabel) operateActionLabel.textContent = operateButtonText;
+      setTextIfChanged(operateActionLabel, operateButtonText);
       const tuneState = document.getElementById('op-tune-state');
-      if (tuneState) tuneState.textContent = atuSwrText ? 'ATU SWR ' + atuSwrText : (swrText ? 'SWR ' + swrText : 'Ready');
+      setTextIfChanged(tuneState, atuSwrText ? 'ATU SWR ' + atuSwrText : (swrText ? 'SWR ' + swrText : 'Ready'));
       const powerState = document.getElementById('op-power-state');
-      if (powerState) powerState.textContent = powerText;
+      setTextIfChanged(powerState, powerText);
       const powerActionLabel = document.getElementById('op-power-action');
-      if (powerActionLabel) powerActionLabel.textContent = powerButtonText;
+      setTextIfChanged(powerActionLabel, powerButtonText);
       const antennaState = document.getElementById('op-antenna-state');
-      if (antennaState) antennaState.textContent = antennaText;
+      setTextIfChanged(antennaState, antennaText);
       const antennaActionLabel = document.getElementById('op-antenna-action');
-      if (antennaActionLabel) antennaActionLabel.textContent = antennaButtonText;
+      setTextIfChanged(antennaActionLabel, antennaButtonText);
       const inputState = document.getElementById('op-input-state');
-      if (inputState) inputState.textContent = inputText;
+      setTextIfChanged(inputState, inputText);
       const inputActionLabel = document.getElementById('op-input-action');
-      if (inputActionLabel) inputActionLabel.textContent = inputButtonText;
+      setTextIfChanged(inputActionLabel, inputButtonText);
       const statusSummary = document.getElementById('op-status-summary');
       if (statusSummary) {
         const parts = [
@@ -2207,7 +2229,7 @@
           antennaMeta[0] || null,
           data.recentContact === true ? 'Link recent' : (data.lastContactAt ? 'Link stale' : null),
         ].filter(Boolean);
-        statusSummary.textContent = parts.length ? parts.join(' • ') : 'Waiting for status telemetry.';
+        setTextIfChanged(statusSummary, parts.length ? parts.join(' • ') : 'Waiting for status telemetry.');
       }
 
       const powerFill = document.getElementById('op-power-fill');
@@ -2439,7 +2461,8 @@
       const body   = document.getElementById('advanced-serial-body');
       const toggle = document.getElementById('advanced-serial-toggle');
       const open   = body.classList.toggle('open');
-      toggle.textContent = open ? 'hide' : 'show';
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.textContent = open ? 'Hide Advanced Serial settings' : 'Show Advanced Serial settings';
     }
     window.toggleAdvancedSerial = toggleAdvancedSerial;
 
@@ -2447,21 +2470,30 @@
       const body = document.getElementById('menu-debug-body');
       const toggle = document.getElementById('menu-debug-toggle');
       const open = body.classList.toggle('open');
-      toggle.textContent = open ? 'hide' : 'show';
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.textContent = open ? 'Hide Menu Debug & Reporting' : 'Show Menu Debug & Reporting';
       if (open) loadMenuDebugSession();
       updateMenuDebugPolling();
     }
     window.toggleMenuDebug = toggleMenuDebug;
 
     // ─── Shared status helpers ───────────────────────────────────────────────
+    function setTextIfChanged(element, value) {
+      if (element && element.textContent !== value) element.textContent = value;
+    }
+
+    function setHTMLIfChanged(element, value) {
+      if (element && element.innerHTML !== value) element.innerHTML = value;
+    }
+
     function setTelemValue(id, value) {
       const el = document.getElementById(id);
       if (!el) return;
       if (value !== null && value !== undefined && value !== '') {
-        el.textContent = value;
+        setTextIfChanged(el, value);
         el.classList.remove('dim');
       } else {
-        el.textContent = '–';
+        setTextIfChanged(el, '–');
         el.classList.add('dim');
       }
     }
@@ -2469,7 +2501,8 @@
     function setLed(id, cssClass) {
       const el = document.getElementById(id);
       if (!el) return;
-      el.className = 'led ' + cssClass;
+      const className = 'led ' + cssClass;
+      if (el.className !== className) el.className = className;
     }
 
     let latestDisplayLEDs = null;
@@ -2792,7 +2825,10 @@
     let menuDebugSession = {};
     let menuDebugReport = null;
     let menuDebugPollTimer = null;
+    let menuDebugPollInFlight = false;
     let menuDebugRequestActive = false;
+    let menuDebugAnnouncementKey = '';
+    let menuDebugReportLoadKey = '';
 
     function menuDebugHeaders(json) {
       const headers = {};
@@ -2850,10 +2886,16 @@
       ];
       const known = rows.some(([, value]) => typeof value === 'boolean');
       if (!known) {
-        el.textContent = data.reason || 'Safety prerequisites have not been checked by the server.';
+        setTextIfChanged(el, data.reason || 'Safety prerequisites have not been checked by the server.');
         return;
       }
-      el.textContent = rows.map(([label, value]) => (value ? 'PASS  ' : 'BLOCK ') + label).join('\n');
+      setTextIfChanged(el, rows.map(([label, value]) => (value ? 'PASS  ' : 'BLOCK ') + label).join('\n'));
+    }
+
+    function announceMenuDebug(key, message) {
+      if (!key || key === menuDebugAnnouncementKey) return;
+      menuDebugAnnouncementKey = key;
+      setTextIfChanged(document.getElementById('menu-debug-announcer'), message);
     }
 
     function renderMenuDebugSession(data) {
@@ -2873,15 +2915,16 @@
       const total = menuDebugSession.totalSteps || '–';
       const original = menuDebugSession.originalValue || (proposal.originalValue) || 'not observed';
       const candidate = menuDebugSession.candidateValue || (proposal.candidateValue) || 'not proposed';
+      const announcementSessionKey = menuDebugSession.id || menuDebugSession.expiresAt || 'current';
 
       document.getElementById('menu-debug-arm').hidden = active;
       document.getElementById('menu-debug-step').hidden = !active;
-      document.getElementById('menu-debug-step-title').textContent =
-        'Step ' + step + ' of ' + total + ' — ' + capability + ' — ' + state;
-      document.getElementById('menu-debug-step-detail').textContent =
+      setTextIfChanged(document.getElementById('menu-debug-step-title'),
+        'Step ' + step + ' of ' + total + ' — ' + capability + ' — ' + state);
+      setTextIfChanged(document.getElementById('menu-debug-step-detail'),
         (menuDebugSession.reason || menuDebugSession.instructions || 'Waiting for the server to propose the next bounded action.') +
-        ' Original: ' + original + '. Candidate: ' + candidate + '.';
-      document.getElementById('menu-debug-proposal').textContent = [
+        ' Original: ' + original + '. Candidate: ' + candidate + '.');
+      setTextIfChanged(document.getElementById('menu-debug-proposal'), [
         'Exact next action: ' + (proposal.description || proposal.action || 'none'),
         ...(menuDebugSession.currentStep ? [
           'Current transaction: ' + menuDebugSession.currentStep.transaction,
@@ -2897,7 +2940,7 @@
           step.transaction + ' ' + step.number + ': ' + String(step.action || '').toUpperCase() +
           ' — ' + step.purpose + ' — expect ' + step.expected
         ) : []),
-      ].join('\n');
+      ].join('\n'));
       document.getElementById('menu-debug-advance').disabled = menuDebugRequestActive || !menuDebugConfirmation();
       document.getElementById('menu-debug-advance-actions').hidden = !menuDebugConfirmation();
       document.getElementById('menu-debug-advance').textContent =
@@ -2913,15 +2956,31 @@
       document.getElementById('menu-debug-restored-verification').hidden =
         !awaitingRestoredVerification;
 
+      if (state === 'awaiting-physical-home') {
+        announceMenuDebug(announcementSessionKey + ':physical-home', menuDebugSession.recoveryInstructions ||
+          'Physical return home required. Press the physical DISPLAY key on the amplifier.');
+      } else if (awaitingCandidateVerification) {
+        announceMenuDebug(announcementSessionKey + ':candidate-verification', 'Menu Debug needs confirmation: did the temporary setting change work as described?');
+      } else if (awaitingRestoredVerification) {
+        announceMenuDebug(announcementSessionKey + ':restored-verification', 'Menu Debug needs confirmation: is the exact original setting restored?');
+      } else if (MENU_DEBUG_TERMINAL_STATES.has(state)) {
+        announceMenuDebug(announcementSessionKey + ':terminal-' + state, 'Menu Debug session ' + state + '. ' +
+          (menuDebugSession.recoveryInstructions || menuDebugSession.reason || 'Review the report and recovery instructions.'));
+      }
+
       renderMenuDebugPrerequisites(menuDebugSession);
       const recovery = document.getElementById('menu-debug-recovery');
       recovery.hidden = !MENU_DEBUG_TERMINAL_STATES.has(state) || (state === 'complete' && !menuDebugSession.recoveryInstructions);
-      recovery.textContent = menuDebugSession.recoveryInstructions ||
-        'Abort sends no recovery commands. If the amplifier is not on its STANDBY home screen, use the physical panel to return there. OPERATE will not be restored automatically.';
+      setTextIfChanged(recovery, menuDebugSession.recoveryInstructions ||
+        'Abort sends no recovery commands. If the amplifier is not on its STANDBY home screen, use the physical panel to return there. OPERATE will not be restored automatically.');
 
       const reportAvailable = !!menuDebugSession.reportAvailable || state === 'complete';
       document.getElementById('menu-debug-report-section').hidden = !reportAvailable;
-      if (reportAvailable) loadMenuDebugReport();
+      const reportLoadKey = reportAvailable ? announcementSessionKey + ':' + state : '';
+      if (reportAvailable && reportLoadKey !== menuDebugReportLoadKey) {
+        menuDebugReportLoadKey = reportLoadKey;
+        loadMenuDebugReport();
+      }
       updateMenuDebugPolling();
     }
 
@@ -2955,10 +3014,20 @@
     function updateMenuDebugPolling() {
       const bodyOpen = document.getElementById('menu-debug-body').classList.contains('open');
       const active = !!menuDebugToken && !MENU_DEBUG_TERMINAL_STATES.has(menuDebugState(menuDebugSession));
-      if (bodyOpen && active && !menuDebugPollTimer) {
-        menuDebugPollTimer = setInterval(loadMenuDebugSession, 1000);
-      } else if ((!bodyOpen || !active) && menuDebugPollTimer) {
-        clearInterval(menuDebugPollTimer);
+      const shouldPoll = bodyOpen && active && !document.hidden;
+      if (shouldPoll && !menuDebugPollTimer && !menuDebugPollInFlight) {
+        menuDebugPollTimer = setTimeout(async () => {
+          menuDebugPollTimer = null;
+          menuDebugPollInFlight = true;
+          try {
+            await loadMenuDebugSession();
+          } finally {
+            menuDebugPollInFlight = false;
+            updateMenuDebugPolling();
+          }
+        }, 1000);
+      } else if (!shouldPoll && menuDebugPollTimer) {
+        clearTimeout(menuDebugPollTimer);
         menuDebugPollTimer = null;
       }
     }
@@ -2970,7 +3039,7 @@
         const body = await res.json();
         if (!res.ok || !body.success) throw new Error(menuDebugError(body, 'Report unavailable'));
         menuDebugReport = body.data;
-        document.getElementById('menu-debug-report-preview').textContent = JSON.stringify(menuDebugReport, null, 2);
+        setTextIfChanged(document.getElementById('menu-debug-report-preview'), JSON.stringify(menuDebugReport, null, 2));
         const complete = menuDebugReport.complete === true;
         document.getElementById('menu-debug-report-label').textContent = complete
           ? 'Completed sanitized report — promotion evidence'
@@ -3199,7 +3268,9 @@
       card.hidden = !enabled;
       if (!enabled) {
         document.getElementById('menu-debug-body').classList.remove('open');
-        document.getElementById('menu-debug-toggle').textContent = 'show';
+        const toggle = document.getElementById('menu-debug-toggle');
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.textContent = 'Show Menu Debug & Reporting';
         updateMenuDebugPolling();
       }
     }
@@ -3263,9 +3334,9 @@
         ? d.observations.maximumTemperatureC.toFixed(0) + ' °C'
         : '';
       const manual = d.currentPolicySource === 'manual-override';
-      text.textContent = manual
+      setTextIfChanged(text, manual
         ? 'High-speed CONTEST fan mode enabled by manual override.'
-        : 'High-speed CONTEST fan mode enabled' + (temp ? ' at ' + temp : '') + ' to improve cooling.';
+        : 'High-speed CONTEST fan mode enabled' + (temp ? ' at ' + temp : '') + ' to improve cooling.');
       notice.hidden = false;
       if (fanNoticeTimer) clearTimeout(fanNoticeTimer);
       fanNoticeTimer = setTimeout(dismissFanNotice, remaining);
@@ -3297,7 +3368,7 @@
         'TX pause: ' + (nav.paused ? 'active — ' + (nav.pauseReason || 'waiting for fresh RX evidence') : 'not active'),
         'Recovery: ' + (nav.recoveryState || 'not-needed') + (nav.recoveryInstructions ? ' — ' + nav.recoveryInstructions : ''),
       ];
-      el.textContent = lines.join('\n');
+      setTextIfChanged(el, lines.join('\n'));
     }
 
     async function loadFanPolicyStatus() {
@@ -3305,16 +3376,46 @@
         const res = await fetch('/api/v1/fan-policy');
         const body = await res.json();
         if (!body.success) throw new Error(body.error || 'fan-policy status unavailable');
-        renderFanPolicyRuntime(body.data);
-        renderOperatorFanPolicy(body.data);
+        const renderJSON = JSON.stringify(body.data || {});
+        if (renderJSON !== lastFanPolicyRenderJSON) {
+          lastFanPolicyRenderJSON = renderJSON;
+          renderFanPolicyRuntime(body.data);
+          renderOperatorFanPolicy(body.data);
+        }
       } catch (err) {
         renderFanPolicyRuntime({ state: 'unavailable', reason: err.message });
       }
     }
 
-    setInterval(() => {
-      loadFanPolicyStatus();
-    }, 1000);
+    function fanPolicyPollingRelevant() {
+      const settingsVisible = document.getElementById('view-settings').classList.contains('active');
+      const operatorVisible = document.getElementById('view-watch').classList.contains('active') && currentLayout() === 'operator';
+      return !document.hidden && (settingsVisible || operatorVisible);
+    }
+
+    function updateFanPolicyPolling() {
+      const shouldPoll = fanPolicyPollingRelevant();
+      if (shouldPoll && !fanPolicyPollTimer && !fanPolicyPollInFlight) {
+        fanPolicyPollTimer = setTimeout(async () => {
+          fanPolicyPollTimer = null;
+          fanPolicyPollInFlight = true;
+          try {
+            await loadFanPolicyStatus();
+          } finally {
+            fanPolicyPollInFlight = false;
+            updateFanPolicyPolling();
+          }
+        }, 1000);
+      } else if (!shouldPoll && fanPolicyPollTimer) {
+        clearTimeout(fanPolicyPollTimer);
+        fanPolicyPollTimer = null;
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      updateMenuDebugPolling();
+      updateFanPolicyPolling();
+    });
 
     function numberOrZero(id) {
       const value = document.getElementById(id).value.trim();
@@ -3575,7 +3676,6 @@
         const body = await res.json();
         if (body && body.data) {
           updateStatusIndicators(body.data);
-          updateOperatorStatus(body.data);
         }
       } catch (_) {
         // network error during status poll, keep last indicators
@@ -3614,7 +3714,6 @@
           try {
             const status = JSON.parse(event.data);
             updateStatusIndicators(status);
-            updateOperatorStatus(status);
           } catch (_) {
             // ignore malformed payloads, fallback polling still exists
           }

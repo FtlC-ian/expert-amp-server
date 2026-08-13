@@ -866,7 +866,7 @@ func TestSettingsPageHasGuardedMenuDebugWizard(t *testing.T) {
 		"the completed Normal fan override was cleared without touching the amplifier",
 		"Abort and Stop Sending Commands",
 		"OPERATE will not be restored automatically",
-		"It excludes IP addresses, hostnames, callsigns, and serial-device paths or identifiers",
+		"Review the local preview before consenting to upload",
 	} {
 		if !strings.Contains(body, required) {
 			t.Errorf("menu debug wizard missing safety or workflow text %q", required)
@@ -907,6 +907,38 @@ func TestSettingsPageHasGuardedMenuDebugWizard(t *testing.T) {
 	}
 	if strings.Contains(wizardScript, "localStorage") || strings.Contains(wizardScript, "sessionStorage") {
 		t.Error("menu debug token must remain memory-only")
+	}
+
+	for _, required := range []string{
+		`<main class="wrap">`,
+		`<h2 class="visually-hidden" id="watch-heading">Watch</h2>`,
+		`<h2 class="visually-hidden" id="settings-heading">Settings</h2>`,
+		`aria-label="Primary"`,
+		`aria-controls="view-watch" aria-current="page"`,
+		`aria-controls="view-settings"`,
+		`id="menu-debug-announcer" role="status" aria-live="polite" aria-atomic="true"`,
+		`id="menu-debug-candidate-verification" role="group" aria-labelledby="menu-debug-candidate-prompt"`,
+		`id="menu-debug-restored-verification" role="group" aria-labelledby="menu-debug-restored-prompt"`,
+		`id="menu-debug-toggle" type="button" aria-controls="menu-debug-body" aria-expanded="false"`,
+		`Show Menu Debug &amp; Reporting`,
+		`id="advanced-serial-toggle" type="button" aria-controls="advanced-serial-body" aria-expanded="false"`,
+		`Show Advanced Serial settings`,
+		`function announceMenuDebug(key, message)`,
+		`state === 'awaiting-physical-home'`,
+		`menuDebugPollInFlight`,
+		`fanPolicyPollInFlight`,
+		`document.hidden`,
+		`setTextIfChanged`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("settings page missing accessibility or change-only rendering contract %q", required)
+		}
+	}
+	if strings.Contains(body, "updateOperatorStatus(") {
+		t.Error("settings page retains undefined duplicate operator-status renderer")
+	}
+	if strings.Contains(body, "setInterval(loadMenuDebugSession") || strings.Contains(body, "setInterval(loadFanPolicyStatus") {
+		t.Error("settings page uses overlapping interval polling for Menu Debug or fan policy")
 	}
 }
 
