@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +19,9 @@ import (
 )
 
 const maxCollectorResponseBytes = 8 << 10
+const maxCollectorErrorRunes = 240
+
+var collectorErrorPattern = regexp.MustCompile(`^(?:unsupported schemaVersion|menu-report\.v2 upload must be complete|[A-Za-z]+(?:\[[0-9]+\])?(?:\.[A-Za-z]+|\[[0-9]+\])*(?: is invalid| must be (?:true|boolean|an object)| must contain [0-9]+-[0-9]+ items| contains unsupported field [A-Za-z]+| is missing [A-Za-z]+| contains private identity data))$`)
 
 type menuReportHTTPUploader struct {
 	endpoint string
@@ -60,11 +65,33 @@ func (u *menuReportHTTPUploader) Upload(ctx context.Context, report menudebug.Re
 		return fmt.Errorf("collector request: %w", err)
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxCollectorResponseBytes))
+	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, maxCollectorResponseBytes))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if detail := collectorErrorDetail(responseBody, response.Header.Get("Content-Type")); detail != "" {
+			return fmt.Errorf("collector returned HTTP %d: %s", response.StatusCode, detail)
+		}
 		return fmt.Errorf("collector returned HTTP %d", response.StatusCode)
 	}
 	return nil
+}
+
+func collectorErrorDetail(body []byte, contentType string) string {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "application/json" {
+		return ""
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err = json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	detail := strings.Join(strings.Fields(payload.Error), " ")
+	runes := []rune(detail)
+	if detail == "" || len(runes) > maxCollectorErrorRunes || !collectorErrorPattern.MatchString(detail) {
+		return ""
+	}
+	return detail
 }
 
 func isLoopbackHost(host string) bool {
