@@ -27,6 +27,7 @@ const (
 	PhaseAwaitingApplyVerify   Phase = "awaiting-apply-verification"
 	PhaseRestoring             Phase = "restoring"
 	PhaseAwaitingRestoreVerify Phase = "awaiting-restore-verification"
+	PhaseAwaitingPhysicalHome  Phase = "awaiting-physical-home"
 	PhaseComplete              Phase = "complete"
 	PhaseFailed                Phase = "failed"
 	PhaseExpired               Phase = "expired"

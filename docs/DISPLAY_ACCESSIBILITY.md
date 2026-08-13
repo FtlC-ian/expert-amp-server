@@ -15,6 +15,8 @@ Expert Amp Server exposes the current LCD as text without requiring a screenshot
 
 Unknown or custom glyphs decode as spaces. Their byte values are not lost: clients that need glyph-level evidence can read the exact `chars` and `attrs` arrays from `GET /api/v1/display/state`.
 
+Menu recognizers also retain the raw grid. For example, the field-reported Third Series 2K-FA fan page uses custom glyph `0xAE` as the only indication of the active NORMAL/QUIET value. The reporting wizard reads that marker from `chars`; it does not guess the active value from text or cursor position.
+
 The endpoint describes the current display. It does not recognize a menu page, assign meaning to custom symbols, or send amplifier controls.
 
 ## Passive display recorder

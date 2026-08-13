@@ -84,6 +84,30 @@ func TestAnalyzeSetupTopologyDistinguishesScreenFamilies(t *testing.T) {
 	if got := Analyze(second).SetupTopology; got != SetupTopologySecondSeries {
 		t.Fatalf("Second Series topology = %q", got)
 	}
+	second.SetRow(0, "       SETUP OPTIONS vs. INPUT 2")
+	if got := Analyze(second).SetupTopology; got != SetupTopologySecondSeries {
+		t.Fatalf("Second Series Input 2 topology = %q", got)
+	}
+	second.SetRow(0, "       SETUP OPTIONS vs. INPUT X")
+	if got := Analyze(second).SetupTopology; got != "" {
+		t.Fatalf("unknown Second Series input topology = %q", got)
+	}
+
+	third := display.NewState()
+	third.SetRow(0, "       SETUP OPTIONS vs. INPUT 2")
+	third.SetRow(1, " CONFIG        DISPLAY      ALARMS LOG")
+	third.SetRow(2, " ANTENNA       BEEP    On   TUN ANT")
+	third.SetRow(3, " CAT           START   Oprt RX ANT")
+	third.SetRow(4, " MANUAL TUNE   TEMP.   F    FAN NOISE")
+	third.SetRow(5, "                              EXIT")
+	third.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	if got := Analyze(third).SetupTopology; got != SetupTopologyThirdSeries2K {
+		t.Fatalf("Third Series 2K-FA topology = %q", got)
+	}
+	third.SetRow(0, "       SETUP OPTIONS vs. INPUT X")
+	if got := Analyze(third).SetupTopology; got != "" {
+		t.Fatalf("unknown Third Series input topology = %q", got)
+	}
 }
 
 func TestAnalyzeRecognizesFirstSeriesStoringReceipt(t *testing.T) {
@@ -122,6 +146,71 @@ func TestAnalyzeHomeExtractsActiveBankFromAlignedLCDField(t *testing.T) {
 	got := Analyze(state)
 	if got.Kind != ScreenHome || got.ActiveValue != "B" {
 		t.Fatalf("home observation = %+v", got)
+	}
+}
+
+func TestAnalyzeThirdSeriesHomeWithoutBankColumn(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(6, " IN   BAND  ANT  CAT   OUT   SWR   TEMP")
+	state.SetRow(7, "  2   80 m   2  FLEX   MID  --.--  81 F")
+	got := Analyze(state)
+	if got.Kind != ScreenHome || got.ActiveValue != "" {
+		t.Fatalf("Third Series home observation = %+v", got)
+	}
+}
+
+func TestAnalyzeThirdSeriesFanReadsRawActiveMarker(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(0, "            POWER-SUPPLY FAN")
+	state.SetRow(2, "   [ ] QUIET  MODE (SSB ONLY)")
+	state.SetRow(3, "   [ ] NORMAL MODE (ALL MODES)   SAVE")
+	state.SetRow(6, "    ALWAYS SPINNING WHILE IN OPERATE")
+	state.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	state.Chars[3][4] = 0xae
+	for col := 3; col < 30; col++ {
+		state.SetAttr(3, col, 1)
+	}
+
+	got := Analyze(state)
+	if got.Kind != ScreenFan || got.Capability != "fan" || got.ActiveValue != "normal" || got.SelectedValue != "normal" || !got.SaveVisible {
+		t.Fatalf("Third Series fan observation = %+v", got)
+	}
+	if len(got.Values) != 2 || got.Values[0] != "normal" || got.Values[1] != "quiet" {
+		t.Fatalf("Third Series fan values = %v", got.Values)
+	}
+
+	state.Chars[3][4] = 'X' - 0x20
+	if got := Analyze(state); got.ActiveValue != "" {
+		t.Fatalf("unknown radio marker produced active value %q", got.ActiveValue)
+	}
+
+	for row := 0; row < display.Rows; row++ {
+		for col := 0; col < display.Cols; col++ {
+			state.SetAttr(row, col, 0)
+		}
+	}
+	for col := 3; col < 29; col++ {
+		state.SetAttr(2, col, 1)
+	}
+	state.Chars[2][4] = 0xae
+	state.Chars[3][4] = 0x60
+	if got := Analyze(state); got.SelectedValue != "quiet" || got.ActiveValue != "quiet" {
+		t.Fatalf("QUIET selection observation = %+v", got)
+	}
+}
+
+func TestAnalyzeGenericFanPageRemainsCandidateOnly(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(0, "             COOLING FAN")
+	state.SetRow(2, "             LOW SPEED")
+	state.SetRow(3, "             HIGH SPEED       SAVE")
+	state.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
+	got := Analyze(state)
+	if got.Kind != ScreenFan || got.Capability != "fan" || !got.CandidateOnly || !got.SaveVisible {
+		t.Fatalf("generic fan observation = %+v", got)
+	}
+	if got.SelectedValue != "" || got.ActiveValue != "" {
+		t.Fatalf("generic fan page guessed values: %+v", got)
 	}
 }
 
