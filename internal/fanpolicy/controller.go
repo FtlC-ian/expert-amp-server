@@ -1070,20 +1070,21 @@ func (c *Controller) unexpectedLocked(state display.State) bool {
 	return false
 }
 
-// startVerifiedSetupExitLocked uses DISPLAY only for the exact First Series
-// setup topology where live hardware testing proved it exits without saving.
-// It is intentionally limited to unattended startup verification. Every
-// other model, screen family, and transaction still requires physical-panel
-// recovery after a mismatch or timeout.
+// startVerifiedSetupExitLocked uses DISPLAY only for exact promoted setup
+// topologies where field testing proved it returns the amplifier home without
+// saving. It is intentionally limited to unattended startup verification.
+// Every other model, screen family, and transaction still requires
+// physical-panel recovery after a mismatch or timeout.
 func (c *Controller) startVerifiedSetupExitLocked(cause string) bool {
 	currentSetupEvidence := c.lastDisplayGen > c.nav.afterGeneration
 	pendingSetupMove := c.nav.lastAction == "right" && strings.HasPrefix(c.nav.step, "setup:") &&
 		strings.HasPrefix(c.nav.previousKey, "setup:")
+	profile, knownProfile := fanDisplayProfileByID(c.nav.profile)
 	if !c.nav.active || c.nav.recoveryAttempted || !c.nav.verifyOnly || c.verifyReason != "startup" ||
-		c.nav.profile != FirstSeriesDisplayProfile ||
+		!knownProfile || !profile.startupSetupDisplayExitVerified ||
 		!strings.HasPrefix(c.nav.step, "setup:") ||
 		(!currentSetupEvidence && !pendingSetupMove) ||
-		!matchesProfileSetupSelection(c.lastDisplayState, FirstSeriesDisplayProfile, c.lastDisplayKey) {
+		!matchesProfileSetupSelection(c.lastDisplayState, profile.id, c.lastDisplayKey) {
 		return false
 	}
 	c.nav.recoveryAttempted = true
