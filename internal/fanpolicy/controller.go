@@ -68,6 +68,8 @@ type navState struct {
 	controlUncertain        bool
 	leaseHeld               bool
 	verifyOnly              bool
+	recoveryAttempted       bool
+	recoveryVerified        bool
 	failureAfterGen         uint64
 	profile                 string
 	setupIndex              int
@@ -119,6 +121,7 @@ type Controller struct {
 	statusGeneration              uint64
 	lastDisplayGen                uint64
 	lastDisplayKey                string
+	lastDisplayState              display.State
 	manualOverride                string
 	manualOverrideDuration        time.Duration
 	manualOverrideUntil           time.Time
@@ -514,6 +517,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 	key := semanticDisplayKey(observation.State)
 	c.lastDisplayGen = observation.Generation
 	c.lastDisplayKey = key
+	c.lastDisplayState = observation.State
 	if observation.TX == nil {
 		c.displayTX = nil
 	} else {
@@ -608,6 +612,26 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 		c.nav.step = "complete"
 		c.nav.restoreOperate = false
 		c.nav.controlUncertain = false
+		c.nav.deadline = time.Time{}
+		c.releaseLeaseLocked()
+		c.result = c.decorateLocked(base, c.settings)
+		return c.result
+	}
+	if c.nav.active && c.nav.step == "recover:home" {
+		if observation.Generation <= c.nav.afterGeneration {
+			c.result = c.decorateLocked(base, c.settings)
+			return c.result
+		}
+		if !matchesStandbyHome(observation.State) || observation.Operate == nil || *observation.Operate {
+			c.failLocked("verified DISPLAY recovery did not return to a checksum-valid STANDBY/RX home display")
+			c.result = c.decorateLocked(base, c.settings)
+			return c.result
+		}
+		c.lastVerifiedScreen = "home:standby"
+		c.mayBeInMenu = false
+		c.nav.active = false
+		c.nav.failed = true
+		c.nav.recoveryVerified = true
 		c.nav.deadline = time.Time{}
 		c.releaseLeaseLocked()
 		c.result = c.decorateLocked(base, c.settings)
@@ -745,9 +769,15 @@ func (c *Controller) Tick(now time.Time) Result {
 		if fatal := fatalNavigationBlocks(c.navigationBlocksLocked(status, c.settings)); len(fatal) != 0 {
 			c.failLocked("safety precondition became unavailable during display navigation")
 		} else if c.nav.paused && !c.nav.resumeDeadline.IsZero() && now.After(c.nav.resumeDeadline) {
-			c.failLocked("timed out waiting for the exact expected LCD waypoint after fresh RX")
+			message := "timed out waiting for the exact expected LCD waypoint after fresh RX"
+			if !c.startVerifiedSetupExitLocked(message) {
+				c.failLocked(message)
+			}
 		} else if !c.nav.paused && !c.nav.deadline.IsZero() && now.After(c.nav.deadline) {
-			c.failLocked("timed out waiting for the expected newer display state")
+			message := "timed out waiting for the expected newer display state"
+			if !c.startVerifiedSetupExitLocked(message) {
+				c.failLocked(message)
+			}
 		}
 	}
 	status := c.currentStatusLocked(now)
@@ -1032,8 +1062,37 @@ func normalizeOperatingState(value string) string {
 }
 
 func (c *Controller) unexpectedLocked(state display.State) bool {
-	c.failLocked(fmt.Sprintf("unexpected display while waiting for %s: %q", c.nav.step, firstNonBlankRow(state)))
+	message := fmt.Sprintf("unexpected display while waiting for %s: %q", c.nav.step, firstNonBlankRow(state))
+	if strings.HasPrefix(semanticDisplayKey(state), "setup:") && c.startVerifiedSetupExitLocked(message) {
+		return false
+	}
+	c.failLocked(message)
 	return false
+}
+
+// startVerifiedSetupExitLocked uses DISPLAY only for the exact First Series
+// setup topology where live hardware testing proved it exits without saving.
+// It is intentionally limited to unattended startup verification. Every
+// other model, screen family, and transaction still requires physical-panel
+// recovery after a mismatch or timeout.
+func (c *Controller) startVerifiedSetupExitLocked(cause string) bool {
+	currentSetupEvidence := c.lastDisplayGen > c.nav.afterGeneration
+	pendingSetupMove := c.nav.lastAction == "right" && strings.HasPrefix(c.nav.step, "setup:") &&
+		strings.HasPrefix(c.nav.previousKey, "setup:")
+	if !c.nav.active || c.nav.recoveryAttempted || !c.nav.verifyOnly || c.verifyReason != "startup" ||
+		c.nav.profile != FirstSeriesDisplayProfile ||
+		!strings.HasPrefix(c.nav.step, "setup:") ||
+		(!currentSetupEvidence && !pendingSetupMove) ||
+		!matchesProfileSetupSelection(c.lastDisplayState, FirstSeriesDisplayProfile, c.lastDisplayKey) {
+		return false
+	}
+	c.nav.recoveryAttempted = true
+	c.nav.lastError = cause
+	c.nav.failureAfterGen = c.lastDisplayGen
+	if !c.sendLocked("display", "recover:home", c.lastDisplayGen, c.lastDisplayKey) && c.nav.paused {
+		return false
+	}
+	return true
 }
 
 func (c *Controller) failLocked(message string) {
@@ -1347,7 +1406,9 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 	if base.Navigation.ActionsTaken == nil {
 		base.Navigation.ActionsTaken = []string{}
 	}
-	if c.mayBeInMenu || (c.nav.failed && (c.nav.changedOperate || c.nav.controlUncertain || c.nav.restoreOperate)) {
+	if c.nav.recoveryVerified {
+		base.Navigation.RecoveryState = "verified-home"
+	} else if c.mayBeInMenu || (c.nav.failed && (c.nav.changedOperate || c.nav.controlUncertain || c.nav.restoreOperate)) {
 		base.Navigation.RecoveryState = "operator-required"
 		base.Navigation.RecoveryInstructions = "Stop transmitting, put the amplifier in STANDBY, and use the physical front panel to return to the home screen. Disable automatic fan-policy switching, wait for fresh STANDBY/RX home evidence, then POST /api/v1/fan-policy/recover or use Clear Failed Fan Transaction in Settings. Recovery clears the manual override and latch without restoring OPERATE."
 	}
@@ -1355,7 +1416,11 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 	case c.nav.failed:
 		base.State = StateFailed
 		base.Pending = false
-		base.Reason = "fan-policy navigation failed closed; disable the policy and follow the reported recovery guidance before re-enabling"
+		if c.nav.recoveryVerified {
+			base.Reason = "fan-policy verification failed closed after a model-reviewed DISPLAY exit returned the amplifier to verified STANDBY home; disable the policy and clear the failed transaction before re-enabling"
+		} else {
+			base.Reason = "fan-policy navigation failed closed; disable the policy and follow the reported recovery guidance before re-enabling"
+		}
 		base.Navigation.State = "failed"
 	case c.nav.active && c.nav.paused:
 		base.State = StatePaused

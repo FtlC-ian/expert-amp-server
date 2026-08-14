@@ -1493,6 +1493,215 @@ func TestStartupVerificationRefreshesPersistedStaleReceipt(t *testing.T) {
 	}
 }
 
+func TestStartupVerificationTimeoutUsesVerifiedFirstSeriesDisplayExit(t *testing.T) {
+	buttons := &leaseRecordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	for generation, selected := range []string{"ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP"} {
+		controller.ObserveDisplay(rxObservation(setupScreen(selected), uint64(generation+2)))
+	}
+	if got := buttons.actions[len(buttons.actions)-1]; got != "right" {
+		t.Fatalf("startup verification did not wait for START after BEEP: %v", buttons.actions)
+	}
+
+	now = now.Add(navigationTimeout + time.Millisecond)
+	result := controller.Tick(now)
+	if result.State != StateNavigating || result.Navigation.State != "recover:home" ||
+		result.Navigation.LastAction != "display" || strings.Count(strings.Join(buttons.actions, ","), "display") != 1 {
+		t.Fatalf("timeout did not start one bounded DISPLAY exit: result=%+v actions=%v", result, buttons.actions)
+	}
+	if !result.Navigation.MayBeInMenu || buttons.releases != 0 {
+		t.Fatalf("recovery released safety ownership before verified home: result=%+v releases=%d", result, buttons.releases)
+	}
+
+	result = controller.ObserveDisplay(rxObservation(homeScreen(), 7))
+	if result.State != StateFailed || result.Navigation.State != "failed" ||
+		result.Navigation.RecoveryState != "verified-home" || result.Navigation.MayBeInMenu ||
+		result.Navigation.LastVerifiedScreen != "home:standby" || buttons.releases != 1 {
+		t.Fatalf("verified DISPLAY exit did not fail closed at home: result=%+v releases=%d", result, buttons.releases)
+	}
+	if !result.Verification.Requested || !strings.Contains(result.Navigation.LastError, "timed out") {
+		t.Fatalf("verified recovery lost the failed verification receipt: %+v", result)
+	}
+}
+
+func TestStartupVerificationDisplayExitIsNotInheritedBySecondSeries(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.ModelName = "EXPERT 1.5K-FA"
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT 1.5K-FA")
+	controller.ObserveDisplay(rxObservation(home, 1))
+	for generation, selected := range []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP"} {
+		controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen(selected), uint64(generation+2)))
+	}
+
+	now = now.Add(navigationTimeout + time.Millisecond)
+	result := controller.Tick(now)
+	if result.State != StateFailed || result.Navigation.RecoveryState != "operator-required" ||
+		strings.Contains(strings.Join(buttons.actions, ","), "display") {
+		t.Fatalf("Second Series inherited unverified DISPLAY recovery: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestStartupVerificationDisplayExitRejectsCrossFamilySetupScreen(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	controller.ObserveDisplay(rxObservation(setupScreen("ANTENNA"), 2))
+
+	result := controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen("CAT"), 3))
+	if result.State != StateFailed || result.Navigation.RecoveryState != "operator-required" ||
+		strings.Contains(strings.Join(buttons.actions, ","), "display") {
+		t.Fatalf("cross-family setup screen authorized DISPLAY recovery: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestStartupVerificationDisplayExitIsAttemptedOnlyOnce(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	controller.ObserveDisplay(rxObservation(setupScreen("ANTENNA"), 2))
+
+	now = now.Add(navigationTimeout + time.Millisecond)
+	controller.Tick(now)
+	now = now.Add(navigationTimeout + time.Millisecond)
+	result := controller.Tick(now)
+	if result.State != StateFailed || strings.Count(strings.Join(buttons.actions, ","), "display") != 1 {
+		t.Fatalf("DISPLAY recovery was retried: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestStartupVerificationDisplayExitWriteFailurePreservesDiagnostic(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	controller.ObserveDisplay(rxObservation(setupScreen("ANTENNA"), 2))
+	buttons.err = errors.New("serial unavailable")
+
+	now = now.Add(navigationTimeout + time.Millisecond)
+	result := controller.Tick(now)
+	if result.State != StateFailed || !strings.Contains(result.Navigation.LastError, "send display: serial unavailable") ||
+		strings.Count(strings.Join(buttons.actions, ","), "display") != 1 {
+		t.Fatalf("DISPLAY write failure lost its diagnostic or retried: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestStartupVerificationDisplayExitFailsClosedWithoutLCDEvidenceOfRX(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	controller.ObserveDisplay(rxObservation(setupScreen("ANTENNA"), 2))
+
+	controller.Observe(statusAt(30, "standby", true), settings)
+	controller.ObserveDisplay(txObservation(setupScreen("ANTENNA"), 3))
+	now = now.Add(time.Second)
+	rxStatus := statusAt(30, "standby", false)
+	rxStatus.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(rxStatus, settings)
+	now = now.Add(navigationTimeout + time.Millisecond)
+	result := controller.Tick(now)
+
+	if result.State != StateFailed || result.Navigation.State != "failed" ||
+		strings.Contains(strings.Join(buttons.actions, ","), "display") || result.Navigation.Paused {
+		t.Fatalf("RX-blocked DISPLAY recovery did not fail closed: result=%+v actions=%v", result, buttons.actions)
+	}
+	if !strings.Contains(result.Navigation.LastError, "timed out waiting for the exact expected LCD waypoint after fresh RX") {
+		t.Fatalf("RX-blocked DISPLAY recovery lost timeout diagnostic: %+v", result)
+	}
+}
+
+func TestStartupVerificationDoesNotRecoverFromStaleSetupFrameAfterSubmenuSET(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	for generation, selected := range []string{"ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP", "START", "TEMP/FANS"} {
+		controller.ObserveDisplay(rxObservation(setupScreen(selected), uint64(generation+2)))
+	}
+	if got := buttons.actions[len(buttons.actions)-1]; got != "set" {
+		t.Fatalf("startup verification did not attempt to enter TEMP/FANS: %v", buttons.actions)
+	}
+
+	now = now.Add(navigationTimeout + time.Millisecond)
+	result := controller.Tick(now)
+	if result.State != StateFailed || result.Navigation.RecoveryState != "operator-required" ||
+		strings.Contains(strings.Join(buttons.actions, ","), "display") {
+		t.Fatalf("stale pre-SET setup frame authorized DISPLAY recovery: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestStartupVerificationDoesNotRecoverFromSetupFrameWhileAwaitingSubmenu(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(rxObservation(homeScreen(), 1))
+	for generation, selected := range []string{"ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP", "START", "TEMP/FANS"} {
+		controller.ObserveDisplay(rxObservation(setupScreen(selected), uint64(generation+2)))
+	}
+
+	result := controller.ObserveDisplay(rxObservation(setupScreen("BEEP"), 9))
+	if result.State != StateFailed || result.Navigation.RecoveryState != "operator-required" ||
+		strings.Contains(strings.Join(buttons.actions, ","), "display") {
+		t.Fatalf("setup frame while awaiting submenu authorized DISPLAY recovery: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
 func TestPassiveFrontPanelSaveUpdatesVerifiedPolicyOnlyAfterStoringAndHome(t *testing.T) {
 	controller := NewController()
 	var persisted PersistentState
