@@ -1533,8 +1533,8 @@ func TestStartupVerificationTimeoutUsesVerifiedFirstSeriesDisplayExit(t *testing
 	}
 }
 
-func TestStartupVerificationDisplayExitIsNotInheritedBySecondSeries(t *testing.T) {
-	buttons := &recordingButtons{}
+func TestStartupVerificationTimeoutUsesVerifiedSecondSeriesDisplayExit(t *testing.T) {
+	buttons := &leaseRecordingButtons{}
 	controller := NewController(buttons)
 	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
 	controller.now = func() time.Time { return now }
@@ -1553,9 +1553,53 @@ func TestStartupVerificationDisplayExitIsNotInheritedBySecondSeries(t *testing.T
 
 	now = now.Add(navigationTimeout + time.Millisecond)
 	result := controller.Tick(now)
+	if result.State != StateNavigating || result.Navigation.State != "recover:home" ||
+		result.Navigation.LastAction != "display" || strings.Count(strings.Join(buttons.actions, ","), "display") != 1 {
+		t.Fatalf("Second Series timeout did not start one bounded DISPLAY exit: result=%+v actions=%v", result, buttons.actions)
+	}
+	if !result.Navigation.MayBeInMenu || buttons.releases != 0 {
+		t.Fatalf("Second Series recovery released safety ownership before verified home: result=%+v releases=%d", result, buttons.releases)
+	}
+
+	result = controller.ObserveDisplay(rxObservation(home, 8))
+	if result.State != StateFailed || result.Navigation.State != "failed" ||
+		result.Navigation.RecoveryState != "verified-home" || result.Navigation.MayBeInMenu ||
+		result.Navigation.LastVerifiedScreen != "home:standby" || buttons.releases != 1 {
+		t.Fatalf("Second Series DISPLAY exit did not fail closed at home: result=%+v releases=%d", result, buttons.releases)
+	}
+	if !result.Verification.Requested || !strings.Contains(result.Navigation.LastError, "timed out") {
+		t.Fatalf("Second Series recovery lost the failed verification receipt: %+v", result)
+	}
+}
+
+func TestSecondSeriesStartupVerificationDisplayExitRejectsNewerNonHomeFrame(t *testing.T) {
+	buttons := &leaseRecordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.ModelName = "EXPERT 1.5K-FA"
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT 1.5K-FA")
+	controller.ObserveDisplay(rxObservation(home, 1))
+	for generation, selected := range []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP"} {
+		controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen(selected), uint64(generation+2)))
+	}
+
+	now = now.Add(navigationTimeout + time.Millisecond)
+	controller.Tick(now)
+	result := controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen("BEEP"), 8))
 	if result.State != StateFailed || result.Navigation.RecoveryState != "operator-required" ||
-		strings.Contains(strings.Join(buttons.actions, ","), "display") {
-		t.Fatalf("Second Series inherited unverified DISPLAY recovery: result=%+v actions=%v", result, buttons.actions)
+		!result.Navigation.MayBeInMenu || buttons.releases != 1 ||
+		strings.Count(strings.Join(buttons.actions, ","), "display") != 1 {
+		t.Fatalf("newer non-home recovery frame did not fail closed: result=%+v actions=%v releases=%d", result, buttons.actions, buttons.releases)
+	}
+	if !strings.Contains(result.Navigation.LastError, "did not return to a checksum-valid STANDBY/RX home display") {
+		t.Fatalf("newer non-home recovery frame lost its diagnostic: %+v", result)
 	}
 }
 
@@ -1576,6 +1620,29 @@ func TestStartupVerificationDisplayExitRejectsCrossFamilySetupScreen(t *testing.
 	if result.State != StateFailed || result.Navigation.RecoveryState != "operator-required" ||
 		strings.Contains(strings.Join(buttons.actions, ","), "display") {
 		t.Fatalf("cross-family setup screen authorized DISPLAY recovery: result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestSecondSeriesStartupVerificationDisplayExitRejectsFirstSeriesSetupScreen(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.ModelName = "EXPERT 1.5K-FA"
+	status.LastContactAt = now.Format(time.RFC3339Nano)
+	controller.Observe(status, settings)
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT 1.5K-FA")
+	controller.ObserveDisplay(rxObservation(home, 1))
+	controller.ObserveDisplay(rxObservation(secondSeriesSetupScreen("CONFIG"), 2))
+
+	result := controller.ObserveDisplay(rxObservation(setupScreen("CAT"), 3))
+	if result.State != StateFailed || result.Navigation.RecoveryState != "operator-required" ||
+		strings.Contains(strings.Join(buttons.actions, ","), "display") {
+		t.Fatalf("First Series setup screen authorized Second Series DISPLAY recovery: result=%+v actions=%v", result, buttons.actions)
 	}
 }
 

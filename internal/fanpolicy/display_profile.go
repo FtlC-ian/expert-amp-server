@@ -227,16 +227,17 @@ func matchesProfileSetupSelection(state display.State, profileID, key string) bo
 }
 
 type fanDisplayProfile struct {
-	id             string
-	model          string
-	setupKeys      []string
-	supportedModes []string
-	verified       bool
+	id                              string
+	model                           string
+	setupKeys                       []string
+	supportedModes                  []string
+	verified                        bool
+	startupSetupDisplayExitVerified bool
 }
 
 var fanDisplayProfiles = []fanDisplayProfile{
-	{id: FirstSeriesDisplayProfile, model: "EXPERT 1.3K-FA", setupKeys: []string{"setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true},
-	{id: SecondSeriesDisplayProfile, model: "EXPERT 1.5K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true},
+	{id: FirstSeriesDisplayProfile, model: "EXPERT 1.3K-FA", setupKeys: []string{"setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true, startupSetupDisplayExitVerified: true},
+	{id: SecondSeriesDisplayProfile, model: "EXPERT 1.5K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true, startupSetupDisplayExitVerified: true},
 }
 
 func fanDisplayProfileByID(id string) (fanDisplayProfile, bool) {
