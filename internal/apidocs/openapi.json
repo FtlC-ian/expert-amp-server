@@ -64,7 +64,7 @@
       "post": {
         "tags": ["Menu Debug"],
         "summary": "Start the guarded automatic menu test",
-        "description": "One explicit begin-discovery confirmation starts automatic discovery and, for a reviewed profile, the frozen apply transaction. Every internal command still consumes one authorization, rechecks safety/model/serial-session binding, and waits for newer matching checksum-valid display evidence before the next command. The transaction stops without retry or OPERATE restoration on any mismatch or safety failure. Unknown profiles remain topology-only and cannot change or SAVE a value. Poll the session route for currentStep and waitingForEvidence progress.",
+        "description": "One explicit begin-discovery confirmation starts automatic discovery and, for a reviewed profile, the frozen apply transaction. Every internal command still consumes one authorization, rechecks safety/model/serial-session binding, and waits for newer matching checksum-valid display evidence before the next command. The candidate Expert 2K-FA Third Series test is additionally bound to firmware Rel.26_03_24_A and its exact setup topology, runs NORMAL to QUIET to NORMAL in STANDBY/RX, never sends DISPLAY, and does not promote production fan control. The transaction stops without retry or OPERATE restoration on any mismatch or safety failure. Unknown profiles remain topology-only and cannot change or SAVE a value. Poll the session route for currentStep and waitingForEvidence progress.",
         "responses": {"202": {"description": "Guarded discovery and automatic apply started"}, "409": {"description": "Stale revision, duplicate start, safety conflict, profile mismatch, or failed-closed stop"}}
       }
     },
@@ -87,7 +87,7 @@
       "get": {
         "tags": ["Menu Debug"],
         "summary": "Get the sanitized menu topology report",
-        "description": "Returns token-authorized menu-report.v2 evidence produced by the server. Ordinary failure, abort, and expiry reports remain downloadable with complete=false plus the exact incomplete phase and cannot be uploaded or used as promotion evidence. Reconnect or model change still invalidates report access. Reports omit IPs, hostnames, callsigns, tokens, and serial-device identity.",
+        "description": "Returns token-authorized menu-report.v2 evidence produced by the server, including normalized rows and exact raw 8x40 character/attribute grids for captured LCD receipts. Ordinary failure, abort, and expiry reports remain downloadable with complete=false plus the exact incomplete phase and cannot be uploaded or used as promotion evidence. Reconnect or model change still invalidates report access. Reports omit IPs, hostnames, callsigns, tokens, and serial-device identity.",
         "responses": {"200": {"description": "Sanitized completed or explicitly incomplete diagnostic report"}, "409": {"description": "Invalid token, invalidated evidence, or no report evidence"}}
       }
     },

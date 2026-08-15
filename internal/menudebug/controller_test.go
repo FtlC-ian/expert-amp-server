@@ -286,7 +286,7 @@ func completeCapability(t *testing.T, c *Controller, token string, v SessionView
 	}
 	base := c.session.lastEvidenceGen
 	discovery := Evidence{Generation: base + 1, Fingerprint: "candidate-entry", Candidate: plan.Capability}
-	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, "EXPERT 1.3K-FA", discovery)
+	auth, err := c.AuthorizeDiscovery(token, v.Revision, ActionSet, plan.ExpectedModel, discovery)
 	if err != nil {
 		t.Fatalf("Authorize discovery: %v", err)
 	}
@@ -400,6 +400,48 @@ func TestReviewedPlanProfilesAreCapabilityBound(t *testing.T) {
 	plan.Capability = CapabilityFan
 	if err := validatePlan(plan); err == nil || !strings.Contains(err.Error(), "reviewed server profile") {
 		t.Fatalf("bank profile accepted for fan: %v", err)
+	}
+}
+
+func TestReviewedThirdSeriesPlanIsFirmwareBound(t *testing.T) {
+	plan := simplePlan(CapabilityFan, "normal", "quiet")
+	plan.Profile = "expert-2k-fa-third-series-fan-normal-quiet-v1"
+	plan.ExpectedModel = "EXPERT 2K-FA"
+	plan.ExpectedFirmware = "Rel.26_03_24_A"
+	if err := validatePlan(plan); err != nil {
+		t.Fatalf("exact Third Series profile rejected: %v", err)
+	}
+	plan.ExpectedFirmware = "Rel.26_03_24_B"
+	if err := validatePlan(plan); err == nil || !strings.Contains(err.Error(), "exact reviewed firmware") {
+		t.Fatalf("wrong Third Series firmware error = %v", err)
+	}
+	plan.ExpectedFirmware = "rel.26_03_24_a"
+	if err := validatePlan(plan); err == nil || !strings.Contains(err.Error(), "exact reviewed firmware") {
+		t.Fatalf("case-variant Third Series firmware error = %v", err)
+	}
+}
+
+func TestReviewedThirdSeriesPlanKeepsCompleteApplyRestoreReceipts(t *testing.T) {
+	c, _ := newDeterministicController(&fakeLease{})
+	c.ObserveStatus(api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 2K-FA"}}, 2)
+	v, token := arm(t, c)
+	plan := simplePlan(CapabilityFan, "normal", "quiet")
+	plan.Profile = "expert-2k-fa-third-series-fan-normal-quiet-v1"
+	plan.ExpectedModel = "EXPERT 2K-FA"
+	plan.ExpectedFirmware = "Rel.26_03_24_A"
+	v = completeCapability(t, c, token, v, plan)
+	if v.Phase != PhaseArmed || c.session.actionBudget != 48 {
+		t.Fatalf("completed Third Series view=%+v budget=%d", v, c.session.actionBudget)
+	}
+	if len(c.reports) != 1 {
+		t.Fatalf("Third Series reports = %d", len(c.reports))
+	}
+	report := c.reports[0]
+	if !report.Complete || !report.AppliedVerified || !report.RestoreVerified || len(report.Verifications) != 2 || !report.Verifications[0].Verified || !report.Verifications[1].Verified {
+		t.Fatalf("incomplete Third Series verification receipts: %+v", report)
+	}
+	if report.OriginalValue != "normal" || report.CandidateValue != "quiet" || len(report.ActionReceipts) == 0 || len(report.Transitions) == 0 {
+		t.Fatalf("incomplete Third Series transaction receipts: %+v", report)
 	}
 }
 
@@ -1173,9 +1215,17 @@ func TestPendingDiscoveryIgnoresRepeatedPolledScreen(t *testing.T) {
 
 	after := display.NewState()
 	after.SetRow(0, "AFTER")
+	after.Attrs[0][0] = 0x80
 	c.ObserveDisplay(after, 7, true, nil, nil)
 	if c.session.phase != PhaseDiscovering || c.session.discoveryPending {
 		t.Fatalf("distinct screen did not complete discovery action: %+v", c.session)
+	}
+	if len(c.session.evidence) == 0 {
+		t.Fatal("distinct observed screen did not produce evidence")
+	}
+	observed := c.session.evidence[len(c.session.evidence)-1]
+	if observed.RawState == nil || observed.RawState.Chars != after.Chars || observed.RawState.Attrs != after.Attrs {
+		t.Fatalf("observed evidence did not preserve exact raw display state: %+v", observed.RawState)
 	}
 }
 

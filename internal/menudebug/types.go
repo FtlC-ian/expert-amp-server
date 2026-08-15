@@ -98,6 +98,15 @@ type Evidence struct {
 	StandbyHome   bool       `json:"standbyHome,omitempty"`
 	ObservedAt    time.Time  `json:"observedAt"`
 	SetupTopology string     `json:"setupTopology,omitempty"`
+	RawState      *RawState  `json:"rawState,omitempty"`
+}
+
+// RawState preserves the exact 8x40 character and attribute grids needed to
+// turn a guarded hardware run into reproducible regression fixtures. It holds
+// display bytes only and contains no host, network, serial, or caller identity.
+type RawState struct {
+	Chars [display.Rows][display.Cols]byte `json:"chars"`
+	Attrs [display.Rows][display.Cols]byte `json:"attrs"`
 }
 
 type Step struct {
@@ -110,6 +119,7 @@ type Step struct {
 	ExpectedValue             string     `json:"expectedValue,omitempty"`
 	ExpectedSelection         string     `json:"expectedSelection,omitempty"`
 	ExpectedSelectionContains string     `json:"expectedSelectionContains,omitempty"`
+	ExpectedSetupTopology     string     `json:"expectedSetupTopology,omitempty"`
 	ExpectedSaveVisible       bool       `json:"expectedSaveVisible,omitempty"`
 	ExpectedStandbyHome       bool       `json:"expectedStandbyHome,omitempty"`
 	AllowStoringBeforeHome    bool       `json:"allowStoringBeforeHome,omitempty"`
@@ -118,6 +128,7 @@ type Step struct {
 type Plan struct {
 	Profile                         string     `json:"profile"`
 	ExpectedModel                   string     `json:"-"`
+	ExpectedFirmware                string     `json:"-"`
 	ExpectedSerialSessionGeneration uint64     `json:"-"`
 	Capability                      Capability `json:"capability"`
 	OriginalValue                   string     `json:"originalValue"`
