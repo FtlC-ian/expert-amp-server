@@ -766,7 +766,7 @@ func validatePlan(p Plan) error {
 	if profile.capability == "" || profile.capability != p.Capability || !modelMatches(profile.model, p.ExpectedModel) || p.ExpectedSerialSessionGeneration == 0 {
 		return errors.New("plan does not use a reviewed server profile")
 	}
-	if profile.firmware != "" && !strings.EqualFold(profile.firmware, strings.TrimSpace(p.ExpectedFirmware)) {
+	if profile.firmware != "" && profile.firmware != strings.TrimSpace(p.ExpectedFirmware) {
 		return errors.New("plan does not use the exact reviewed firmware profile")
 	}
 	if strings.TrimSpace(p.OriginalValue) == "" || strings.TrimSpace(p.CandidateValue) == "" || p.OriginalValue == p.CandidateValue {

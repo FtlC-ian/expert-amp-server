@@ -415,6 +415,10 @@ func TestReviewedThirdSeriesPlanIsFirmwareBound(t *testing.T) {
 	if err := validatePlan(plan); err == nil || !strings.Contains(err.Error(), "exact reviewed firmware") {
 		t.Fatalf("wrong Third Series firmware error = %v", err)
 	}
+	plan.ExpectedFirmware = "rel.26_03_24_a"
+	if err := validatePlan(plan); err == nil || !strings.Contains(err.Error(), "exact reviewed firmware") {
+		t.Fatalf("case-variant Third Series firmware error = %v", err)
+	}
 }
 
 func TestReviewedThirdSeriesPlanKeepsCompleteApplyRestoreReceipts(t *testing.T) {

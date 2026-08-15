@@ -668,25 +668,7 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 		plan, planErr := reviewedMenuDebugPlan(runtime, view.Capability)
 		if planErr != nil {
 			if strings.Contains(planErr.Error(), "no reviewed action profile") {
-				if reviewedMenuDebugNoSaveExit(runtime, view.Capability) {
-					authorization, exitErr := m.opts.MenuDebug.AuthorizeTopologyExit(token, view.Revision, runtime.Status.ModelName, evidence)
-					if exitErr != nil {
-						return view, exitErr
-					}
-					if exitErr = m.sendAuthorized(ctx, token, authorization, false); exitErr != nil {
-						failed, failErr := m.opts.MenuDebug.Fail(token, authorization.Revision, exitErr.Error())
-						if failErr != nil {
-							return failed, failErr
-						}
-						return failed, exitErr
-					}
-					return m.opts.MenuDebug.Current(token)
-				}
-				topologyView, topologyErr := m.opts.MenuDebug.CompleteTopology(token, view.Revision)
-				if topologyErr != nil {
-					return topologyView, topologyErr
-				}
-				return topologyView, nil
+				return m.finishTopologyOnly(ctx, token, view, runtime, evidence)
 			}
 			return view, planErr
 		}
@@ -694,7 +676,7 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 		firmware := m.firmware
 		m.mu.Unlock()
 		if err := validateReviewedPlanFirmware(plan, firmware); err != nil {
-			return view, err
+			return m.finishTopologyOnly(ctx, token, view, runtime, evidence)
 		}
 		return m.opts.MenuDebug.InstallPlan(token, view.Revision, plan)
 	default:
@@ -712,6 +694,28 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 		return failed, err
 	}
 	return m.opts.MenuDebug.Current(token)
+}
+
+func (m *menuDebugAPI) finishTopologyOnly(ctx context.Context, token string, view menudebug.SessionView, runtime menudebug.RuntimeSnapshot, evidence menudebug.Evidence) (menudebug.SessionView, error) {
+	if reviewedMenuDebugNoSaveExit(runtime, view.Capability) {
+		authorization, err := m.opts.MenuDebug.AuthorizeTopologyExit(token, view.Revision, runtime.Status.ModelName, evidence)
+		if err != nil {
+			return view, err
+		}
+		if err = m.sendAuthorized(ctx, token, authorization, false); err != nil {
+			failed, failErr := m.opts.MenuDebug.Fail(token, authorization.Revision, err.Error())
+			if failErr != nil {
+				return failed, failErr
+			}
+			return failed, err
+		}
+		return m.opts.MenuDebug.Current(token)
+	}
+	topologyView, err := m.opts.MenuDebug.CompleteTopology(token, view.Revision)
+	if err != nil {
+		return topologyView, err
+	}
+	return topologyView, nil
 }
 
 func validateMenuDebugCandidateEntry(runtime menudebug.RuntimeSnapshot, capability menudebug.Capability) error {
@@ -1142,7 +1146,7 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 	original := strings.ToLower(strings.TrimSpace(runtime.Screen.SelectedValue))
 	candidate := map[string]string{"normal": "contest", "contest": "normal"}[original]
 	if candidate == "" || !strings.EqualFold(original, exactPolicy) {
-		return menudebug.Plan{}, errors.New("the reviewed fan profile requires FAN MANAGEMENT with a classified NORMAL or CONTEST value")
+		return menudebug.Plan{}, errors.New("topology captured, but this model/capability has no reviewed action profile; FAN MANAGEMENT value did not match the reviewed NORMAL/CONTEST fixture")
 	}
 	fan := menudebug.ScreenFan
 	home := menudebug.ScreenHome
@@ -1174,7 +1178,7 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 func reviewedThirdSeriesFanPlan(runtime menudebug.RuntimeSnapshot, sessionGeneration uint64, profile reviewedFanProfile) (menudebug.Plan, error) {
 	screen := runtime.Screen
 	if !thirdSeriesFanLayout(runtime.DisplayState) || screen.ActiveValue != "normal" || screen.SelectedValue != "normal" || !strings.Contains(strings.ToUpper(screen.SelectedText), "NORMAL MODE") {
-		return menudebug.Plan{}, errors.New("the reviewed Third Series test requires the exact NORMAL-active, NORMAL-selected POWER-SUPPLY FAN fixture")
+		return menudebug.Plan{}, errors.New("topology captured, but this model/capability has no reviewed action profile; the Third Series fixture was not exact NORMAL-active and NORMAL-selected")
 	}
 	capability := menudebug.CapabilityFan
 	apply := []menudebug.Step{
@@ -1225,7 +1229,7 @@ func reviewedSerialSessionGeneration(runtime menudebug.RuntimeSnapshot) (uint64,
 }
 
 func validateReviewedPlanFirmware(plan menudebug.Plan, firmware string) error {
-	if plan.ExpectedFirmware == "" || strings.EqualFold(strings.TrimSpace(firmware), plan.ExpectedFirmware) {
+	if plan.ExpectedFirmware == "" || strings.TrimSpace(firmware) == plan.ExpectedFirmware {
 		return nil
 	}
 	return fmt.Errorf("reviewed Third Series test requires firmware %s; armed session reported %s", plan.ExpectedFirmware, strings.TrimSpace(firmware))

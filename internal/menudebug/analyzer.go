@@ -109,8 +109,7 @@ func setupTopology(rows [display.Rows]string) string {
 		(normalized(2) == "ANTENNA BEEP Off TUN ANT" || normalized(2) == "ANTENNA BEEP On TUN ANT") &&
 		(normalized(3) == "CAT START Stby RX ANT" || normalized(3) == "CAT START Oper RX ANT" || normalized(3) == "CAT START Oprt RX ANT") &&
 		thirdSeriesTemperatureFanRow(normalized(4)) &&
-		normalized(5) == "EXIT" &&
-		normalized(7) == "[ ][ ]:SELECT [SET]:CONFIRM" {
+		normalized(5) == "EXIT" {
 		return SetupTopologyThirdSeries2K
 	}
 	if strings.HasPrefix(normalized(0), "SETUP OPTIONS vs. INPUT ") &&

@@ -1717,6 +1717,9 @@ func TestReviewedThirdSeriesPlanUsesCapturedFixturesAndStaysCandidateOnly(t *tes
 	if err := validateReviewedPlanFirmware(plan, "Rel.26_03_24_B"); err == nil || !strings.Contains(err.Error(), "requires firmware") {
 		t.Fatalf("firmware mismatch error = %v", err)
 	}
+	if err := validateReviewedPlanFirmware(plan, "rel.26_03_24_a"); err == nil || !strings.Contains(err.Error(), "requires firmware") {
+		t.Fatalf("case-variant firmware error = %v", err)
+	}
 }
 
 func loadThirdSeriesFixture(t *testing.T, name string) display.State {
@@ -2256,19 +2259,14 @@ func TestTopologyRunnerRetainsLeasePastReceiptTimeoutUntilPhysicalHome(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	fan := display.NewState()
-	fan.SetRow(0, "          POWER-SUPPLY FAN TEST")
-	fan.SetRow(2, "   [ ] QUIET  MODE (SSB ONLY)")
-	fan.SetRow(3, "   [ ] NORMAL MODE (ALL MODES)   SAVE")
-	fan.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
-	fan.Chars[3][4] = 0xae
+	fan := loadThirdSeriesFixture(t, "fan_noise_NORMAL_active_0xAE.state.json")
 	controller.ObserveDisplay(fan, 2, true, &rx, &operate)
 	view, err = controller.Current(token)
 	if err != nil || view.Revision == auth.Revision {
 		t.Fatalf("fan evidence view=%+v err=%v", view, err)
 	}
 
-	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, MenuDebugTransport: lease}, capabilities: []menudebug.Capability{menudebug.CapabilityFan}, stepTimeout: 10 * time.Millisecond}
+	menuAPI := &menuDebugAPI{opts: Options{MenuDebug: controller, MenuDebugTransport: lease}, capabilities: []menudebug.Capability{menudebug.CapabilityFan}, stepTimeout: 10 * time.Millisecond, firmware: "rel.26_03_24_a"}
 	done := make(chan struct{})
 	go func() {
 		menuAPI.runGuardedTestContext(context.Background(), token)
@@ -2278,6 +2276,9 @@ func TestTopologyRunnerRetainsLeasePastReceiptTimeoutUntilPhysicalHome(t *testin
 	view, err = controller.Current(token)
 	if err != nil || view.Phase != menudebug.PhaseAwaitingPhysicalHome {
 		t.Fatalf("runner applied receipt timeout while awaiting home: view=%+v err=%v", view, err)
+	}
+	if raw.calls != 0 {
+		t.Fatalf("firmware mismatch sent %d commands instead of falling back to topology-only", raw.calls)
 	}
 	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "operate"}); err == nil {
 		t.Fatal("manual actuation was allowed while runner awaited physical home")
