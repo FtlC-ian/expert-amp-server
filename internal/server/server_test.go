@@ -1645,11 +1645,104 @@ func TestThirdSeriesCandidateEntryRequiresFanNoiseConfirmLegend(t *testing.T) {
 	if _, ok := reviewedMenuDebugDiscoveryAction(runtime, menudebug.CapabilityFan); ok {
 		t.Fatal("Third Series 2K-FA inherited a reviewed selector write")
 	}
-	if _, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "no reviewed action profile") {
+	if _, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan); err == nil || !strings.Contains(err.Error(), "NORMAL-active") {
 		t.Fatalf("Third Series 2K-FA plan error = %v", err)
 	}
 	if reviewedMenuDebugNoSaveExit(runtime, menudebug.CapabilityFan) {
 		t.Fatal("Third Series 2K-FA inherited DISPLAY no-save recovery")
+	}
+}
+
+func TestReviewedThirdSeriesPlanUsesCapturedFixturesAndStaysCandidateOnly(t *testing.T) {
+	home := loadThirdSeriesFixture(t, "00_home_splash.state.json")
+	setup := loadThirdSeriesFixture(t, "01_setup_grid.state.json")
+	normal := loadThirdSeriesFixture(t, "fan_noise_NORMAL_active_0xAE.state.json")
+	save := loadThirdSeriesFixture(t, "fan_noise_SAVE_selected.state.json")
+
+	if got := menudebug.Analyze(home); got.Kind != menudebug.ScreenHome || got.ActiveValue != "" {
+		t.Fatalf("captured Third Series home = %+v", got)
+	}
+	if got := menudebug.Analyze(setup); got.Kind != menudebug.ScreenSetup || got.SetupTopology != menudebug.SetupTopologyThirdSeries2K {
+		t.Fatalf("captured Third Series setup = %+v", got)
+	}
+	normalScreen := menudebug.Analyze(normal)
+	if !thirdSeriesFanLayout(normal) || normalScreen.ActiveValue != "normal" || normalScreen.SelectedValue != "normal" {
+		t.Fatalf("captured NORMAL screen = %+v", normalScreen)
+	}
+	saveScreen := menudebug.Analyze(save)
+	if !thirdSeriesFanLayout(save) || saveScreen.ActiveValue != "normal" || saveScreen.SelectedText != "SAVE" {
+		t.Fatalf("captured SAVE screen = %+v", saveScreen)
+	}
+
+	rx, operate := false, false
+	runtime := menudebug.RuntimeSnapshot{
+		Status:                         api.Status{Telemetry: api.Telemetry{ModelName: "EXPERT 2K-FA", TX: &rx}},
+		SerialSessionGeneration:        7,
+		StatusSerialSessionGeneration:  7,
+		DisplaySerialSessionGeneration: 7,
+		DisplayState:                   normal,
+		ChecksumValid:                  true,
+		DisplayTX:                      &rx,
+		DisplayOperate:                 &operate,
+		Screen:                         normalScreen,
+	}
+	plan, err := reviewedMenuDebugPlan(runtime, menudebug.CapabilityFan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := menuDebugEvidence(runtime, menudebug.CapabilityFan)
+	if evidence.RawState == nil || evidence.RawState.Chars[3][4] != 0xae || evidence.RawState.Attrs[3][3] != 1 {
+		t.Fatalf("exact raw display evidence was not retained: %+v", evidence.RawState)
+	}
+	if plan.Profile != "expert-2k-fa-third-series-fan-normal-quiet-v1" || plan.ExpectedFirmware != "Rel.26_03_24_A" || plan.OriginalValue != "normal" || plan.CandidateValue != "quiet" {
+		t.Fatalf("Third Series plan identity = %+v", plan)
+	}
+	if len(plan.Apply) != 6 || len(plan.Restore) != 17 || plan.Apply[0].FromFingerprint != normalScreen.Fingerprint {
+		t.Fatalf("Third Series plan shape = apply %d restore %d", len(plan.Apply), len(plan.Restore))
+	}
+	if plan.Apply[0].Action != menudebug.ActionRight || plan.Apply[0].ExpectedSelection != "SAVE" || plan.Apply[2].Purpose != menudebug.PurposeChangeValue || plan.Apply[2].ExpectedValue != "quiet" || plan.Apply[5].Purpose != menudebug.PurposeSave {
+		t.Fatalf("unsafe Third Series apply plan: %+v", plan.Apply)
+	}
+	if plan.Restore[0].Action != menudebug.ActionSet || plan.Restore[0].ExpectedSelection != "CONFIG" || plan.Restore[11].ExpectedSelection != "FAN NOISE" || plan.Restore[14].Purpose != menudebug.PurposeChangeValue || plan.Restore[14].ExpectedValue != "normal" || plan.Restore[16].Purpose != menudebug.PurposeSave {
+		t.Fatalf("unsafe Third Series restore plan: %+v", plan.Restore)
+	}
+	for _, step := range append(append([]menudebug.Step(nil), plan.Apply...), plan.Restore...) {
+		if step.Action == menudebug.ActionDisplay {
+			t.Fatal("Third Series plan inherited generic DISPLAY recovery")
+		}
+	}
+	if err := validateReviewedPlanFirmware(plan, "Rel.26_03_24_A"); err != nil {
+		t.Fatalf("exact firmware rejected: %v", err)
+	}
+	if err := validateReviewedPlanFirmware(plan, "Rel.26_03_24_B"); err == nil || !strings.Contains(err.Error(), "requires firmware") {
+		t.Fatalf("firmware mismatch error = %v", err)
+	}
+}
+
+func loadThirdSeriesFixture(t *testing.T, name string) display.State {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "third_series", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state display.State
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func TestRawMenuEvidenceIsDroppedWhenDecodedRowsNeedPrivacyRedaction(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(0, "CALL K5ABC")
+	screen := menudebug.Analyze(state)
+	evidence := menudebug.Evidence{Rows: [8]string(screen.Rows), RawState: &menudebug.RawState{Chars: state.Chars, Attrs: state.Attrs}}
+	sanitizeMenuDebugEvidence(&evidence)
+	if evidence.RawState != nil {
+		t.Fatal("raw LCD bytes survived decoded-row privacy redaction")
+	}
+	if strings.Contains(evidence.Rows[0], "K5ABC") {
+		t.Fatalf("decoded evidence retained callsign: %q", evidence.Rows[0])
 	}
 }
 
@@ -2164,7 +2257,7 @@ func TestTopologyRunnerRetainsLeasePastReceiptTimeoutUntilPhysicalHome(t *testin
 		t.Fatal(err)
 	}
 	fan := display.NewState()
-	fan.SetRow(0, "            POWER-SUPPLY FAN")
+	fan.SetRow(0, "          POWER-SUPPLY FAN TEST")
 	fan.SetRow(2, "   [ ] QUIET  MODE (SSB ONLY)")
 	fan.SetRow(3, "   [ ] NORMAL MODE (ALL MODES)   SAVE")
 	fan.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")

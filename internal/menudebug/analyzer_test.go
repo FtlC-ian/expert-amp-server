@@ -104,6 +104,11 @@ func TestAnalyzeSetupTopologyDistinguishesScreenFamilies(t *testing.T) {
 	if got := Analyze(third).SetupTopology; got != SetupTopologyThirdSeries2K {
 		t.Fatalf("Third Series 2K-FA topology = %q", got)
 	}
+	third.SetRow(7, " [  ][  ]:SELECT           [SET]:CHANGE")
+	if got := Analyze(third).SetupTopology; got != "" {
+		t.Fatalf("unsafe Third Series CHANGE legend topology = %q", got)
+	}
+	third.SetRow(7, " [  ][  ]:SELECT          [SET]:CONFIRM")
 	third.SetRow(0, "       SETUP OPTIONS vs. INPUT X")
 	if got := Analyze(third).SetupTopology; got != "" {
 		t.Fatalf("unknown Third Series input topology = %q", got)

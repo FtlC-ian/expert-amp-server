@@ -690,6 +690,12 @@ func (m *menuDebugAPI) sendDiscovery(ctx context.Context, token string, view men
 			}
 			return view, planErr
 		}
+		m.mu.Lock()
+		firmware := m.firmware
+		m.mu.Unlock()
+		if err := validateReviewedPlanFirmware(plan, firmware); err != nil {
+			return view, err
+		}
 		return m.opts.MenuDebug.InstallPlan(token, view.Revision, plan)
 	default:
 		return view, errors.New("current display is not a recognized home or setup screen")
@@ -925,15 +931,29 @@ func (m *menuDebugAPI) currentReport() menudebug.Report {
 		capability.OriginalValue = redactReportText(capability.OriginalValue)
 		capability.CandidateValue = redactReportText(capability.CandidateValue)
 		for evidenceIndex := range capability.Evidence {
-			evidence := &capability.Evidence[evidenceIndex]
-			evidence.Selection = redactReportText(evidence.Selection)
-			evidence.Value = redactReportText(evidence.Value)
-			for row := range evidence.Rows {
-				evidence.Rows[row] = redactReportText(evidence.Rows[row])
-			}
+			sanitizeMenuDebugEvidence(&capability.Evidence[evidenceIndex])
 		}
 	}
 	return report
+}
+
+func sanitizeMenuDebugEvidence(evidence *menudebug.Evidence) {
+	if evidence == nil {
+		return
+	}
+	evidence.Selection = redactReportText(evidence.Selection)
+	evidence.Value = redactReportText(evidence.Value)
+	rawSafe := true
+	for row := range evidence.Rows {
+		redacted := redactReportText(evidence.Rows[row])
+		if redacted != evidence.Rows[row] {
+			rawSafe = false
+		}
+		evidence.Rows[row] = redacted
+	}
+	if !rawSafe {
+		evidence.RawState = nil
+	}
 }
 
 func (m *menuDebugAPI) authorizedReport(w http.ResponseWriter, r *http.Request) (menudebug.Report, bool) {
@@ -1014,12 +1034,13 @@ func menuDebugEvidence(runtime menudebug.RuntimeSnapshot, capability menudebug.C
 	if runtime.Screen.ActiveValue != "" {
 		value = runtime.Screen.ActiveValue
 	}
-	return menudebug.Evidence{Generation: runtime.DisplayGeneration, Fingerprint: runtime.Screen.Fingerprint, Kind: runtime.Screen.Kind, Rows: rows, Selection: runtime.Screen.SelectedText, Candidate: candidate, Value: value, SaveVisible: runtime.Screen.SaveVisible, StandbyHome: standbyHome, ObservedAt: runtime.DisplayObservedAt, SetupTopology: runtime.Screen.SetupTopology}
+	return menudebug.Evidence{Generation: runtime.DisplayGeneration, Fingerprint: runtime.Screen.Fingerprint, Kind: runtime.Screen.Kind, Rows: rows, Selection: runtime.Screen.SelectedText, Candidate: candidate, Value: value, SaveVisible: runtime.Screen.SaveVisible, StandbyHome: standbyHome, ObservedAt: runtime.DisplayObservedAt, SetupTopology: runtime.Screen.SetupTopology, RawState: &menudebug.RawState{Chars: runtime.DisplayState.Chars, Attrs: runtime.DisplayState.Attrs}}
 }
 
 type reviewedFanProfile struct {
 	ID                    string
 	Model                 string
+	Firmware              string
 	SetupTopology         string
 	RestoreSetupWaypoints []string
 }
@@ -1037,22 +1058,51 @@ var reviewedFanProfiles = []reviewedFanProfile{
 		SetupTopology:         menudebug.SetupTopologySecondSeries,
 		RestoreSetupWaypoints: []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP", "~START", "TEMP/FANS"},
 	},
+	{
+		ID:            "expert-2k-fa-third-series-fan-normal-quiet-v1",
+		Model:         "EXPERT 2K-FA",
+		Firmware:      "Rel.26_03_24_A",
+		SetupTopology: menudebug.SetupTopologyThirdSeries2K,
+		RestoreSetupWaypoints: []string{
+			"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP", "~START", "~TEMP.", "ALARMS LOG", "TUN ANT", "RX ANT", "FAN NOISE",
+		},
+	},
 }
 
 func reviewedFanProfileFor(runtime menudebug.RuntimeSnapshot) (reviewedFanProfile, bool) {
 	if runtime.Screen.Kind != menudebug.ScreenFan {
 		return reviewedFanProfile{}, false
 	}
-	if _, _, exactLayout := fanpolicy.NormalContestFanScreen(runtime.DisplayState); !exactLayout {
-		return reviewedFanProfile{}, false
-	}
 	model := strings.TrimSpace(runtime.Status.ModelName)
 	for _, profile := range reviewedFanProfiles {
-		if strings.EqualFold(model, profile.Model) {
+		if !strings.EqualFold(model, profile.Model) {
+			continue
+		}
+		if profile.SetupTopology == menudebug.SetupTopologyThirdSeries2K {
+			if thirdSeriesFanLayout(runtime.DisplayState) {
+				return profile, true
+			}
+			return reviewedFanProfile{}, false
+		}
+		if _, _, exactLayout := fanpolicy.NormalContestFanScreen(runtime.DisplayState); exactLayout {
 			return profile, true
 		}
 	}
 	return reviewedFanProfile{}, false
+}
+
+func thirdSeriesFanLayout(state display.State) bool {
+	screen := menudebug.Analyze(state)
+	if screen.Kind != menudebug.ScreenFan || !screen.SaveVisible || len(screen.Values) != 2 || screen.Values[0] != "normal" || screen.Values[1] != "quiet" {
+		return false
+	}
+	normalized := func(row int) string { return strings.Join(strings.Fields(screen.Rows[row]), " ") }
+	if normalized(0) != "POWER-SUPPLY FAN" || normalized(2) != "[ ] QUIET MODE (SSB ONLY)" || normalized(3) != "[ ] NORMAL MODE (ALL MODES) SAVE" || normalized(7) != "[ ][ ]:SELECT [SET]:CONFIRM" {
+		return false
+	}
+	quietMarker := state.Chars[2][4] == 0xae
+	normalMarker := state.Chars[3][4] == 0xae
+	return quietMarker != normalMarker && ((quietMarker && screen.ActiveValue == "quiet") || (normalMarker && screen.ActiveValue == "normal"))
 }
 
 func setupWaypointStep(action menudebug.Action, waypoint string) menudebug.Step {
@@ -1082,6 +1132,9 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 	if capability != menudebug.CapabilityFan || !profileOK {
 		return menudebug.Plan{}, errors.New("topology captured, but this model/capability has no reviewed action profile; no value-changing or SAVE command is authorized")
 	}
+	if profile.SetupTopology == menudebug.SetupTopologyThirdSeries2K {
+		return reviewedThirdSeriesFanPlan(runtime, sessionGeneration, profile)
+	}
 	selected, exactPolicy, exactLayout := fanpolicy.NormalContestFanScreen(runtime.DisplayState)
 	if !exactLayout || selected != "FAN MANAGEMENT" {
 		return menudebug.Plan{}, errors.New("topology captured, but this model/capability has no reviewed action profile; exact reviewed fan layout did not match")
@@ -1104,7 +1157,9 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 		if index == 0 {
 			action = menudebug.ActionSet
 		}
-		restore = append(restore, setupWaypointStep(action, waypoint))
+		step := setupWaypointStep(action, waypoint)
+		step.ExpectedSetupTopology = profile.SetupTopology
+		restore = append(restore, step)
 	}
 	restore = append(restore,
 		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeEnterCandidate, ExpectedKind: fan, ExpectedCapability: capability, ExpectedValue: candidate, ExpectedSelection: "TEMPERATURE SCALE"},
@@ -1116,11 +1171,64 @@ func reviewedMenuDebugPlan(runtime menudebug.RuntimeSnapshot, capability menudeb
 	return menudebug.Plan{Profile: profile.ID, ExpectedModel: profile.Model, ExpectedSerialSessionGeneration: sessionGeneration, Capability: capability, OriginalValue: original, CandidateValue: candidate, DiscoverySetupWaypoints: append([]string(nil), profile.RestoreSetupWaypoints...), DiscoverySetupTopology: profile.SetupTopology, Apply: apply, Restore: restore}, nil
 }
 
+func reviewedThirdSeriesFanPlan(runtime menudebug.RuntimeSnapshot, sessionGeneration uint64, profile reviewedFanProfile) (menudebug.Plan, error) {
+	screen := runtime.Screen
+	if !thirdSeriesFanLayout(runtime.DisplayState) || screen.ActiveValue != "normal" || screen.SelectedValue != "normal" || !strings.Contains(strings.ToUpper(screen.SelectedText), "NORMAL MODE") {
+		return menudebug.Plan{}, errors.New("the reviewed Third Series test requires the exact NORMAL-active, NORMAL-selected POWER-SUPPLY FAN fixture")
+	}
+	capability := menudebug.CapabilityFan
+	apply := []menudebug.Step{
+		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, FromFingerprint: screen.Fingerprint, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "normal", ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
+		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "normal", ExpectedSelectionContains: "QUIET MODE", ExpectedSaveVisible: true},
+		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeChangeValue, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "quiet", ExpectedSelectionContains: "QUIET MODE", ExpectedSaveVisible: true},
+		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "quiet", ExpectedSelectionContains: "NORMAL MODE", ExpectedSaveVisible: true},
+		{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "quiet", ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
+		{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: menudebug.ScreenHome, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
+	}
+	restore := make([]menudebug.Step, 0, len(profile.RestoreSetupWaypoints)+5)
+	for index, waypoint := range profile.RestoreSetupWaypoints {
+		action := menudebug.ActionRight
+		if index == 0 {
+			action = menudebug.ActionSet
+		}
+		step := setupWaypointStep(action, waypoint)
+		step.ExpectedSetupTopology = profile.SetupTopology
+		restore = append(restore, step)
+	}
+	restore = append(restore,
+		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeEnterCandidate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "quiet", ExpectedSelectionContains: "QUIET MODE", ExpectedSaveVisible: true},
+		menudebug.Step{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "quiet", ExpectedSelectionContains: "NORMAL MODE", ExpectedSaveVisible: true},
+		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeChangeValue, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "normal", ExpectedSelectionContains: "NORMAL MODE", ExpectedSaveVisible: true},
+		menudebug.Step{Action: menudebug.ActionRight, Purpose: menudebug.PurposeEnumerate, ExpectedKind: menudebug.ScreenFan, ExpectedCapability: capability, ExpectedValue: "normal", ExpectedSelection: "SAVE", ExpectedSaveVisible: true},
+		menudebug.Step{Action: menudebug.ActionSet, Purpose: menudebug.PurposeSave, ExpectedKind: menudebug.ScreenHome, ExpectedStandbyHome: true, AllowStoringBeforeHome: true},
+	)
+	return menudebug.Plan{
+		Profile:                         profile.ID,
+		ExpectedModel:                   profile.Model,
+		ExpectedFirmware:                profile.Firmware,
+		ExpectedSerialSessionGeneration: sessionGeneration,
+		Capability:                      capability,
+		OriginalValue:                   "normal",
+		CandidateValue:                  "quiet",
+		DiscoverySetupWaypoints:         append([]string(nil), profile.RestoreSetupWaypoints...),
+		DiscoverySetupTopology:          profile.SetupTopology,
+		Apply:                           apply,
+		Restore:                         restore,
+	}, nil
+}
+
 func reviewedSerialSessionGeneration(runtime menudebug.RuntimeSnapshot) (uint64, error) {
 	if runtime.SerialSessionGeneration == 0 || runtime.StatusSerialSessionGeneration != runtime.SerialSessionGeneration || runtime.DisplaySerialSessionGeneration != runtime.SerialSessionGeneration {
 		return 0, errors.New("fresh protocol status and display evidence from the active serial session are required before installing a reviewed plan")
 	}
 	return runtime.SerialSessionGeneration, nil
+}
+
+func validateReviewedPlanFirmware(plan menudebug.Plan, firmware string) error {
+	if plan.ExpectedFirmware == "" || strings.EqualFold(strings.TrimSpace(firmware), plan.ExpectedFirmware) {
+		return nil
+	}
+	return fmt.Errorf("reviewed Third Series test requires firmware %s; armed session reported %s", plan.ExpectedFirmware, strings.TrimSpace(firmware))
 }
 
 func reviewedFirstSeriesBankPlan(runtime menudebug.RuntimeSnapshot, sessionGeneration uint64) (menudebug.Plan, error) {

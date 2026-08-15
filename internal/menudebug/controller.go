@@ -245,6 +245,7 @@ func (c *Controller) observeDisplay(state display.State, generation uint64, chec
 		StandbyHome:   checksumValid && screen.Kind == ScreenHome && boolMatches(tx, false) && boolMatches(operate, false),
 		ObservedAt:    c.now(),
 		SetupTopology: screen.SetupTopology,
+		RawState:      &RawState{Chars: state.Chars, Attrs: state.Attrs},
 	}
 	if screen.Capability == "fan,bank" {
 		evidence.Candidate = ""
@@ -715,6 +716,9 @@ func (c *Controller) InstallPlan(token string, revision uint64, plan Plan) (Sess
 	if plan.Profile == "expert-1.3k-fa-first-series-bank-ab-v1" && c.session.actionBudget < 36 {
 		c.session.actionBudget = 36
 	}
+	if plan.Profile == "expert-2k-fa-third-series-fan-normal-quiet-v1" && c.session.actionBudget < 48 {
+		c.session.actionBudget = 48
+	}
 	c.session.phase = PhasePlanReady
 	c.session.stepIndex = 0
 	c.session.pending = nil
@@ -751,14 +755,19 @@ func validatePlan(p Plan) error {
 	type reviewedProfile struct {
 		capability Capability
 		model      string
+		firmware   string
 	}
 	profile := map[string]reviewedProfile{
-		"expert-1.3k-fa-first-series-fan-v1":     {CapabilityFan, "EXPERT 1.3K-FA"},
-		"expert-1.5k-fa-second-series-fan-v1":    {CapabilityFan, "EXPERT 1.5K-FA"},
-		"expert-1.3k-fa-first-series-bank-ab-v1": {CapabilityBank, "EXPERT 1.3K-FA"},
+		"expert-1.3k-fa-first-series-fan-v1":            {capability: CapabilityFan, model: "EXPERT 1.3K-FA"},
+		"expert-1.5k-fa-second-series-fan-v1":           {capability: CapabilityFan, model: "EXPERT 1.5K-FA"},
+		"expert-2k-fa-third-series-fan-normal-quiet-v1": {capability: CapabilityFan, model: "EXPERT 2K-FA", firmware: "Rel.26_03_24_A"},
+		"expert-1.3k-fa-first-series-bank-ab-v1":        {capability: CapabilityBank, model: "EXPERT 1.3K-FA"},
 	}[p.Profile]
 	if profile.capability == "" || profile.capability != p.Capability || !modelMatches(profile.model, p.ExpectedModel) || p.ExpectedSerialSessionGeneration == 0 {
 		return errors.New("plan does not use a reviewed server profile")
+	}
+	if profile.firmware != "" && !strings.EqualFold(profile.firmware, strings.TrimSpace(p.ExpectedFirmware)) {
+		return errors.New("plan does not use the exact reviewed firmware profile")
 	}
 	if strings.TrimSpace(p.OriginalValue) == "" || strings.TrimSpace(p.CandidateValue) == "" || p.OriginalValue == p.CandidateValue {
 		return errors.New("plan must preserve distinct original and candidate values")
@@ -1312,6 +1321,9 @@ func matchesStepExpectation(step Step, evidence Evidence) error {
 	}
 	if step.ExpectedSelectionContains != "" && !strings.Contains(strings.ToUpper(evidence.Selection), strings.ToUpper(step.ExpectedSelectionContains)) {
 		return errors.New("observed selection is outside the reviewed plan")
+	}
+	if step.ExpectedSetupTopology != "" && evidence.SetupTopology != step.ExpectedSetupTopology {
+		return errors.New("observed setup topology does not match the reviewed plan")
 	}
 	if step.ExpectedSaveVisible && !evidence.SaveVisible {
 		return errors.New("expected SAVE evidence was not visible")
