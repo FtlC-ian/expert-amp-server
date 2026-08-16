@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
@@ -751,10 +752,34 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 	return true
 }
 
-// LCD menu labels use field padding for alignment. Treat runs of whitespace as
-// presentation only while retaining an exact, case-insensitive token match.
+// LCD menu labels use ASCII-space padding for alignment. Treat runs of spaces
+// as presentation only while retaining an exact, case-insensitive token match.
+// Reject other separators and controls so separate highlighted LCD regions
+// cannot be collapsed into one apparently valid selection.
 func menuSelectionEqual(actual, expected string) bool {
-	return strings.EqualFold(strings.Join(strings.Fields(actual), " "), strings.Join(strings.Fields(expected), " "))
+	actual, actualOK := normalizeMenuSelection(actual)
+	expected, expectedOK := normalizeMenuSelection(expected)
+	return actualOK && expectedOK && strings.EqualFold(actual, expected)
+}
+
+func normalizeMenuSelection(value string) (string, bool) {
+	var normalized strings.Builder
+	spacePending := false
+	for _, char := range value {
+		switch {
+		case char == ' ':
+			spacePending = normalized.Len() != 0
+		case unicode.IsControl(char) || unicode.Is(unicode.Z, char):
+			return "", false
+		default:
+			if spacePending {
+				normalized.WriteByte(' ')
+				spacePending = false
+			}
+			normalized.WriteRune(char)
+		}
+	}
+	return normalized.String(), true
 }
 
 func validatePlan(p Plan) error {

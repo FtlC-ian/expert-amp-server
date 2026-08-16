@@ -1068,6 +1068,14 @@ func TestStepExpectationAcceptsLCDFieldPaddingOnly(t *testing.T) {
 	if err := matchesStepExpectation(step, evidence); err == nil {
 		t.Fatal("cross-family waypoint was accepted after whitespace normalization")
 	}
+
+	evidence.SetupTopology = SetupTopologyThirdSeries2K
+	for _, selection := range []string{"RX\nANT", "RX\rANT", "RX\tANT", "RX\u00a0ANT"} {
+		evidence.Selection = selection
+		if err := matchesStepExpectation(step, evidence); err == nil {
+			t.Fatalf("separate or non-ASCII-padded selection %q was accepted", selection)
+		}
+	}
 }
 
 func TestReviewedThirdSeriesDiscoveryWaypointsMatchSanitizedReport(t *testing.T) {
@@ -1089,6 +1097,11 @@ func TestReviewedThirdSeriesDiscoveryWaypointsMatchSanitizedReport(t *testing.T)
 		t.Fatal("sanitized Third Series report waypoints did not match the reviewed topology")
 	}
 
+	evidence[11].Selection = "RX\nANT"
+	if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+		t.Fatal("multiple highlighted LCD runs were collapsed into one waypoint")
+	}
+	evidence[11].Selection = "RX  ANT"
 	evidence[11].SetupTopology = SetupTopologySecondSeries
 	if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
 		t.Fatal("cross-family waypoint in sanitized report sequence was accepted")
