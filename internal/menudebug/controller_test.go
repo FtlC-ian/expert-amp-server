@@ -1033,20 +1033,122 @@ func TestReviewedPlanDiscoveryTopologyMustMatchExactly(t *testing.T) {
 		{Kind: ScreenSetup, Selection: "CONFIG"},
 		{Kind: ScreenSetup, Selection: "ANTENNA"},
 		{Kind: ScreenSetup, Selection: "BEEP    Off"},
+		{Kind: ScreenSetup, Selection: "RX  ANT"},
 		{Kind: ScreenFan, Selection: "FAN MANAGEMENT"},
 	}
-	expected := []string{"CONFIG", "ANTENNA", "~BEEP"}
+	expected := []string{"CONFIG", "ANTENNA", "~BEEP", "RX ANT"}
 	if !matchesDiscoverySetupWaypoints(evidence, "", expected) {
-		t.Fatal("captured setup topology did not match")
+		t.Fatal("captured setup topology with LCD field padding did not match")
 	}
 	for _, nearMatch := range [][]string{
-		{"ANTENNA", "CONFIG", "~BEEP"},
-		{"CONFIG", "ANTENNA"},
-		{"CONFIG", "ANTENNA", "~START"},
+		{"ANTENNA", "CONFIG", "~BEEP", "RX ANT"},
+		{"CONFIG", "ANTENNA", "~BEEP"},
+		{"CONFIG", "ANTENNA", "~START", "RX ANT"},
+		{"CONFIG", "ANTENNA", "~BEEP", "RX AT"},
 	} {
 		if matchesDiscoverySetupWaypoints(evidence, "", nearMatch) {
 			t.Fatalf("near-match topology was accepted: %v", nearMatch)
 		}
+	}
+}
+
+func TestStepExpectationAcceptsLCDFieldPaddingOnly(t *testing.T) {
+	step := Step{ExpectedKind: ScreenSetup, ExpectedSelection: "RX ANT", ExpectedSetupTopology: SetupTopologyThirdSeries2K}
+	evidence := Evidence{Kind: ScreenSetup, Selection: "RX  ANT", SetupTopology: SetupTopologyThirdSeries2K}
+	if err := matchesStepExpectation(step, evidence); err != nil {
+		t.Fatalf("field-padded Third Series waypoint rejected: %v", err)
+	}
+
+	evidence.Selection = "RX AT"
+	if err := matchesStepExpectation(step, evidence); err == nil {
+		t.Fatal("different menu label was accepted after whitespace normalization")
+	}
+	evidence.Selection = "RX  ANT"
+	evidence.SetupTopology = SetupTopologySecondSeries
+	if err := matchesStepExpectation(step, evidence); err == nil {
+		t.Fatal("cross-family waypoint was accepted after whitespace normalization")
+	}
+
+	evidence.SetupTopology = SetupTopologyThirdSeries2K
+	for _, selection := range []string{"RX\nANT", "RX\rANT", "RX\tANT", "RX\u00a0ANT", "\nRX  ANT", "RX  ANT\n", "\u00a0RX  ANT", "RX  ANT\u00a0"} {
+		evidence.Selection = selection
+		if err := matchesStepExpectation(step, evidence); err == nil {
+			t.Fatalf("separate or non-ASCII-padded selection %q was accepted", selection)
+		}
+	}
+}
+
+func TestStepExpectationContainsSanitizesDynamicSelection(t *testing.T) {
+	step := Step{ExpectedKind: ScreenSetup, ExpectedSelectionContains: "BEEP", ExpectedSetupTopology: SetupTopologyThirdSeries2K}
+	evidence := Evidence{Kind: ScreenSetup, Selection: "BEEP    On", SetupTopology: SetupTopologyThirdSeries2K}
+	if err := matchesStepExpectation(step, evidence); err != nil {
+		t.Fatalf("ASCII-padded dynamic suffix rejected: %v", err)
+	}
+
+	for _, selection := range []string{
+		"BEEP\nOn", "BEEP\rOn", "BEEP\tOn", "BEEP\u00a0On",
+		"\nBEEP    On", "BEEP    On\n", "\rBEEP    On", "BEEP    On\r",
+		"\tBEEP    On", "BEEP    On\t", "\u00a0BEEP    On", "BEEP    On\u00a0",
+	} {
+		evidence.Selection = selection
+		if err := matchesStepExpectation(step, evidence); err == nil {
+			t.Fatalf("invalid dynamic step selection %q was accepted", selection)
+		}
+	}
+}
+
+func TestReviewedThirdSeriesDiscoveryWaypointsMatchSanitizedReport(t *testing.T) {
+	selections := []string{
+		"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP    On",
+		"START   Oprt", "TEMP.    F", "ALARMS LOG", "TUN ANT", "RX  ANT", "FAN NOISE",
+	}
+	evidence := make([]Evidence, 0, len(selections)+2)
+	evidence = append(evidence, Evidence{Kind: ScreenHome})
+	for _, selection := range selections {
+		evidence = append(evidence, Evidence{Kind: ScreenSetup, Selection: selection, SetupTopology: SetupTopologyThirdSeries2K})
+	}
+	evidence = append(evidence, Evidence{Kind: ScreenFan, Selection: "[ ] NORMAL MODE (ALL MODES)"})
+	expected := []string{
+		"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP",
+		"~START", "~TEMP.", "ALARMS LOG", "TUN ANT", "RX ANT", "FAN NOISE",
+	}
+	if !matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+		t.Fatal("sanitized Third Series report waypoints did not match the reviewed topology")
+	}
+
+	for _, selection := range []string{"RX\nANT", "\nRX  ANT", "RX  ANT\n", "\u00a0RX  ANT", "RX  ANT\u00a0"} {
+		evidence[11].Selection = selection
+		if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+			t.Fatalf("invalid exact waypoint selection %q was accepted", selection)
+		}
+	}
+	evidence[11].Selection = "RX  ANT"
+	for _, invalid := range []struct {
+		index     int
+		selection string
+	}{
+		{index: 6, selection: "BEEP\nOn"},
+		{index: 6, selection: "\nBEEP    On"},
+		{index: 6, selection: "BEEP    On\n"},
+		{index: 6, selection: "\u00a0BEEP    On"},
+		{index: 6, selection: "BEEP    On\u00a0"},
+		{index: 7, selection: "START\u00a0Oprt"},
+		{index: 8, selection: "TEMP.\tF"},
+	} {
+		original := evidence[invalid.index].Selection
+		evidence[invalid.index].Selection = invalid.selection
+		if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+			t.Fatalf("invalid dynamic waypoint selection %q was accepted", invalid.selection)
+		}
+		evidence[invalid.index].Selection = original
+	}
+	if !matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+		t.Fatal("ASCII-padded dynamic waypoint suffixes were rejected")
+	}
+
+	evidence[11].SetupTopology = SetupTopologySecondSeries
+	if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+		t.Fatal("cross-family waypoint in sanitized report sequence was accepted")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
@@ -733,7 +734,7 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 			if expectedTopology != "" && item.SetupTopology != expectedTopology {
 				return false
 			}
-			actual = append(actual, strings.TrimSpace(item.Selection))
+			actual = append(actual, item.Selection)
 		}
 	}
 	if len(actual) != len(expected) {
@@ -741,14 +742,50 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 	}
 	for index, want := range expected {
 		if strings.HasPrefix(want, "~") {
-			if !strings.Contains(strings.ToUpper(actual[index]), strings.ToUpper(strings.TrimPrefix(want, "~"))) {
+			if !menuSelectionContains(actual[index], strings.TrimPrefix(want, "~")) {
 				return false
 			}
-		} else if !strings.EqualFold(actual[index], want) {
+		} else if !menuSelectionEqual(actual[index], want) {
 			return false
 		}
 	}
 	return true
+}
+
+// LCD menu labels use ASCII-space padding for alignment. Treat runs of spaces
+// as presentation only while retaining an exact, case-insensitive token match.
+// Reject other separators and controls so separate highlighted LCD regions
+// cannot be collapsed into one apparently valid selection.
+func menuSelectionEqual(actual, expected string) bool {
+	actual, actualOK := normalizeMenuSelection(actual)
+	expected, expectedOK := normalizeMenuSelection(expected)
+	return actualOK && expectedOK && strings.EqualFold(actual, expected)
+}
+
+func menuSelectionContains(actual, expected string) bool {
+	actual, actualOK := normalizeMenuSelection(actual)
+	expected, expectedOK := normalizeMenuSelection(expected)
+	return actualOK && expectedOK && strings.Contains(strings.ToUpper(actual), strings.ToUpper(expected))
+}
+
+func normalizeMenuSelection(value string) (string, bool) {
+	var normalized strings.Builder
+	spacePending := false
+	for _, char := range value {
+		switch {
+		case char == ' ':
+			spacePending = normalized.Len() != 0
+		case unicode.IsControl(char) || unicode.Is(unicode.Z, char):
+			return "", false
+		default:
+			if spacePending {
+				normalized.WriteByte(' ')
+				spacePending = false
+			}
+			normalized.WriteRune(char)
+		}
+	}
+	return normalized.String(), true
 }
 
 func validatePlan(p Plan) error {
@@ -883,7 +920,7 @@ func (c *Controller) AuthorizeNext(token string, revision uint64, evidence Evide
 	if !semanticRestoreEntry && step.FromFingerprint != "" && evidence.Fingerprint != step.FromFingerprint {
 		return ActionAuthorization{}, c.failLocked("current display does not match the frozen plan")
 	}
-	if step.Purpose == PurposeSave && (!evidence.SaveVisible || !strings.Contains(strings.ToUpper(evidence.Selection), "SAVE")) {
+	if step.Purpose == PurposeSave && (!evidence.SaveVisible || !menuSelectionEqual(evidence.Selection, "SAVE")) {
 		return ActionAuthorization{}, c.failLocked("SAVE is allowed only from classified selected SAVE evidence")
 	}
 	if step.Purpose == PurposeChangeValue {
@@ -1316,10 +1353,10 @@ func matchesStepExpectation(step Step, evidence Evidence) error {
 	if step.ExpectedValue != "" && !strings.EqualFold(evidence.Value, step.ExpectedValue) {
 		return errors.New("observed value does not match the reviewed plan")
 	}
-	if step.ExpectedSelection != "" && !strings.EqualFold(strings.TrimSpace(evidence.Selection), step.ExpectedSelection) {
+	if step.ExpectedSelection != "" && !menuSelectionEqual(evidence.Selection, step.ExpectedSelection) {
 		return errors.New("observed selection does not match the reviewed plan")
 	}
-	if step.ExpectedSelectionContains != "" && !strings.Contains(strings.ToUpper(evidence.Selection), strings.ToUpper(step.ExpectedSelectionContains)) {
+	if step.ExpectedSelectionContains != "" && !menuSelectionContains(evidence.Selection, step.ExpectedSelectionContains) {
 		return errors.New("observed selection is outside the reviewed plan")
 	}
 	if step.ExpectedSetupTopology != "" && evidence.SetupTopology != step.ExpectedSetupTopology {
