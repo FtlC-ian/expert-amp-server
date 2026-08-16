@@ -1033,20 +1033,65 @@ func TestReviewedPlanDiscoveryTopologyMustMatchExactly(t *testing.T) {
 		{Kind: ScreenSetup, Selection: "CONFIG"},
 		{Kind: ScreenSetup, Selection: "ANTENNA"},
 		{Kind: ScreenSetup, Selection: "BEEP    Off"},
+		{Kind: ScreenSetup, Selection: "RX  ANT"},
 		{Kind: ScreenFan, Selection: "FAN MANAGEMENT"},
 	}
-	expected := []string{"CONFIG", "ANTENNA", "~BEEP"}
+	expected := []string{"CONFIG", "ANTENNA", "~BEEP", "RX ANT"}
 	if !matchesDiscoverySetupWaypoints(evidence, "", expected) {
-		t.Fatal("captured setup topology did not match")
+		t.Fatal("captured setup topology with LCD field padding did not match")
 	}
 	for _, nearMatch := range [][]string{
-		{"ANTENNA", "CONFIG", "~BEEP"},
-		{"CONFIG", "ANTENNA"},
-		{"CONFIG", "ANTENNA", "~START"},
+		{"ANTENNA", "CONFIG", "~BEEP", "RX ANT"},
+		{"CONFIG", "ANTENNA", "~BEEP"},
+		{"CONFIG", "ANTENNA", "~START", "RX ANT"},
+		{"CONFIG", "ANTENNA", "~BEEP", "RX AT"},
 	} {
 		if matchesDiscoverySetupWaypoints(evidence, "", nearMatch) {
 			t.Fatalf("near-match topology was accepted: %v", nearMatch)
 		}
+	}
+}
+
+func TestStepExpectationAcceptsLCDFieldPaddingOnly(t *testing.T) {
+	step := Step{ExpectedKind: ScreenSetup, ExpectedSelection: "RX ANT", ExpectedSetupTopology: SetupTopologyThirdSeries2K}
+	evidence := Evidence{Kind: ScreenSetup, Selection: "RX  ANT", SetupTopology: SetupTopologyThirdSeries2K}
+	if err := matchesStepExpectation(step, evidence); err != nil {
+		t.Fatalf("field-padded Third Series waypoint rejected: %v", err)
+	}
+
+	evidence.Selection = "RX AT"
+	if err := matchesStepExpectation(step, evidence); err == nil {
+		t.Fatal("different menu label was accepted after whitespace normalization")
+	}
+	evidence.Selection = "RX  ANT"
+	evidence.SetupTopology = SetupTopologySecondSeries
+	if err := matchesStepExpectation(step, evidence); err == nil {
+		t.Fatal("cross-family waypoint was accepted after whitespace normalization")
+	}
+}
+
+func TestReviewedThirdSeriesDiscoveryWaypointsMatchSanitizedReport(t *testing.T) {
+	selections := []string{
+		"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP    On",
+		"START   Oprt", "TEMP.    F", "ALARMS LOG", "TUN ANT", "RX  ANT", "FAN NOISE",
+	}
+	evidence := make([]Evidence, 0, len(selections)+2)
+	evidence = append(evidence, Evidence{Kind: ScreenHome})
+	for _, selection := range selections {
+		evidence = append(evidence, Evidence{Kind: ScreenSetup, Selection: selection, SetupTopology: SetupTopologyThirdSeries2K})
+	}
+	evidence = append(evidence, Evidence{Kind: ScreenFan, Selection: "[ ] NORMAL MODE (ALL MODES)"})
+	expected := []string{
+		"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "~BEEP",
+		"~START", "~TEMP.", "ALARMS LOG", "TUN ANT", "RX ANT", "FAN NOISE",
+	}
+	if !matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+		t.Fatal("sanitized Third Series report waypoints did not match the reviewed topology")
+	}
+
+	evidence[11].SetupTopology = SetupTopologySecondSeries
+	if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+		t.Fatal("cross-family waypoint in sanitized report sequence was accepted")
 	}
 }
 

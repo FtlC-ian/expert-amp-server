@@ -744,11 +744,17 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 			if !strings.Contains(strings.ToUpper(actual[index]), strings.ToUpper(strings.TrimPrefix(want, "~"))) {
 				return false
 			}
-		} else if !strings.EqualFold(actual[index], want) {
+		} else if !menuSelectionEqual(actual[index], want) {
 			return false
 		}
 	}
 	return true
+}
+
+// LCD menu labels use field padding for alignment. Treat runs of whitespace as
+// presentation only while retaining an exact, case-insensitive token match.
+func menuSelectionEqual(actual, expected string) bool {
+	return strings.EqualFold(strings.Join(strings.Fields(actual), " "), strings.Join(strings.Fields(expected), " "))
 }
 
 func validatePlan(p Plan) error {
@@ -1316,7 +1322,7 @@ func matchesStepExpectation(step Step, evidence Evidence) error {
 	if step.ExpectedValue != "" && !strings.EqualFold(evidence.Value, step.ExpectedValue) {
 		return errors.New("observed value does not match the reviewed plan")
 	}
-	if step.ExpectedSelection != "" && !strings.EqualFold(strings.TrimSpace(evidence.Selection), step.ExpectedSelection) {
+	if step.ExpectedSelection != "" && !menuSelectionEqual(evidence.Selection, step.ExpectedSelection) {
 		return errors.New("observed selection does not match the reviewed plan")
 	}
 	if step.ExpectedSelectionContains != "" && !strings.Contains(strings.ToUpper(evidence.Selection), strings.ToUpper(step.ExpectedSelectionContains)) {
