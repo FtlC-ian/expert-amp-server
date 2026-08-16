@@ -1078,6 +1078,25 @@ func TestStepExpectationAcceptsLCDFieldPaddingOnly(t *testing.T) {
 	}
 }
 
+func TestStepExpectationContainsSanitizesDynamicSelection(t *testing.T) {
+	step := Step{ExpectedKind: ScreenSetup, ExpectedSelectionContains: "BEEP", ExpectedSetupTopology: SetupTopologyThirdSeries2K}
+	evidence := Evidence{Kind: ScreenSetup, Selection: "BEEP    On", SetupTopology: SetupTopologyThirdSeries2K}
+	if err := matchesStepExpectation(step, evidence); err != nil {
+		t.Fatalf("ASCII-padded dynamic suffix rejected: %v", err)
+	}
+
+	for _, selection := range []string{
+		"BEEP\nOn", "BEEP\rOn", "BEEP\tOn", "BEEP\u00a0On",
+		"\nBEEP    On", "BEEP    On\n", "\rBEEP    On", "BEEP    On\r",
+		"\tBEEP    On", "BEEP    On\t", "\u00a0BEEP    On", "BEEP    On\u00a0",
+	} {
+		evidence.Selection = selection
+		if err := matchesStepExpectation(step, evidence); err == nil {
+			t.Fatalf("invalid dynamic step selection %q was accepted", selection)
+		}
+	}
+}
+
 func TestReviewedThirdSeriesDiscoveryWaypointsMatchSanitizedReport(t *testing.T) {
 	selections := []string{
 		"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP    On",

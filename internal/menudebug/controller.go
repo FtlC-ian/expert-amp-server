@@ -920,7 +920,7 @@ func (c *Controller) AuthorizeNext(token string, revision uint64, evidence Evide
 	if !semanticRestoreEntry && step.FromFingerprint != "" && evidence.Fingerprint != step.FromFingerprint {
 		return ActionAuthorization{}, c.failLocked("current display does not match the frozen plan")
 	}
-	if step.Purpose == PurposeSave && (!evidence.SaveVisible || !strings.Contains(strings.ToUpper(evidence.Selection), "SAVE")) {
+	if step.Purpose == PurposeSave && (!evidence.SaveVisible || !menuSelectionEqual(evidence.Selection, "SAVE")) {
 		return ActionAuthorization{}, c.failLocked("SAVE is allowed only from classified selected SAVE evidence")
 	}
 	if step.Purpose == PurposeChangeValue {
@@ -1356,7 +1356,7 @@ func matchesStepExpectation(step Step, evidence Evidence) error {
 	if step.ExpectedSelection != "" && !menuSelectionEqual(evidence.Selection, step.ExpectedSelection) {
 		return errors.New("observed selection does not match the reviewed plan")
 	}
-	if step.ExpectedSelectionContains != "" && !strings.Contains(strings.ToUpper(evidence.Selection), strings.ToUpper(step.ExpectedSelectionContains)) {
+	if step.ExpectedSelectionContains != "" && !menuSelectionContains(evidence.Selection, step.ExpectedSelectionContains) {
 		return errors.New("observed selection is outside the reviewed plan")
 	}
 	if step.ExpectedSetupTopology != "" && evidence.SetupTopology != step.ExpectedSetupTopology {
