@@ -1070,7 +1070,7 @@ func TestStepExpectationAcceptsLCDFieldPaddingOnly(t *testing.T) {
 	}
 
 	evidence.SetupTopology = SetupTopologyThirdSeries2K
-	for _, selection := range []string{"RX\nANT", "RX\rANT", "RX\tANT", "RX\u00a0ANT"} {
+	for _, selection := range []string{"RX\nANT", "RX\rANT", "RX\tANT", "RX\u00a0ANT", "\nRX  ANT", "RX  ANT\n", "\u00a0RX  ANT", "RX  ANT\u00a0"} {
 		evidence.Selection = selection
 		if err := matchesStepExpectation(step, evidence); err == nil {
 			t.Fatalf("separate or non-ASCII-padded selection %q was accepted", selection)
@@ -1097,11 +1097,36 @@ func TestReviewedThirdSeriesDiscoveryWaypointsMatchSanitizedReport(t *testing.T)
 		t.Fatal("sanitized Third Series report waypoints did not match the reviewed topology")
 	}
 
-	evidence[11].Selection = "RX\nANT"
-	if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
-		t.Fatal("multiple highlighted LCD runs were collapsed into one waypoint")
+	for _, selection := range []string{"RX\nANT", "\nRX  ANT", "RX  ANT\n", "\u00a0RX  ANT", "RX  ANT\u00a0"} {
+		evidence[11].Selection = selection
+		if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+			t.Fatalf("invalid exact waypoint selection %q was accepted", selection)
+		}
 	}
 	evidence[11].Selection = "RX  ANT"
+	for _, invalid := range []struct {
+		index     int
+		selection string
+	}{
+		{index: 6, selection: "BEEP\nOn"},
+		{index: 6, selection: "\nBEEP    On"},
+		{index: 6, selection: "BEEP    On\n"},
+		{index: 6, selection: "\u00a0BEEP    On"},
+		{index: 6, selection: "BEEP    On\u00a0"},
+		{index: 7, selection: "START\u00a0Oprt"},
+		{index: 8, selection: "TEMP.\tF"},
+	} {
+		original := evidence[invalid.index].Selection
+		evidence[invalid.index].Selection = invalid.selection
+		if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+			t.Fatalf("invalid dynamic waypoint selection %q was accepted", invalid.selection)
+		}
+		evidence[invalid.index].Selection = original
+	}
+	if !matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
+		t.Fatal("ASCII-padded dynamic waypoint suffixes were rejected")
+	}
+
 	evidence[11].SetupTopology = SetupTopologySecondSeries
 	if matchesDiscoverySetupWaypoints(evidence, SetupTopologyThirdSeries2K, expected) {
 		t.Fatal("cross-family waypoint in sanitized report sequence was accepted")

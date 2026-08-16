@@ -734,7 +734,7 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 			if expectedTopology != "" && item.SetupTopology != expectedTopology {
 				return false
 			}
-			actual = append(actual, strings.TrimSpace(item.Selection))
+			actual = append(actual, item.Selection)
 		}
 	}
 	if len(actual) != len(expected) {
@@ -742,7 +742,7 @@ func matchesDiscoverySetupWaypoints(evidence []Evidence, expectedTopology string
 	}
 	for index, want := range expected {
 		if strings.HasPrefix(want, "~") {
-			if !strings.Contains(strings.ToUpper(actual[index]), strings.ToUpper(strings.TrimPrefix(want, "~"))) {
+			if !menuSelectionContains(actual[index], strings.TrimPrefix(want, "~")) {
 				return false
 			}
 		} else if !menuSelectionEqual(actual[index], want) {
@@ -760,6 +760,12 @@ func menuSelectionEqual(actual, expected string) bool {
 	actual, actualOK := normalizeMenuSelection(actual)
 	expected, expectedOK := normalizeMenuSelection(expected)
 	return actualOK && expectedOK && strings.EqualFold(actual, expected)
+}
+
+func menuSelectionContains(actual, expected string) bool {
+	actual, actualOK := normalizeMenuSelection(actual)
+	expected, expectedOK := normalizeMenuSelection(expected)
+	return actualOK && expectedOK && strings.Contains(strings.ToUpper(actual), strings.ToUpper(expected))
 }
 
 func normalizeMenuSelection(value string) (string, bool) {
