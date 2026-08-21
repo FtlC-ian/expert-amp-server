@@ -127,6 +127,54 @@ func TestLoadOrCreateNormalizesExistingConfig(t *testing.T) {
 	}
 }
 
+func TestSerialControlLineFalseValuesSurviveSaveAndReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "expert-amp-server.json")
+	if err := os.WriteFile(path, []byte(`{
+		"serialPort": "/dev/ttyUSB0",
+		"serialAssertDTR": false,
+		"serialAssertRTS": false
+	}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	mgr, err := NewManager(path, ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if got := mgr.Get().Settings; got.SerialAssertDTR || got.SerialAssertRTS {
+		t.Fatalf("explicit false values normalized away: %+v", got)
+	}
+
+	settings := mgr.Get().Settings
+	settings.PanelModelLabel = "Test"
+	if _, err := mgr.Update(settings); err != nil {
+		t.Fatalf("Update unrelated setting: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var persisted map[string]json.RawMessage
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("Unmarshal persisted config: %v", err)
+	}
+	for _, key := range []string{"serialAssertDTR", "serialAssertRTS"} {
+		raw, ok := persisted[key]
+		if !ok || string(raw) != "false" {
+			t.Fatalf("persisted %s = %s, present=%v; want explicit false", key, raw, ok)
+		}
+	}
+
+	reloaded, err := NewManager(path, ":8088")
+	if err != nil {
+		t.Fatalf("reload NewManager: %v", err)
+	}
+	if got := reloaded.Get().Settings; got.SerialAssertDTR || got.SerialAssertRTS {
+		t.Fatalf("explicit false values did not survive reload: %+v", got)
+	}
+}
+
 func TestLoadOrCreateNormalizesLegacySerialPollFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "expert-amp-server.json")

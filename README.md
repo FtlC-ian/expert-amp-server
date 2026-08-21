@@ -62,6 +62,8 @@ Open <http://localhost:8088/>.
 
 If no serial port is configured, the app starts in setup/fixture mode and the Settings tab lets you enter a persistent config. For real installs, prefer an explicit config path; see the Raspberry Pi install guide.
 
+The advanced `serialAssertDTR` and `serialAssertRTS` settings default to `true` when absent. Set them to `false` for transports such as PTYs or network serial bridges that do not support modem-control ioctls; explicit `false` values remain preserved across settings saves and restarts.
+
 ## API highlights
 
 Canonical API routes live under `/api/v1/...`.
