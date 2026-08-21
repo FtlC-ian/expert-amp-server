@@ -1134,6 +1134,42 @@ func TestV1SettingsPersistsMenuDebugEnabled(t *testing.T) {
 	}
 }
 
+func TestV1SettingsPersistsDisabledSerialControlLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "expert-amp-server.json")
+	mgr, err := config.NewManager(path, ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	handler := NewHandler(Options{
+		Config:      mgr,
+		StatusState: runtime.NewStatusState(api.Status{}),
+		FanPolicy:   fanpolicy.NewController(),
+	})
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{
+		"serialAssertDTR": false,
+		"serialAssertRTS": false
+	}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"serialAssertDTR":false`) || !strings.Contains(rec.Body.String(), `"serialAssertRTS":false`) {
+		t.Fatalf("response omitted explicit false serial settings: %s", rec.Body.String())
+	}
+	if got := mgr.Get().Settings; got.SerialAssertDTR || got.SerialAssertRTS {
+		t.Fatalf("manager did not retain explicit false serial settings: %+v", got)
+	}
+
+	reloaded, err := config.NewManager(path, ":8088")
+	if err != nil {
+		t.Fatalf("reload NewManager: %v", err)
+	}
+	if got := reloaded.Get().Settings; got.SerialAssertDTR || got.SerialAssertRTS {
+		t.Fatalf("API values did not survive reload: %+v", got)
+	}
+}
+
 func TestMenuDebugSessionArmsAndRechecksSafetyBeforeEveryWrite(t *testing.T) {
 	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
 	if err != nil {

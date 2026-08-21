@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Preserve explicit `false` values for `serialAssertDTR` and `serialAssertRTS` across settings responses, config rewrites, unrelated settings saves, and restarts while retaining the existing `true` default for absent fields.
+
 ## v0.4.3 - 2026-08-02
 
 Automatic guarded Menu Debug and retained diagnostics release.

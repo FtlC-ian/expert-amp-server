@@ -80,8 +80,8 @@ type Settings struct {
 	SerialReadTimeoutMs      int  `json:"serialReadTimeoutMs,omitempty"`
 	StatusPollCommandEnabled bool `json:"statusPollCommandEnabled,omitempty"`
 	StatusPollIntervalMs     int  `json:"statusPollIntervalMs,omitempty"`
-	SerialAssertDTR          bool `json:"serialAssertDTR,omitempty"`
-	SerialAssertRTS          bool `json:"serialAssertRTS,omitempty"`
+	SerialAssertDTR          bool `json:"serialAssertDTR"`
+	SerialAssertRTS          bool `json:"serialAssertRTS"`
 }
 
 type Snapshot struct {
