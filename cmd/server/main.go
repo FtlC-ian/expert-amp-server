@@ -328,6 +328,7 @@ func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop
 				HighTemperatureC:   settings.FanHighTemperatureC,
 				NormalTemperatureC: settings.FanNormalTemperatureC,
 				DisplayProfile:     settings.FanDisplayProfile,
+				FirmwareVersion:    settings.FanPolicyFirmwareVersion,
 				SafetyStandbyArmed: settings.SafetyMonitoringEnabled && settings.OvertemperatureStandbyArmed,
 				SafetyStandbyTripC: settings.TemperatureTripC,
 			}

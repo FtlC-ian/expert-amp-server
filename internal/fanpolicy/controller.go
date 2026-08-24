@@ -73,6 +73,7 @@ type navState struct {
 	failureAfterGen         uint64
 	profile                 string
 	setupIndex              int
+	expectedThirdSelection  string
 }
 
 type passiveSaveState struct {
@@ -810,13 +811,45 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 	}
 	switch c.nav.step {
 	case "setup:identify":
-		profile, initialKey, ok := identifyFanDisplayProfile(observation.State, c.status.ModelName)
+		profile, initialKey, ok := identifyFanDisplayProfile(observation.State, c.status.ModelName, c.settings.FirmwareVersion)
 		if !ok || key != initialKey {
 			return c.unexpectedLocked(observation.State)
 		}
 		c.nav.profile = profile.id
 		c.nav.setupIndex = 0
 		return c.advanceProfileSetupLocked(observation, key)
+	case "third-fan:entry":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok {
+			return c.unexpectedLocked(observation.State)
+		}
+		c.nav.observedPolicy = active
+		if c.nav.verifyOnly {
+			c.nav.target = active
+		}
+		return c.advanceThirdSeriesTargetLocked(observation, key, selected, active)
+	case "third-fan:target":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok || selected != c.nav.expectedThirdSelection || active != c.nav.observedPolicy {
+			return c.unexpectedLocked(observation.State)
+		}
+		return c.advanceThirdSeriesTargetLocked(observation, key, selected, active)
+	case "third-fan:toggled":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok || selected != thirdSeriesSelectionForPolicy(c.nav.target) || active != c.nav.target {
+			return c.unexpectedLocked(observation.State)
+		}
+		c.nav.observedPolicy = active
+		return c.sendThirdSeriesRightLocked("third-fan:save", observation.Generation, key, selected)
+	case "third-fan:save":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok || selected != c.nav.expectedThirdSelection || active != c.nav.target {
+			return c.unexpectedLocked(observation.State)
+		}
+		if selected == "save" {
+			return c.sendLocked("set", "submenu:STORING", observation.Generation, key)
+		}
+		return c.sendThirdSeriesRightLocked("third-fan:save", observation.Generation, key, selected)
 	case "submenu:TEMPERATURE SCALE":
 		policy, ok := submenuPolicy(observation.State, "TEMPERATURE SCALE")
 		if !ok {
@@ -861,7 +894,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 			c.nav.step = "home"
 			return c.advanceLocked(observation, key)
 		}
-		if !matchesStoring(observation.State) {
+		if !matchesStoring(observation.State) && !(c.nav.profile == ThirdSeriesDisplayProfile && matchesThirdSeriesStoring(observation.State)) {
 			return c.unexpectedLocked(observation.State)
 		}
 		c.lastVerifiedScreen = key
@@ -923,10 +956,36 @@ func (c *Controller) advanceProfileSetupLocked(observation DisplayObservation, k
 	}
 	c.lastVerifiedScreen = key
 	if c.nav.setupIndex == len(profile.setupKeys)-1 {
-		return c.sendLocked("set", "submenu:TEMPERATURE SCALE", observation.Generation, key)
+		next := "submenu:TEMPERATURE SCALE"
+		if profile.id == ThirdSeriesDisplayProfile {
+			next = "third-fan:entry"
+		}
+		return c.sendLocked("set", next, observation.Generation, key)
 	}
 	c.nav.setupIndex++
 	return c.sendLocked("right", profile.setupKeys[c.nav.setupIndex], observation.Generation, key)
+}
+
+func (c *Controller) advanceThirdSeriesTargetLocked(observation DisplayObservation, key, selected, active string) bool {
+	targetSelection := thirdSeriesSelectionForPolicy(c.nav.target)
+	if targetSelection == "" {
+		return c.unexpectedLocked(observation.State)
+	}
+	if active == c.nav.target {
+		return c.sendThirdSeriesRightLocked("third-fan:save", observation.Generation, key, selected)
+	}
+	if selected == targetSelection {
+		return c.sendLocked("set", "third-fan:toggled", observation.Generation, key)
+	}
+	return c.sendThirdSeriesRightLocked("third-fan:target", observation.Generation, key, selected)
+}
+
+func (c *Controller) sendThirdSeriesRightLocked(step string, generation uint64, key, selected string) bool {
+	c.nav.expectedThirdSelection = nextThirdSeriesSelection(selected)
+	if c.nav.expectedThirdSelection == "" {
+		return false
+	}
+	return c.sendLocked("right", step, generation, key)
 }
 
 func (c *Controller) sendLocked(action, nextStep string, generation uint64, previousKey string) bool {
@@ -1375,7 +1434,7 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 	if !c.currentVerifiedAt.IsZero() {
 		base.CurrentPolicyVerifiedAt = c.currentVerifiedAt.UTC().Format(time.RFC3339)
 	}
-	_, supportedProfile := verifiedFanDisplayProfileForModel(base.Observations.ModelName)
+	_, supportedProfile := verifiedFanDisplayProfileForModel(base.Observations.ModelName, settings.FirmwareVersion)
 	base.ActionAvailable = c.transport != nil && supportedProfile
 	if base.ControlActive {
 		switch {

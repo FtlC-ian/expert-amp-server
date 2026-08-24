@@ -64,6 +64,8 @@ If no serial port is configured, the app starts in setup/fixture mode and the Se
 
 The advanced `serialAssertDTR` and `serialAssertRTS` settings default to `true` when absent. Set them to `false` for transports such as PTYs or network serial bridges that do not support modem-control ioctls; explicit `false` values remain preserved across settings saves and restarts.
 
+Third Series Expert 2K-FA production fan control additionally requires the operator-declared `fanPolicyFirmwareVersion` setting to equal `Rel.26_03_24_A` exactly. Status polling does not attest firmware, so other or unset firmware values remain blocked.
+
 ## API highlights
 
 Canonical API routes live under `/api/v1/...`.
@@ -92,7 +94,7 @@ The app also serves:
 
 Manual Fan Boost, Fan Normal, Fan Auto, and Verify controls use a display-verified transaction instead of a blind button macro. The controller temporarily enters STANDBY when necessary, pauses all menu writes during TX, verifies each expected LCD screen, saves the setting, and restores OPERATE only when it owned that transition. A timed Fan Boost begins its timer only after CONTEST mode is verified.
 
-Production fan control is hardware-confirmed on the First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA. The API advertises `supportedModes` per promoted model; both profiles report `normal` and `contest`. Unsupported models report no modes and stop before SET; an unexpected screen stops the transaction rather than continuing.
+Production fan control is hardware-confirmed on the First Series Expert 1.3K-FA, CONFIG-first Second Series Expert 1.5K-FA, and the exact firmware-bound Third Series Expert 2K-FA topology. The API advertises `supportedModes` per promoted model; these profiles report `normal` and `contest`. For Third Series, hardware QUIET maps to logical Normal and hardware NORMAL maps to logical high cooling (`contest`). That profile starts only from verified STANDBY/RX and never sends DISPLAY or an OPERATE/STANDBY command. Unsupported model or firmware combinations report no modes and stop before SET; an unexpected screen stops the transaction rather than continuing.
 
 Unattended startup verification has one narrowly reviewed recovery capability for the First Series 1.3K-FA and Second Series 1.5K-FA: after a mismatch or timeout while actively traversing that profile's exact setup-grid waypoint, it may send DISPLAY once and retain ownership until a newer checksum-valid STANDBY/RX home frame arrives. It never runs from a submenu, stale or cross-family screen, TX or unknown RX state, another model, or a manual/API transaction. Recovery does not make verification successful; the failed transaction remains latched until explicitly cleared.
 
@@ -108,7 +110,7 @@ The advanced Menu Debug wizard is disabled by default and intended for supervise
 
 The reviewed First Series Expert 1.3K-FA profile may propose reversible fan and two-bank A/B tests. The Expert 1.5K-FA Second Series fan profile follows its captured CONFIG-first topology; both fan profiles have physically verified apply and restoration evidence and are eligible for production fan control. Unknown models and F-KFA NORMAL/QUIET layouts remain topology-only; QUIET is never treated as high cooling. TX is latched immediately. TX, stale evidence, an unexpected screen, timeout, abort, transport failure, or safety preemption stops the session fail-closed; the wizard never retries blindly, restores OPERATE, or performs blind menu recovery.
 
-The reporting wizard has one candidate-only Expert 2K-FA Third Series transaction bound to the exact model, setup topology, and firmware `Rel.26_03_24_A`. From verified STANDBY/RX it records a reversible hardware NORMAL (high cooling) → QUIET (low cooling) → NORMAL test, never sends DISPLAY, and remains separate from production fan control until the resulting apply/restore report and missing raw fixtures are reviewed. Second Series setup recognition accepts either input number.
+The reporting wizard retains the Expert 2K-FA Third Series reversible evidence path. Production promotion is separately bound to exact model, topology, operator-declared firmware `Rel.26_03_24_A`, STANDBY/RX, and the reviewed complete D1 report fixtures. Second Series setup recognition accepts either input number.
 
 For unfamiliar layouts, discovery may enter an exact highlighted fan candidate only when the live legend says `[SET]:CONFIRM`; `[SET]:CHANGE` stops before SET because it may write immediately. Once a candidate fan page is captured, the wizard sends no selector, SAVE, or DISPLAY command and retains exclusive actuation ownership until the operator physically returns the amplifier to a newer checksum-valid STANDBY home screen.
 

@@ -87,7 +87,8 @@ func matchesHome(state display.State) bool {
 func matchesStandbyHome(state display.State) bool {
 	rows := displayRows(state)
 	if selectedText(state) != "" ||
-		strings.TrimSpace(rows[6]) != "IN  BAND ANT BNK  CAT   OUT   SWR   TEMP" {
+		(normalizedDisplayRow(rows[6]) != "IN BAND ANT BNK CAT OUT SWR TEMP" &&
+			normalizedDisplayRow(rows[6]) != "IN BAND ANT CAT OUT SWR TEMP") {
 		return false
 	}
 	return strings.HasPrefix(strings.TrimSpace(rows[1]), "EXPERT ") &&
@@ -203,11 +204,69 @@ func secondSeriesSetupSelectionKey(state display.State) (string, bool) {
 	return "", false
 }
 
+func thirdSeriesSetupSelectionKey(state display.State) (string, bool) {
+	rows := displayRows(state)
+	if !knownSecondSeriesInputHeader(normalizedDisplayRow(rows[0])) ||
+		normalizedDisplayRow(rows[1]) != "CONFIG DISPLAY ALARMS LOG" ||
+		(normalizedDisplayRow(rows[2]) != "ANTENNA BEEP On TUN ANT" && normalizedDisplayRow(rows[2]) != "ANTENNA BEEP Off TUN ANT") ||
+		(normalizedDisplayRow(rows[3]) != "CAT START Oprt RX ANT" && normalizedDisplayRow(rows[3]) != "CAT START Stby RX ANT") ||
+		!thirdSeriesTemperatureFanRow(normalizedDisplayRow(rows[4])) ||
+		normalizedDisplayRow(rows[5]) != "EXIT" ||
+		!strings.Contains(normalizedDisplayRow(rows[7]), ":SELECT") ||
+		!strings.Contains(normalizedDisplayRow(rows[7]), "[SET]:") {
+		return "", false
+	}
+	selection, ok := singleHighlightedSelection(state)
+	if !ok {
+		return "", false
+	}
+	type expectedSelection struct {
+		row, start, end int
+		values          []string
+		key             string
+	}
+	expected := []expectedSelection{
+		{1, 0, 13, []string{"CONFIG"}, "setup:CONFIG"},
+		{2, 0, 13, []string{"ANTENNA"}, "setup:ANTENNA"},
+		{3, 0, 13, []string{"CAT"}, "setup:CAT"},
+		{4, 0, 13, []string{"MANUAL TUNE"}, "setup:MANUAL TUNE"},
+		{1, 14, 28, []string{"DISPLAY"}, "setup:DISPLAY"},
+		{2, 14, 28, []string{"BEEP    On", "BEEP    Off"}, "setup:BEEP"},
+		{3, 14, 28, []string{"START   Oprt", "START   Stby"}, "setup:START"},
+		{4, 14, 28, []string{"TEMP.    C", "TEMP.    F", "TEMP.   C", "TEMP.   F"}, "setup:TEMP."},
+		{1, 29, 40, []string{"ALARMS LOG"}, "setup:ALARMS LOG"},
+		{2, 29, 40, []string{"TUN ANT"}, "setup:TUN ANT"},
+		{3, 29, 40, []string{"RX  ANT", "RX ANT"}, "setup:RX ANT"},
+		{4, 29, 40, []string{"FAN NOISE"}, "setup:FAN NOISE"},
+	}
+	for _, candidate := range expected {
+		if selection.row != candidate.row || selection.start != candidate.start || selection.end != candidate.end {
+			continue
+		}
+		for _, value := range candidate.values {
+			if selection.text == value {
+				return candidate.key, true
+			}
+		}
+		return "", false
+	}
+	return "", false
+}
+
+func thirdSeriesTemperatureFanRow(row string) bool {
+	fields := strings.Fields(row)
+	return len(fields) == 6 && fields[0] == "MANUAL" && fields[1] == "TUNE" && fields[2] == "TEMP." &&
+		(fields[3] == "C" || fields[3] == "F" || fields[3] == "°C" || fields[3] == "°F") && fields[4] == "FAN" && fields[5] == "NOISE"
+}
+
 func setupSelectionKey(state display.State) (string, bool) {
 	if key, ok := firstSeriesSetupSelectionKey(state); ok {
 		return key, true
 	}
-	return secondSeriesSetupSelectionKey(state)
+	if key, ok := secondSeriesSetupSelectionKey(state); ok {
+		return key, true
+	}
+	return thirdSeriesSetupSelectionKey(state)
 }
 
 func setupSelectionKeyForProfile(state display.State, profileID string) (string, bool) {
@@ -216,6 +275,8 @@ func setupSelectionKeyForProfile(state display.State, profileID string) (string,
 		return firstSeriesSetupSelectionKey(state)
 	case SecondSeriesDisplayProfile:
 		return secondSeriesSetupSelectionKey(state)
+	case ThirdSeriesDisplayProfile:
+		return thirdSeriesSetupSelectionKey(state)
 	default:
 		return "", false
 	}
@@ -233,11 +294,14 @@ type fanDisplayProfile struct {
 	supportedModes                  []string
 	verified                        bool
 	startupSetupDisplayExitVerified bool
+	expectedFirmware                string
+	standbyOnly                     bool
 }
 
 var fanDisplayProfiles = []fanDisplayProfile{
 	{id: FirstSeriesDisplayProfile, model: "EXPERT 1.3K-FA", setupKeys: []string{"setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true, startupSetupDisplayExitVerified: true},
 	{id: SecondSeriesDisplayProfile, model: "EXPERT 1.5K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true, startupSetupDisplayExitVerified: true},
+	{id: ThirdSeriesDisplayProfile, model: "EXPERT 2K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP.", "setup:ALARMS LOG", "setup:TUN ANT", "setup:RX ANT", "setup:FAN NOISE"}, supportedModes: []string{"normal", "contest"}, verified: true, expectedFirmware: ThirdSeriesFirmware, standbyOnly: true},
 }
 
 func fanDisplayProfileByID(id string) (fanDisplayProfile, bool) {
@@ -249,30 +313,31 @@ func fanDisplayProfileByID(id string) (fanDisplayProfile, bool) {
 	return fanDisplayProfile{}, false
 }
 
-func fanDisplayProfileForModel(model string) (fanDisplayProfile, bool) {
+func fanDisplayProfileForModel(model, firmware string) (fanDisplayProfile, bool) {
 	for _, profile := range fanDisplayProfiles {
-		if strings.EqualFold(strings.TrimSpace(model), profile.model) {
+		if strings.EqualFold(strings.TrimSpace(model), profile.model) &&
+			(profile.expectedFirmware == "" || strings.TrimSpace(firmware) == profile.expectedFirmware) {
 			return profile, true
 		}
 	}
 	return fanDisplayProfile{}, false
 }
 
-func verifiedFanDisplayProfileForModel(model string) (fanDisplayProfile, bool) {
-	profile, ok := fanDisplayProfileForModel(model)
+func verifiedFanDisplayProfileForModel(model, firmware string) (fanDisplayProfile, bool) {
+	profile, ok := fanDisplayProfileForModel(model, firmware)
 	return profile, ok && profile.verified
 }
 
-func supportedFanModesForModel(model string) []string {
-	profile, ok := verifiedFanDisplayProfileForModel(model)
+func supportedFanModesForModel(model, firmware string) []string {
+	profile, ok := verifiedFanDisplayProfileForModel(model, firmware)
 	if !ok {
 		return []string{}
 	}
 	return append([]string(nil), profile.supportedModes...)
 }
 
-func identifyFanDisplayProfile(state display.State, model string) (fanDisplayProfile, string, bool) {
-	profile, ok := verifiedFanDisplayProfileForModel(model)
+func identifyFanDisplayProfile(state display.State, model, firmware string) (fanDisplayProfile, string, bool) {
+	profile, ok := verifiedFanDisplayProfileForModel(model, firmware)
 	if !ok || len(profile.setupKeys) == 0 {
 		return fanDisplayProfile{}, "", false
 	}
@@ -320,6 +385,74 @@ func NormalContestFanScreen(state display.State) (selected, policy string, ok bo
 	return "", PolicyUnknown, false
 }
 
+// ThirdSeriesFanScreen recognizes only the exact 2K-FA NORMAL/QUIET radio
+// page. Hardware QUIET maps to logical normal cooling; hardware NORMAL maps
+// to logical high cooling. The raw 0xAE marker, not decoded text, is the
+// authority for the active hardware value.
+func ThirdSeriesFanScreen(state display.State) (selected, activePolicy string, ok bool) {
+	rows := displayRows(state)
+	if normalizedDisplayRow(rows[0]) != "POWER-SUPPLY FAN" ||
+		normalizedDisplayRow(rows[2]) != "[ ] QUIET MODE (SSB ONLY)" ||
+		normalizedDisplayRow(rows[3]) != "[ ] NORMAL MODE (ALL MODES) SAVE" ||
+		normalizedDisplayRow(rows[7]) != "[ ][ ]:SELECT [SET]:CONFIRM" {
+		return "", PolicyUnknown, false
+	}
+	quietActive := state.Chars[2][4] == 0xae
+	normalActive := state.Chars[3][4] == 0xae
+	if quietActive == normalActive {
+		return "", PolicyUnknown, false
+	}
+	selection, selectionOK := singleHighlightedSelection(state)
+	if !selectionOK {
+		return "", PolicyUnknown, false
+	}
+	switch {
+	case selection.row == 2 && selection.start == 2 && selection.end == 31 && strings.Contains(selection.text, "QUIET"):
+		selected = "quiet"
+	case selection.row == 3 && selection.start == 2 && selection.end == 31 && strings.Contains(selection.text, "NORMAL"):
+		selected = "hardware-normal"
+	case selection.row == 3 && selection.start == 32 && selection.end == 38 && selection.text == "SAVE":
+		selected = "save"
+	default:
+		return "", PolicyUnknown, false
+	}
+	if quietActive {
+		return selected, PolicyNormal, true
+	}
+	return selected, PolicyHigh, true
+}
+
+func thirdSeriesSelectionForPolicy(policy string) string {
+	if policy == PolicyNormal {
+		return "quiet"
+	}
+	if policy == PolicyHigh {
+		return "hardware-normal"
+	}
+	return ""
+}
+
+func nextThirdSeriesSelection(selected string) string {
+	switch selected {
+	case "quiet":
+		return "hardware-normal"
+	case "hardware-normal":
+		return "save"
+	case "save":
+		return "quiet"
+	default:
+		return ""
+	}
+}
+
+func matchesThirdSeriesStoring(state display.State) bool {
+	rows := displayRows(state)
+	return normalizedDisplayRow(rows[0]) == "POWER-SUPPLY FAN" &&
+		normalizedDisplayRow(rows[2]) == "STORING DATA!" &&
+		normalizedDisplayRow(rows[6]) == "SAVE SETTINGS AND EXIT" &&
+		normalizedDisplayRow(rows[7]) == "[ ][ ]:SELECT [SET]:CONFIRM"
+}
+
 func matchesStoring(state display.State) bool {
 	rows := displayRows(state)
 	return strings.TrimSpace(rows[0]) == "TEMPERATURE AND FANS" &&
@@ -334,6 +467,9 @@ func semanticDisplayKey(state display.State) string {
 	if key, ok := setupSelectionKey(state); ok {
 		return key
 	}
+	if selected, policy, ok := ThirdSeriesFanScreen(state); ok {
+		return "third-fan:" + selected + ":" + policy
+	}
 	for _, selected := range []string{"TEMPERATURE SCALE", "FAN MANAGEMENT", "SAVE"} {
 		if policy, ok := submenuPolicy(state, selected); ok {
 			return "submenu:" + selected + ":" + policy
@@ -341,6 +477,9 @@ func semanticDisplayKey(state display.State) string {
 	}
 	if matchesStoring(state) {
 		return "submenu:STORING"
+	}
+	if matchesThirdSeriesStoring(state) {
+		return "third-fan:STORING"
 	}
 	return ""
 }
