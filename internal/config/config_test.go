@@ -254,6 +254,7 @@ func TestUpdatePersistsSettings(t *testing.T) {
 		FanHighTemperatureC:         65,
 		FanNormalTemperatureC:       55,
 		FanDisplayProfile:           FanDisplayProfileFirstSeries,
+		FanPolicyFirmwareVersion:    " Rel.26_03_24_A ",
 		MenuDebugEnabled:            true,
 	})
 	if err != nil {
@@ -283,7 +284,7 @@ func TestUpdatePersistsSettings(t *testing.T) {
 	if !snap.Settings.SafetyMonitoringEnabled || !snap.Settings.OvertemperatureStandbyArmed || snap.Settings.TemperatureWarningC != 70 || snap.Settings.TemperatureTripC != 80 || snap.Settings.TemperatureResetC != 65 || snap.Settings.SWRWarning != 2 || snap.Settings.SWRTrip != 3 {
 		t.Fatalf("safety monitoring settings not persisted: %+v", snap.Settings)
 	}
-	if !snap.Settings.AutomaticFanPolicyEnabled || snap.Settings.FanHighTemperatureC != 65 || snap.Settings.FanNormalTemperatureC != 55 || snap.Settings.FanDisplayProfile != FanDisplayProfileFirstSeries {
+	if !snap.Settings.AutomaticFanPolicyEnabled || snap.Settings.FanHighTemperatureC != 65 || snap.Settings.FanNormalTemperatureC != 55 || snap.Settings.FanDisplayProfile != FanDisplayProfileFirstSeries || snap.Settings.FanPolicyFirmwareVersion != "Rel.26_03_24_A" {
 		t.Fatalf("automatic fan policy settings not persisted: %+v", snap.Settings)
 	}
 	if !snap.Settings.MenuDebugEnabled {
@@ -295,6 +296,9 @@ func TestUpdatePersistsSettings(t *testing.T) {
 	}
 	if !reloaded.Get().Settings.MenuDebugEnabled {
 		t.Fatal("MenuDebugEnabled was not restored after reload")
+	}
+	if reloaded.Get().Settings.FanPolicyFirmwareVersion != "Rel.26_03_24_A" {
+		t.Fatalf("firmware binding not restored: %+v", reloaded.Get().Settings)
 	}
 }
 

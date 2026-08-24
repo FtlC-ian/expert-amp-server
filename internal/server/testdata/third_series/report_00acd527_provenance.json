@@ -1,0 +1,148 @@
+{
+  "schemaVersion": "third-series-fixture-provenance.v1",
+  "reportId": "00acd5279f994baf497f58cf607f9efea6b770fbf3679beae301a88ce177b715",
+  "receivedAt": "2026-08-16",
+  "model": "EXPERT 2K-FA",
+  "firmware": "Rel.26_03_24_A",
+  "serverVersion": "v0.4.7+pr31",
+  "fixtures": [
+    {
+      "file": "report_00acd527_00_g367_home.state.json",
+      "evidenceIndex": 0,
+      "generation": 367,
+      "fingerprint": "cff6b408f1fabfed5832e40cdb9ef24b48a1aa62381efe235614753128283a46"
+    },
+    {
+      "file": "report_00acd527_01_g368_setup_menu_config.state.json",
+      "evidenceIndex": 1,
+      "generation": 368,
+      "fingerprint": "3378d88ffed6ae8be6e367c6ad65dbcb7f49bbc9ec0b25432443688c7d60061b"
+    },
+    {
+      "file": "report_00acd527_02_g369_setup_menu_antenna.state.json",
+      "evidenceIndex": 2,
+      "generation": 369,
+      "fingerprint": "b2179d2e0ecfd9326855a45642824c0ddda0a71ad184ca42f0fd70e4932d70a2"
+    },
+    {
+      "file": "report_00acd527_03_g371_setup_menu_cat.state.json",
+      "evidenceIndex": 3,
+      "generation": 371,
+      "fingerprint": "e43f44088731d636a12ba0e2c0dccd9e1df64f2250060a317858e1ff6113e57f"
+    },
+    {
+      "file": "report_00acd527_04_g372_setup_menu_manual_tune.state.json",
+      "evidenceIndex": 4,
+      "generation": 372,
+      "fingerprint": "f5d6124b701c5f4105664d9dad20719d22e15025743395afb213686254458aed"
+    },
+    {
+      "file": "report_00acd527_05_g374_setup_menu_display.state.json",
+      "evidenceIndex": 5,
+      "generation": 374,
+      "fingerprint": "31b1237ef0a72cf759f40029077f3ddad63c05750e06933ac27d08aafa64fe72"
+    },
+    {
+      "file": "report_00acd527_06_g375_setup_menu_beep_on.state.json",
+      "evidenceIndex": 6,
+      "generation": 375,
+      "fingerprint": "345669fc407d709b354098dca25e1b5da9102c19f5b06565f28a6103adda3b52"
+    },
+    {
+      "file": "report_00acd527_07_g377_setup_menu_start_oprt.state.json",
+      "evidenceIndex": 7,
+      "generation": 377,
+      "fingerprint": "6a738995363b5ed9a82a0163a8e7e523ede422e8edc8fc84e6254c6973ada002"
+    },
+    {
+      "file": "report_00acd527_08_g379_setup_menu_temp_f.state.json",
+      "evidenceIndex": 8,
+      "generation": 379,
+      "fingerprint": "01f8122b93d3b533e70b3417747362ec512eefe69e54210e391a0c53a35305b6"
+    },
+    {
+      "file": "report_00acd527_09_g380_setup_menu_alarms_log.state.json",
+      "evidenceIndex": 9,
+      "generation": 380,
+      "fingerprint": "59350379049003df3dfeb80fb7de22b8237cd6b0cea83f2ca905d23048c469d7"
+    },
+    {
+      "file": "report_00acd527_10_g381_setup_menu_tun_ant.state.json",
+      "evidenceIndex": 10,
+      "generation": 381,
+      "fingerprint": "593b87d0c671b9b1f14b0158d1d56784cbe5d4376b05269182451ed7210e6e9a"
+    },
+    {
+      "file": "report_00acd527_11_g383_setup_menu_rx_ant.state.json",
+      "evidenceIndex": 11,
+      "generation": 383,
+      "fingerprint": "a164d8ba7a7a8ce1517f33429a179923ca1abb7e8d9c7e666c15b083e83f26ab"
+    },
+    {
+      "file": "report_00acd527_12_g384_setup_menu_fan_noise.state.json",
+      "evidenceIndex": 12,
+      "generation": 384,
+      "fingerprint": "500928faf9307b9f50a563d9ae2a58b55ea4d6b3295218bd730f76ae6f09ec0e"
+    },
+    {
+      "file": "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json",
+      "evidenceIndex": 13,
+      "generation": 385,
+      "fingerprint": "e955744192753cb721bc14b26fb3d91d6644681cffb9a30846be5e00f5a1e878"
+    },
+    {
+      "file": "report_00acd527_14_g387_fan_menu_save.state.json",
+      "evidenceIndex": 15,
+      "generation": 387,
+      "fingerprint": "3374a03a335d0d2d264df47dc984be97a2989f066361bd2eb38d32fde9ca69b4"
+    },
+    {
+      "file": "report_00acd527_15_g388_fan_menu_quiet_mode_ssb_only.state.json",
+      "evidenceIndex": 17,
+      "generation": 388,
+      "fingerprint": "8418e9320d5318c98aa4a1a2446b963d975bb78a4213e0110c93fdbab7b733e1"
+    },
+    {
+      "file": "report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+      "evidenceIndex": 19,
+      "generation": 389,
+      "fingerprint": "318fe68048423ce5c674f00d06a53179fc74f198dabcf03ecbfdfac57bcdfd34"
+    },
+    {
+      "file": "report_00acd527_17_g391_fan_menu_normal_mode_all_modes.state.json",
+      "evidenceIndex": 21,
+      "generation": 391,
+      "fingerprint": "928c59ee8c91af3a8bc22f50ae9bd46535a8f4fab1aa027e654cc4a9b2364ff8"
+    },
+    {
+      "file": "report_00acd527_18_g392_fan_menu_save.state.json",
+      "evidenceIndex": 23,
+      "generation": 392,
+      "fingerprint": "78479a7272dabde8b207a19a67faa6f58acd9f773766c24ed3fdbedaf5e452cf"
+    },
+    {
+      "file": "report_00acd527_19_g394_storing.state.json",
+      "evidenceIndex": 25,
+      "generation": 394,
+      "fingerprint": "a6f5da308fa733b78778b83763b475a8e2b9e500f0920a30281cd591740b8c0e"
+    },
+    {
+      "file": "report_00acd527_20_g395_storing.state.json",
+      "evidenceIndex": 26,
+      "generation": 395,
+      "fingerprint": "39668d5c4c5a1bf5b8fab07cada59688f33bd425945d122d94f5a9697eef4808"
+    },
+    {
+      "file": "report_00acd527_21_g396_storing.state.json",
+      "evidenceIndex": 27,
+      "generation": 396,
+      "fingerprint": "ac31ed895a52b2bb0bed8f3fd46d9979497fc2826aad94efdb67df76a89fc364"
+    },
+    {
+      "file": "report_00acd527_22_g2378_storing.state.json",
+      "evidenceIndex": 62,
+      "generation": 2378,
+      "fingerprint": "b420ed47e91754e10e0b07c5611834c733a6d1cdba3de74ea67fd6f3daff2e79"
+    }
+  ]
+}

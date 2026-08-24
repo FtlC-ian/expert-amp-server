@@ -1048,6 +1048,7 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 		FanHighTemperatureC:         65,
 		FanNormalTemperatureC:       55,
 		FanDisplayProfile:           config.FanDisplayProfileFirstSeries,
+		FanPolicyFirmwareVersion:    "Rel.26_03_24_A",
 		MenuDebugEnabled:            true,
 	}
 	falseVal := false
@@ -1078,7 +1079,7 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 	if !merged.SafetyMonitoringEnabled || !merged.OvertemperatureStandbyArmed || merged.TemperatureWarningC != 70 || merged.TemperatureTripC != 80 || merged.TemperatureResetC != 65 || merged.SWRWarning != 2 || merged.SWRTrip != 3 {
 		t.Fatalf("omitted safety monitoring fields were not preserved: %+v", merged)
 	}
-	if !merged.AutomaticFanPolicyEnabled || merged.FanHighTemperatureC != 65 || merged.FanNormalTemperatureC != 55 || merged.FanDisplayProfile != config.FanDisplayProfileFirstSeries {
+	if !merged.AutomaticFanPolicyEnabled || merged.FanHighTemperatureC != 65 || merged.FanNormalTemperatureC != 55 || merged.FanDisplayProfile != config.FanDisplayProfileFirstSeries || merged.FanPolicyFirmwareVersion != "Rel.26_03_24_A" {
 		t.Fatalf("omitted fan policy fields were not preserved: %+v", merged)
 	}
 	if !merged.MenuDebugEnabled {
@@ -1098,6 +1099,11 @@ func TestSettingsUpdateMergePrefersCurrentValuesAndLegacyAliases(t *testing.T) {
 	})
 	if merged.PanelModelLabel != "N0CALL" || merged.InputLabels["2"] != "ANAN G2" || merged.AntennaLabels["4"] != "Hexbeam" {
 		t.Fatalf("station labels not merged as replacement: %+v", merged)
+	}
+	firmware := "Rel.26_03_24_B"
+	merged = mergeSettingsRequest(current, settingsRequest{FanPolicyFirmwareVersion: &firmware})
+	if merged.FanPolicyFirmwareVersion != firmware {
+		t.Fatalf("firmware binding replacement not merged: %+v", merged)
 	}
 }
 

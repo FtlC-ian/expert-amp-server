@@ -80,6 +80,7 @@ type passiveSaveState struct {
 	candidatePolicy string
 	sawSave         bool
 	sawStoring      bool
+	thirdSeries     bool
 }
 
 type PersistentState struct {
@@ -1318,6 +1319,23 @@ func (c *Controller) observePassiveSaveLocked(observation DisplayObservation) {
 		c.passive.candidatePolicy = policy
 		c.passive.sawSave = false
 		c.passive.sawStoring = false
+		c.passive.thirdSeries = false
+		return
+	}
+	if selected, policy, ok := ThirdSeriesFanScreen(observation.State); ok {
+		if !c.thirdSeriesPassiveEvidenceAllowedLocked(observation) {
+			return
+		}
+		if selected == "save" {
+			if c.passive.candidatePolicy == policy {
+				c.passive.sawSave = true
+			}
+			return
+		}
+		c.passive.candidatePolicy = policy
+		c.passive.sawSave = false
+		c.passive.sawStoring = false
+		c.passive.thirdSeries = true
 		return
 	}
 	if matchesSubmenuSelection(observation.State, "SAVE") && c.passive.candidatePolicy != "" {
@@ -1328,13 +1346,29 @@ func (c *Controller) observePassiveSaveLocked(observation DisplayObservation) {
 		c.passive.sawStoring = true
 		return
 	}
+	if matchesThirdSeriesStoring(observation.State) && c.passive.thirdSeries && c.passive.sawSave && c.thirdSeriesPassiveEvidenceAllowedLocked(observation) {
+		c.passive.sawStoring = true
+		return
+	}
 	if !matchesHome(observation.State) {
+		return
+	}
+	if c.passive.thirdSeries && !c.thirdSeriesPassiveEvidenceAllowedLocked(observation) {
+		c.passive = passiveSaveState{}
 		return
 	}
 	if c.passive.sawStoring {
 		c.recordVerifiedPolicyLocked(c.passive.candidatePolicy, c.now(), "observed-front-panel-save")
 	}
 	c.passive = passiveSaveState{}
+}
+
+func (c *Controller) thirdSeriesPassiveEvidenceAllowedLocked(observation DisplayObservation) bool {
+	profile, bound := verifiedFanDisplayProfileForModel(c.status.ModelName, c.settings.FirmwareVersion)
+	status := c.currentStatusLocked(c.now())
+	return bound && profile.id == ThirdSeriesDisplayProfile && status.RecentContact &&
+		normalizeOperatingState(status.OperatingState) == "standby" && status.TX != nil && !*status.TX &&
+		observation.TX != nil && !*observation.TX && observation.Operate != nil && !*observation.Operate
 }
 
 func (c *Controller) persistentStateLocked() PersistentState {

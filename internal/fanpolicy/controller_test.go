@@ -12,6 +12,7 @@ import (
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
@@ -633,7 +634,7 @@ func TestThirdSeriesProductionUsesExactCapturedNormalQuietPath(t *testing.T) {
 	}
 }
 
-func TestThirdSeriesProductionMapsContestRequestToHardwareNormal(t *testing.T) {
+func TestThirdSeriesDirectSaveHomeMapsContestRequestToHardwareNormal(t *testing.T) {
 	buttons := &recordingButtons{}
 	controller := NewController(buttons)
 	if err := controller.SetManualOverride(PolicyHigh, 0); err != nil {
@@ -652,7 +653,7 @@ func TestThirdSeriesProductionMapsContestRequestToHardwareNormal(t *testing.T) {
 		"report_00acd527_10_g381_setup_menu_tun_ant.state.json", "report_00acd527_11_g383_setup_menu_rx_ant.state.json",
 		"report_00acd527_12_g384_setup_menu_fan_noise.state.json", "report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
 		"report_00acd527_17_g391_fan_menu_normal_mode_all_modes.state.json", "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json",
-		"report_00acd527_14_g387_fan_menu_save.state.json", "report_00acd527_22_g2378_storing.state.json",
+		"report_00acd527_14_g387_fan_menu_save.state.json",
 		"report_00acd527_00_g367_home.state.json",
 	}
 	var result Result
@@ -696,6 +697,28 @@ func TestThirdSeriesProductionRequiresExactFirmwareAndStandbyBeforeWrites(t *tes
 	}
 }
 
+func TestThirdSeriesChangeLegendCannotAuthorizeSetupFollowup(t *testing.T) {
+	state := loadThirdSeriesReportState(t, "report_00acd527_01_g368_setup_menu_config.state.json")
+	state.SetRow(7, " [  ][  ]:SELECT           [SET]:CHANGE")
+	if _, ok := thirdSeriesSetupSelectionKey(state); ok {
+		t.Fatal("CHANGE topology matched production profile")
+	}
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesFirmware}
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 2K-FA"
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, "report_00acd527_00_g367_home.state.json"), Generation: 1, TX: boolPtr(false), Operate: boolPtr(false)})
+	result := controller.ObserveDisplay(DisplayObservation{State: state, Generation: 2, TX: boolPtr(false), Operate: boolPtr(false)})
+	if strings.Join(buttons.actions, ",") != "set" {
+		t.Fatalf("near-match authorized follow-up write: %v", buttons.actions)
+	}
+	if result.State != StateFailed || !result.Navigation.MayBeInMenu {
+		t.Fatalf("near-match did not fail closed: %+v", result)
+	}
+}
+
 func TestThirdSeriesCapturedFanMapping(t *testing.T) {
 	selected, policy, ok := ThirdSeriesFanScreen(loadThirdSeriesReportState(t, "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json"))
 	if !ok || selected != "hardware-normal" || policy != PolicyHigh {
@@ -724,6 +747,97 @@ func TestThirdSeriesRejectsAmbiguousActiveMarker(t *testing.T) {
 				t.Fatal("ambiguous marker accepted")
 			}
 		})
+	}
+}
+
+func TestThirdSeriesPassiveSaveReconcilesAndCorrectsStaleReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name, current, desired, fan, save, storing string
+		temperature                                float64
+		observed                                   string
+	}{
+		{"front panel quiet", PolicyHigh, PolicyHigh, "report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json", "report_00acd527_18_g392_fan_menu_save.state.json", "report_00acd527_19_g394_storing.state.json", 81, PolicyNormal},
+		{"front panel normal", PolicyNormal, PolicyNormal, "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json", "report_00acd527_14_g387_fan_menu_save.state.json", "report_00acd527_22_g2378_storing.state.json", 70, PolicyHigh},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buttons := &recordingButtons{}
+			controller := NewController(buttons)
+			settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesFirmware}
+			status := statusAt(tc.temperature, "standby", false)
+			status.ModelName = "EXPERT 2K-FA"
+			controller.manualOverride = tc.desired
+			controller.Observe(status, settings)
+			controller.current, controller.currentConfidence, controller.currentModel = tc.current, "verified-live", "EXPERT 2K-FA"
+			controller.desired = tc.desired
+			for generation, name := range []string{tc.fan, tc.save, tc.storing, "report_00acd527_00_g367_home.state.json"} {
+				controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, name), Generation: uint64(generation + 1), TX: boolPtr(false), Operate: boolPtr(false)})
+			}
+			if controller.current != tc.observed || controller.currentSource != "observed-front-panel-save" {
+				t.Fatalf("receipt current=%q source=%q", controller.current, controller.currentSource)
+			}
+			if strings.Join(buttons.actions, ",") != "set" {
+				t.Fatalf("stale desired receipt skipped correction or wrote extra: %v", buttons.actions)
+			}
+		})
+	}
+}
+
+func TestThirdSeriesAllCapturedStoringVariantsAndDirectHome(t *testing.T) {
+	for _, name := range []string{
+		"report_00acd527_19_g394_storing.state.json", "report_00acd527_20_g395_storing.state.json",
+		"report_00acd527_21_g396_storing.state.json", "report_00acd527_22_g2378_storing.state.json",
+	} {
+		if !matchesThirdSeriesStoring(loadThirdSeriesReportState(t, name)) {
+			t.Fatalf("captured storing fixture %s did not match", name)
+		}
+	}
+}
+
+func TestThirdSeriesFixtureProvenanceManifest(t *testing.T) {
+	type entry struct {
+		File          string `json:"file"`
+		EvidenceIndex int    `json:"evidenceIndex"`
+		Generation    uint64 `json:"generation"`
+		Fingerprint   string `json:"fingerprint"`
+	}
+	var manifest struct {
+		SchemaVersion string  `json:"schemaVersion"`
+		ReportID      string  `json:"reportId"`
+		Model         string  `json:"model"`
+		Firmware      string  `json:"firmware"`
+		ServerVersion string  `json:"serverVersion"`
+		Fixtures      []entry `json:"fixtures"`
+	}
+	data, err := os.ReadFile(filepath.Join("..", "server", "testdata", "third_series", "report_00acd527_provenance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ReportID != "00acd5279f994baf497f58cf607f9efea6b770fbf3679beae301a88ce177b715" || manifest.Model != "EXPERT 2K-FA" || manifest.Firmware != ThirdSeriesFirmware || len(manifest.Fixtures) != 23 {
+		t.Fatalf("manifest header=%+v", manifest)
+	}
+	seenFiles, seenIndexes := map[string]bool{}, map[int]bool{}
+	for _, fixture := range manifest.Fixtures {
+		if seenFiles[fixture.File] || seenIndexes[fixture.EvidenceIndex] {
+			t.Fatalf("duplicate provenance entry %+v", fixture)
+		}
+		seenFiles[fixture.File], seenIndexes[fixture.EvidenceIndex] = true, true
+		state := loadThirdSeriesReportState(t, fixture.File)
+		if got := menudebug.Analyze(state).Fingerprint; got != fixture.Fingerprint {
+			t.Fatalf("%s fingerprint=%s want=%s", fixture.File, got, fixture.Fingerprint)
+		}
+		if fixture.Generation == 0 {
+			t.Fatalf("%s has zero generation", fixture.File)
+		}
+	}
+	files, err := filepath.Glob(filepath.Join("..", "server", "testdata", "third_series", "report_00acd527_*.state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != len(manifest.Fixtures) {
+		t.Fatalf("fixture files=%d manifest=%d", len(files), len(manifest.Fixtures))
 	}
 }
 

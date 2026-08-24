@@ -208,12 +208,11 @@ func thirdSeriesSetupSelectionKey(state display.State) (string, bool) {
 	rows := displayRows(state)
 	if !knownSecondSeriesInputHeader(normalizedDisplayRow(rows[0])) ||
 		normalizedDisplayRow(rows[1]) != "CONFIG DISPLAY ALARMS LOG" ||
-		(normalizedDisplayRow(rows[2]) != "ANTENNA BEEP On TUN ANT" && normalizedDisplayRow(rows[2]) != "ANTENNA BEEP Off TUN ANT") ||
-		(normalizedDisplayRow(rows[3]) != "CAT START Oprt RX ANT" && normalizedDisplayRow(rows[3]) != "CAT START Stby RX ANT") ||
-		!thirdSeriesTemperatureFanRow(normalizedDisplayRow(rows[4])) ||
+		normalizedDisplayRow(rows[2]) != "ANTENNA BEEP On TUN ANT" ||
+		normalizedDisplayRow(rows[3]) != "CAT START Oprt RX ANT" ||
+		normalizedDisplayRow(rows[4]) != "MANUAL TUNE TEMP. F FAN NOISE" ||
 		normalizedDisplayRow(rows[5]) != "EXIT" ||
-		!strings.Contains(normalizedDisplayRow(rows[7]), ":SELECT") ||
-		!strings.Contains(normalizedDisplayRow(rows[7]), "[SET]:") {
+		(normalizedDisplayRow(rows[7]) != "[ ][ ]:SELECT [SET]:CONFIRM" && normalizedDisplayRow(rows[7]) != "[ ][ ]:SELECT [SET]:CHANGE") {
 		return "", false
 	}
 	selection, ok := singleHighlightedSelection(state)
@@ -224,24 +223,28 @@ func thirdSeriesSetupSelectionKey(state display.State) (string, bool) {
 		row, start, end int
 		values          []string
 		key             string
+		legend          string
 	}
 	expected := []expectedSelection{
-		{1, 0, 13, []string{"CONFIG"}, "setup:CONFIG"},
-		{2, 0, 13, []string{"ANTENNA"}, "setup:ANTENNA"},
-		{3, 0, 13, []string{"CAT"}, "setup:CAT"},
-		{4, 0, 13, []string{"MANUAL TUNE"}, "setup:MANUAL TUNE"},
-		{1, 14, 28, []string{"DISPLAY"}, "setup:DISPLAY"},
-		{2, 14, 28, []string{"BEEP    On", "BEEP    Off"}, "setup:BEEP"},
-		{3, 14, 28, []string{"START   Oprt", "START   Stby"}, "setup:START"},
-		{4, 14, 28, []string{"TEMP.    C", "TEMP.    F", "TEMP.   C", "TEMP.   F"}, "setup:TEMP."},
-		{1, 29, 40, []string{"ALARMS LOG"}, "setup:ALARMS LOG"},
-		{2, 29, 40, []string{"TUN ANT"}, "setup:TUN ANT"},
-		{3, 29, 40, []string{"RX  ANT", "RX ANT"}, "setup:RX ANT"},
-		{4, 29, 40, []string{"FAN NOISE"}, "setup:FAN NOISE"},
+		{1, 0, 13, []string{"CONFIG"}, "setup:CONFIG", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{2, 0, 13, []string{"ANTENNA"}, "setup:ANTENNA", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{3, 0, 13, []string{"CAT"}, "setup:CAT", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{4, 0, 13, []string{"MANUAL TUNE"}, "setup:MANUAL TUNE", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{1, 14, 28, []string{"DISPLAY"}, "setup:DISPLAY", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{2, 14, 28, []string{"BEEP    On"}, "setup:BEEP", "[ ][ ]:SELECT [SET]:CHANGE"},
+		{3, 14, 28, []string{"START   Oprt"}, "setup:START", "[ ][ ]:SELECT [SET]:CHANGE"},
+		{4, 14, 28, []string{"TEMP.    F"}, "setup:TEMP.", "[ ][ ]:SELECT [SET]:CHANGE"},
+		{1, 29, 40, []string{"ALARMS LOG"}, "setup:ALARMS LOG", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{2, 29, 40, []string{"TUN ANT"}, "setup:TUN ANT", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{3, 29, 40, []string{"RX  ANT", "RX ANT"}, "setup:RX ANT", "[ ][ ]:SELECT [SET]:CONFIRM"},
+		{4, 29, 40, []string{"FAN NOISE"}, "setup:FAN NOISE", "[ ][ ]:SELECT [SET]:CONFIRM"},
 	}
 	for _, candidate := range expected {
 		if selection.row != candidate.row || selection.start != candidate.start || selection.end != candidate.end {
 			continue
+		}
+		if normalizedDisplayRow(rows[7]) != candidate.legend {
+			return "", false
 		}
 		for _, value := range candidate.values {
 			if selection.text == value {
@@ -251,12 +254,6 @@ func thirdSeriesSetupSelectionKey(state display.State) (string, bool) {
 		return "", false
 	}
 	return "", false
-}
-
-func thirdSeriesTemperatureFanRow(row string) bool {
-	fields := strings.Fields(row)
-	return len(fields) == 6 && fields[0] == "MANUAL" && fields[1] == "TUNE" && fields[2] == "TEMP." &&
-		(fields[3] == "C" || fields[3] == "F" || fields[3] == "°C" || fields[3] == "°F") && fields[4] == "FAN" && fields[5] == "NOISE"
 }
 
 func setupSelectionKey(state display.State) (string, bool) {
