@@ -70,6 +70,30 @@ func TestTelemetryFromDisplayStateConvertsExplicitFahrenheit(t *testing.T) {
 	}
 }
 
+func TestTelemetryFromDisplayStatePreservesFixedColumnMultiWordValues(t *testing.T) {
+	state := display.NewState()
+	state.SetRow(1, "EXPERT 2K-FA")
+	state.SetRow(6, " IN   BAND  ANT  CAT   OUT   SWR   TEMP")
+	state.SetRow(7, "  2   80 m   2  FLEX   MID  --.--  90 F")
+
+	telem := TelemetryFromDisplayState(state, "fixture:2k-fa")
+	if telem.Input != "2" || telem.Band != "80 m" || telem.Antenna != "2" {
+		t.Fatalf("unexpected input/band/antenna fields: %+v", telem)
+	}
+	if telem.CATInterface != "FLEX" || telem.OutputLevel != "MID" {
+		t.Fatalf("unexpected cat/output fields: %+v", telem)
+	}
+	if telem.SWRDisplay != "--.--" || telem.SWR != nil {
+		t.Fatalf("unexpected SWR fields: %+v", telem)
+	}
+	if telem.TemperatureDisplay != "90 F" || telem.TemperatureUnit != "F" {
+		t.Fatalf("unexpected raw temperature fields: %+v", telem)
+	}
+	if telem.TemperatureC == nil || *telem.TemperatureC < 32.22 || *telem.TemperatureC > 32.23 {
+		t.Fatalf("TemperatureC = %v, want about 32.22", telem.TemperatureC)
+	}
+}
+
 func TestParseTemperatureAcceptsDegreeSymbol(t *testing.T) {
 	got, unit, ok := parseTemperature("86 °F")
 	if !ok || unit != "F" || got != 30 {
