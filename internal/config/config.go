@@ -67,6 +67,7 @@ type Settings struct {
 	FanHighTemperatureC       float64 `json:"fanHighTemperatureC"`
 	FanNormalTemperatureC     float64 `json:"fanNormalTemperatureC"`
 	FanDisplayProfile         string  `json:"fanDisplayProfile,omitempty"`
+	FanPolicyFirmwareVersion  string  `json:"fanPolicyFirmwareVersion,omitempty"`
 	VerifyFanModeOnStartup    bool    `json:"verifyFanModeOnStartup,omitempty"`
 	FanBoostDurationMinutes   int     `json:"fanBoostDurationMinutes,omitempty"`
 
@@ -134,6 +135,7 @@ type rawSettings struct {
 	FanHighTemperatureC          *float64          `json:"fanHighTemperatureC"`
 	FanNormalTemperatureC        *float64          `json:"fanNormalTemperatureC"`
 	FanDisplayProfile            *string           `json:"fanDisplayProfile,omitempty"`
+	FanPolicyFirmwareVersion     *string           `json:"fanPolicyFirmwareVersion,omitempty"`
 	VerifyFanModeOnStartup       *bool             `json:"verifyFanModeOnStartup,omitempty"`
 	FanBoostDurationMinutes      *int              `json:"fanBoostDurationMinutes,omitempty"`
 	MenuDebugEnabled             *bool             `json:"menuDebugEnabled,omitempty"`
@@ -346,6 +348,9 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.FanDisplayProfile != nil {
 		out.FanDisplayProfile = strings.TrimSpace(*r.FanDisplayProfile)
 	}
+	if r.FanPolicyFirmwareVersion != nil {
+		out.FanPolicyFirmwareVersion = strings.TrimSpace(*r.FanPolicyFirmwareVersion)
+	}
 	if r.VerifyFanModeOnStartup != nil {
 		out.VerifyFanModeOnStartup = *r.VerifyFanModeOnStartup
 	}
@@ -426,6 +431,7 @@ func normalizeSettings(in, defaults Settings) Settings {
 		out.FanNormalTemperatureC = in.FanNormalTemperatureC
 	}
 	out.FanDisplayProfile = strings.TrimSpace(in.FanDisplayProfile)
+	out.FanPolicyFirmwareVersion = strings.TrimSpace(in.FanPolicyFirmwareVersion)
 	out.VerifyFanModeOnStartup = in.VerifyFanModeOnStartup
 	out.FanBoostDurationMinutes = in.FanBoostDurationMinutes
 	out.MenuDebugEnabled = in.MenuDebugEnabled
@@ -586,6 +592,9 @@ func validateThresholdPair(name string, warning, trip float64) (bool, error) {
 }
 
 func validateAutomaticFanPolicySettings(settings Settings) error {
+	if len(settings.FanPolicyFirmwareVersion) > 64 {
+		return errors.New("fan policy firmware version must not exceed 64 characters")
+	}
 	high := settings.FanHighTemperatureC
 	normal := settings.FanNormalTemperatureC
 	if math.IsNaN(high) || math.IsInf(high, 0) || math.IsNaN(normal) || math.IsInf(normal, 0) {

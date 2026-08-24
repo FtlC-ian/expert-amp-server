@@ -103,6 +103,7 @@ type settingsRequest struct {
 	FanHighTemperatureC         *float64           `json:"fanHighTemperatureC,omitempty"`
 	FanNormalTemperatureC       *float64           `json:"fanNormalTemperatureC,omitempty"`
 	FanDisplayProfile           *string            `json:"fanDisplayProfile,omitempty"`
+	FanPolicyFirmwareVersion    *string            `json:"fanPolicyFirmwareVersion,omitempty"`
 	VerifyFanModeOnStartup      *bool              `json:"verifyFanModeOnStartup,omitempty"`
 	FanBoostDurationMinutes     *int               `json:"fanBoostDurationMinutes,omitempty"`
 	MenuDebugEnabled            *bool              `json:"menuDebugEnabled,omitempty"`
@@ -775,6 +776,7 @@ func mergeSettingsRequest(current config.Settings, req settingsRequest) config.S
 		FanHighTemperatureC:         pickFloat(current.FanHighTemperatureC, req.FanHighTemperatureC),
 		FanNormalTemperatureC:       pickFloat(current.FanNormalTemperatureC, req.FanNormalTemperatureC),
 		FanDisplayProfile:           pickOptionalString(current.FanDisplayProfile, req.FanDisplayProfile),
+		FanPolicyFirmwareVersion:    pickOptionalString(current.FanPolicyFirmwareVersion, req.FanPolicyFirmwareVersion),
 		VerifyFanModeOnStartup:      pickBool(current.VerifyFanModeOnStartup, req.VerifyFanModeOnStartup),
 		FanBoostDurationMinutes:     pickInt(current.FanBoostDurationMinutes, req.FanBoostDurationMinutes),
 		MenuDebugEnabled:            pickBool(current.MenuDebugEnabled, req.MenuDebugEnabled),
@@ -793,6 +795,7 @@ func fanPolicySettings(settings config.Settings) fanpolicy.Settings {
 		HighTemperatureC:   settings.FanHighTemperatureC,
 		NormalTemperatureC: settings.FanNormalTemperatureC,
 		DisplayProfile:     settings.FanDisplayProfile,
+		FirmwareVersion:    settings.FanPolicyFirmwareVersion,
 		SafetyStandbyArmed: settings.SafetyMonitoringEnabled && settings.OvertemperatureStandbyArmed,
 		SafetyStandbyTripC: settings.TemperatureTripC,
 	}
