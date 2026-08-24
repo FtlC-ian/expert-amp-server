@@ -18,3 +18,5 @@ verified NORMAL to QUIET, SAVE/home, physical apply, re-entry, restoration to
 NORMAL, and SAVE/home again on firmware `Rel.26_03_24_A`. The production
 profile maps hardware QUIET to logical normal cooling and hardware NORMAL to
 logical high cooling. It remains STANDBY/RX-only and never authorizes DISPLAY.
+`report_00acd527_provenance.json` maps every fixture to the full report ID,
+original evidence-array index, display generation, and analyzer fingerprint.
