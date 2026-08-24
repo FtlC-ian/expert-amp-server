@@ -29,17 +29,7 @@ func TelemetryFromDisplayState(state display.State, source string) api.Telemetry
 		}
 	}
 
-	labels := strings.Fields(rows[6])
-	values := strings.Fields(rows[7])
-	for i, label := range labels {
-		label = strings.ToUpper(strings.TrimSpace(label))
-		if i >= len(values) {
-			break
-		}
-		value := strings.TrimSpace(values[i])
-		if label == "TEMP" && i+1 < len(values) {
-			value = strings.TrimSpace(values[i] + " " + values[i+1])
-		}
+	for label, value := range displayStatusFields(rows[6], rows[7]) {
 		if value == "" {
 			continue
 		}
@@ -77,6 +67,63 @@ func TelemetryFromDisplayState(state display.State, source string) api.Telemetry
 		telem.Notes = append(telem.Notes, "powerWatts not exposed in current captured home display frame")
 	}
 	return telem
+}
+
+type displayLabelSpan struct {
+	label string
+	start int
+	end   int
+}
+
+func displayStatusFields(labelRow, valueRow string) map[string]string {
+	labels := displayLabelSpans(labelRow)
+	values := []rune(valueRow)
+	fields := make(map[string]string, len(labels))
+	for i, label := range labels {
+		start := 0
+		if i > 0 {
+			start = labelBoundary(labels[i-1], label)
+		}
+		end := len(values)
+		if i+1 < len(labels) {
+			end = labelBoundary(label, labels[i+1])
+		}
+		if start > len(values) {
+			start = len(values)
+		}
+		if end > len(values) {
+			end = len(values)
+		}
+		fields[label.label] = strings.TrimSpace(string(values[start:end]))
+	}
+	return fields
+}
+
+func displayLabelSpans(row string) []displayLabelSpan {
+	runes := []rune(row)
+	spans := make([]displayLabelSpan, 0, len(strings.Fields(row)))
+	for col := 0; col < len(runes); {
+		if runes[col] == ' ' {
+			col++
+			continue
+		}
+		start := col
+		for col < len(runes) && runes[col] != ' ' {
+			col++
+		}
+		spans = append(spans, displayLabelSpan{
+			label: strings.ToUpper(string(runes[start:col])),
+			start: start,
+			end:   col,
+		})
+	}
+	return spans
+}
+
+func labelBoundary(left, right displayLabelSpan) int {
+	// Values are centered beneath their labels, so split the inter-label gap at
+	// its midpoint instead of treating either label's start as the boundary.
+	return (left.end + right.start + 1) / 2
 }
 
 func stateRows(state display.State) []string {
