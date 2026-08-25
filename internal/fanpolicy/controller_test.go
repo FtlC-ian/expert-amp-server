@@ -2,13 +2,17 @@ package fanpolicy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
@@ -572,10 +576,513 @@ func TestSecondSeriesSetupProfileRequiresExactLayoutAndHighlightGeometry(t *test
 			t.Fatal("near-match Second Series setup selected a profile")
 		}
 	}
-	if _, _, ok := identifyFanDisplayProfile(state, "EXPERT 1.3K-FA"); ok {
+	if _, _, ok := identifyFanDisplayProfile(state, "EXPERT 1.3K-FA", ""); ok {
 		t.Fatal("Second Series topology matched the First Series model")
 	}
 }
+
+func TestThirdSeriesProductionUsesExactCapturedNormalQuietPath(t *testing.T) {
+	buttons := &leaseRecordingButtons{}
+	controller := NewController(buttons)
+	if err := controller.SetManualOverride(PolicyNormal, 0); err != nil {
+		t.Fatal(err)
+	}
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesCurrentFirmware}
+	status := statusAt(70, "standby", false)
+	status.ModelName = "EXPERT 2K-FA"
+	controller.Observe(status, settings)
+
+	files := []string{
+		"report_00acd527_00_g367_home.state.json",
+		"report_00acd527_01_g368_setup_menu_config.state.json",
+		"report_00acd527_02_g369_setup_menu_antenna.state.json",
+		"report_00acd527_03_g371_setup_menu_cat.state.json",
+		"report_00acd527_04_g372_setup_menu_manual_tune.state.json",
+		"report_00acd527_05_g374_setup_menu_display.state.json",
+		"report_00acd527_06_g375_setup_menu_beep_on.state.json",
+		"report_00acd527_07_g377_setup_menu_start_oprt.state.json",
+		"report_00acd527_08_g379_setup_menu_temp_f.state.json",
+		"report_00acd527_09_g380_setup_menu_alarms_log.state.json",
+		"report_00acd527_10_g381_setup_menu_tun_ant.state.json",
+		"report_00acd527_11_g383_setup_menu_rx_ant.state.json",
+		"report_00acd527_12_g384_setup_menu_fan_noise.state.json",
+		"report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json",
+		"report_00acd527_14_g387_fan_menu_save.state.json",
+		"report_00acd527_15_g388_fan_menu_quiet_mode_ssb_only.state.json",
+		"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+		"report_00acd527_17_g391_fan_menu_normal_mode_all_modes.state.json",
+		"report_00acd527_18_g392_fan_menu_save.state.json",
+		"report_00acd527_19_g394_storing.state.json",
+		"report_00acd527_00_g367_home.state.json",
+	}
+	var result Result
+	for generation, name := range files {
+		state := loadThirdSeriesReportState(t, name)
+		result = controller.ObserveDisplay(DisplayObservation{State: state, Generation: uint64(generation + 1), TX: boolPtr(false), Operate: boolPtr(false)})
+	}
+	want := []string{"set", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "right", "set", "right", "right", "set", "right", "right", "set"}
+	if strings.Join(buttons.actions, ",") != strings.Join(want, ",") {
+		t.Fatalf("actions=%v want=%v", buttons.actions, want)
+	}
+	if result.State != StateSucceeded || result.CurrentPolicy != PolicyNormal || result.Navigation.Profile != ThirdSeriesDisplayProfile {
+		t.Fatalf("result=%+v", result)
+	}
+	for _, action := range buttons.actions {
+		if action == "display" || action == "operate" {
+			t.Fatalf("forbidden Third Series action %q in %v", action, buttons.actions)
+		}
+	}
+}
+
+func TestThirdSeriesDirectSaveHomeMapsContestRequestToHardwareNormal(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	if err := controller.SetManualOverride(PolicyHigh, 0); err != nil {
+		t.Fatal(err)
+	}
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesCurrentFirmware}
+	status := statusAt(70, "standby", false)
+	status.ModelName = "EXPERT 2K-FA"
+	controller.Observe(status, settings)
+	files := []string{
+		"report_00acd527_00_g367_home.state.json", "report_00acd527_01_g368_setup_menu_config.state.json",
+		"report_00acd527_02_g369_setup_menu_antenna.state.json", "report_00acd527_03_g371_setup_menu_cat.state.json",
+		"report_00acd527_04_g372_setup_menu_manual_tune.state.json", "report_00acd527_05_g374_setup_menu_display.state.json",
+		"report_00acd527_06_g375_setup_menu_beep_on.state.json", "report_00acd527_07_g377_setup_menu_start_oprt.state.json",
+		"report_00acd527_08_g379_setup_menu_temp_f.state.json", "report_00acd527_09_g380_setup_menu_alarms_log.state.json",
+		"report_00acd527_10_g381_setup_menu_tun_ant.state.json", "report_00acd527_11_g383_setup_menu_rx_ant.state.json",
+		"report_00acd527_12_g384_setup_menu_fan_noise.state.json", "report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+		"report_00acd527_17_g391_fan_menu_normal_mode_all_modes.state.json", "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json",
+		"report_00acd527_14_g387_fan_menu_save.state.json",
+		"report_00acd527_00_g367_home.state.json",
+	}
+	var result Result
+	for generation, name := range files {
+		result = controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, name), Generation: uint64(generation + 1), TX: boolPtr(false), Operate: boolPtr(false)})
+	}
+	for _, action := range buttons.actions {
+		if action == "display" || action == "operate" {
+			t.Fatalf("forbidden action %q", action)
+		}
+	}
+	if result.State != StateSucceeded || result.CurrentPolicy != PolicyHigh {
+		t.Fatalf("result=%+v actions=%v", result, buttons.actions)
+	}
+}
+
+func TestThirdSeriesProductionRequiresExactFirmwareAndStandbyBeforeWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name, firmware, operating string
+		blocked                   string
+	}{
+		{"missing firmware", "", "standby", "supported-fan-profile"},
+		{"wrong firmware", "Rel.26_03_24_B", "standby", "supported-fan-profile"},
+		{"case variant", "rel.08_06_26_a", "standby", "supported-fan-profile"},
+		{"operate", ThirdSeriesCurrentFirmware, "operate", "standby-only-profile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buttons := &recordingButtons{}
+			controller := NewController(buttons)
+			settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: tc.firmware}
+			status := statusAt(81, tc.operating, false)
+			status.ModelName = "EXPERT 2K-FA"
+			result := controller.Observe(status, settings)
+			if !containsBlock(result.BlockedBy, tc.blocked) {
+				t.Fatalf("result=%+v", result)
+			}
+			controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, "report_00acd527_00_g367_home.state.json"), Generation: 1, TX: boolPtr(false), Operate: boolPtr(false)})
+			if len(buttons.actions) != 0 {
+				t.Fatalf("blocked profile wrote %v", buttons.actions)
+			}
+		})
+	}
+}
+
+func TestThirdSeriesChangeLegendCannotAuthorizeSetupFollowup(t *testing.T) {
+	state := loadThirdSeriesReportState(t, "report_00acd527_01_g368_setup_menu_config.state.json")
+	state.SetRow(7, " [  ][  ]:SELECT           [SET]:CHANGE")
+	if _, ok := thirdSeriesSetupSelectionKey(state); ok {
+		t.Fatal("CHANGE topology matched production profile")
+	}
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesEvidenceFirmware}
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 2K-FA"
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, "report_00acd527_00_g367_home.state.json"), Generation: 1, TX: boolPtr(false), Operate: boolPtr(false)})
+	result := controller.ObserveDisplay(DisplayObservation{State: state, Generation: 2, TX: boolPtr(false), Operate: boolPtr(false)})
+	if strings.Join(buttons.actions, ",") != "set" {
+		t.Fatalf("near-match authorized follow-up write: %v", buttons.actions)
+	}
+	if result.State != StateFailed || !result.Navigation.MayBeInMenu {
+		t.Fatalf("near-match did not fail closed: %+v", result)
+	}
+}
+
+func TestThirdSeriesCapturedFanMapping(t *testing.T) {
+	selected, policy, ok := ThirdSeriesFanScreen(loadThirdSeriesReportState(t, "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json"))
+	if !ok || selected != "hardware-normal" || policy != PolicyHigh {
+		t.Fatalf("NORMAL frame selected=%q policy=%q ok=%v", selected, policy, ok)
+	}
+	selected, policy, ok = ThirdSeriesFanScreen(loadThirdSeriesReportState(t, "report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json"))
+	if !ok || selected != "quiet" || policy != PolicyNormal {
+		t.Fatalf("QUIET frame selected=%q policy=%q ok=%v", selected, policy, ok)
+	}
+}
+
+func TestThirdSeriesRejectsAmbiguousActiveMarker(t *testing.T) {
+	base := loadThirdSeriesReportState(t, "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json")
+	for _, tc := range []struct {
+		name          string
+		quiet, normal byte
+	}{
+		{"missing", 0x60, 0x60},
+		{"dual", 0xae, 0xae},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := base
+			state.Chars[2][4] = tc.quiet
+			state.Chars[3][4] = tc.normal
+			if _, _, ok := ThirdSeriesFanScreen(state); ok {
+				t.Fatal("ambiguous marker accepted")
+			}
+		})
+	}
+}
+
+func newThirdSeriesPassiveController(t *testing.T, current, desired string) (*Controller, *recordingButtons, Settings, api.Status) {
+	t.Helper()
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesEvidenceFirmware}
+	status := statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 2K-FA"
+	controller.manualOverride = desired
+	controller.ObserveSerialSession(1)
+	controller.ObserveFromSerialSession(status, settings, 1)
+	controller.current = current
+	controller.currentConfidence = "verified-live"
+	controller.currentModel = status.ModelName
+	controller.currentSource = "seed"
+	controller.desired = desired
+	return controller, buttons, settings, status
+}
+
+func thirdSeriesPassiveObservation(t *testing.T, name string, generation, session uint64) DisplayObservation {
+	t.Helper()
+	return DisplayObservation{
+		State:                   loadThirdSeriesReportState(t, name),
+		Generation:              generation,
+		TX:                      boolPtr(false),
+		Operate:                 boolPtr(false),
+		SerialSessionGeneration: session,
+	}
+}
+
+func observeThirdSeriesPassivePath(t *testing.T, controller *Controller, generation, session uint64, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		controller.ObserveDisplay(thirdSeriesPassiveObservation(t, name, generation, session))
+		generation++
+	}
+}
+
+func assertNoThirdSeriesPassiveReceipt(t *testing.T, controller *Controller) {
+	t.Helper()
+	if controller.currentSource == "observed-front-panel-save" {
+		t.Fatalf("passive receipt was incorrectly recorded: current=%q", controller.current)
+	}
+}
+
+func TestThirdSeriesPassiveSaveReconcilesAndCorrectsStaleReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name, current, desired, fan, save, storing string
+		temperature                                float64
+		observed                                   string
+	}{
+		{"front panel quiet", PolicyHigh, PolicyHigh, "report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json", "report_00acd527_18_g392_fan_menu_save.state.json", "report_00acd527_19_g394_storing.state.json", 81, PolicyNormal},
+		{"front panel normal", PolicyNormal, PolicyNormal, "report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json", "report_00acd527_14_g387_fan_menu_save.state.json", "report_00acd527_22_g2378_storing.state.json", 70, PolicyHigh},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controller, buttons, settings, status := newThirdSeriesPassiveController(t, tc.current, tc.desired)
+			status.TemperatureC = &tc.temperature
+			controller.ObserveFromSerialSession(status, settings, 1)
+			observeThirdSeriesPassivePath(t, controller, 1, 1, tc.fan, tc.save, tc.storing, "report_00acd527_00_g367_home.state.json")
+			if controller.current != tc.observed || controller.currentSource != "observed-front-panel-save" {
+				t.Fatalf("receipt current=%q source=%q", controller.current, controller.currentSource)
+			}
+			if strings.Join(buttons.actions, ",") != "set" {
+				t.Fatalf("stale desired receipt skipped correction or wrote extra: %v", buttons.actions)
+			}
+		})
+	}
+}
+
+func TestThirdSeriesPassiveSaveRejectsReplayedPhases(t *testing.T) {
+	const (
+		fan     = "report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json"
+		save    = "report_00acd527_18_g392_fan_menu_save.state.json"
+		storing = "report_00acd527_19_g394_storing.state.json"
+		home    = "report_00acd527_00_g367_home.state.json"
+	)
+	for _, tc := range []struct {
+		name       string
+		generation uint64
+		phase      string
+	}{
+		{name: "storing", generation: 2, phase: storing},
+		{name: "home", generation: 3, phase: home},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controller, _, _, _ := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+			observeThirdSeriesPassivePath(t, controller, 1, 1, fan, save)
+			if tc.name == "home" {
+				controller.ObserveDisplay(thirdSeriesPassiveObservation(t, storing, 3, 1))
+			}
+			controller.ObserveDisplay(thirdSeriesPassiveObservation(t, tc.phase, tc.generation, 1))
+			observeThirdSeriesPassivePath(t, controller, 4, 1, storing, home)
+			assertNoThirdSeriesPassiveReceipt(t, controller)
+		})
+	}
+}
+
+func TestThirdSeriesPassiveSaveCannotStartFromReplayedFan(t *testing.T) {
+	controller, _, _, _ := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+	controller.ObserveDisplay(thirdSeriesPassiveObservation(t,
+		"report_00acd527_00_g367_home.state.json", 10, 1))
+	observeThirdSeriesPassivePath(t, controller, 9, 1,
+		"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json")
+	observeThirdSeriesPassivePath(t, controller, 11, 1,
+		"report_00acd527_18_g392_fan_menu_save.state.json",
+		"report_00acd527_19_g394_storing.state.json",
+		"report_00acd527_00_g367_home.state.json")
+	assertNoThirdSeriesPassiveReceipt(t, controller)
+}
+
+func TestThirdSeriesPassiveSaveCannotSpliceSerialSessions(t *testing.T) {
+	controller, _, settings, status := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+	observeThirdSeriesPassivePath(t, controller, 1, 1,
+		"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+		"report_00acd527_18_g392_fan_menu_save.state.json")
+	controller.ObserveSerialSession(2)
+	controller.ObserveFromSerialSession(status, settings, 2)
+	observeThirdSeriesPassivePath(t, controller, 3, 2,
+		"report_00acd527_19_g394_storing.state.json",
+		"report_00acd527_00_g367_home.state.json")
+	assertNoThirdSeriesPassiveReceipt(t, controller)
+}
+
+func TestThirdSeriesPassiveSaveResetsOnModelOrFirmwareChange(t *testing.T) {
+	for _, change := range []string{"model", "firmware"} {
+		t.Run(change, func(t *testing.T) {
+			controller, _, settings, status := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+			observeThirdSeriesPassivePath(t, controller, 1, 1,
+				"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+				"report_00acd527_18_g392_fan_menu_save.state.json")
+			switch change {
+			case "model":
+				changed := status
+				changed.ModelName = "EXPERT 1.5K-FA"
+				controller.ObserveFromSerialSession(changed, settings, 1)
+				controller.ObserveFromSerialSession(status, settings, 1)
+			case "firmware":
+				changed := settings
+				changed.FirmwareVersion = "Rel.other"
+				controller.UpdateSettings(status, changed)
+				controller.UpdateSettings(status, settings)
+			}
+			observeThirdSeriesPassivePath(t, controller, 3, 1,
+				"report_00acd527_19_g394_storing.state.json",
+				"report_00acd527_00_g367_home.state.json")
+			assertNoThirdSeriesPassiveReceipt(t, controller)
+		})
+	}
+}
+
+func TestThirdSeriesPassiveSaveNeverFallsBackToGenericParser(t *testing.T) {
+	controller, _, settings, status := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+	settings.FirmwareVersion = "Rel.other"
+	controller.UpdateSettings(status, settings)
+	for generation, state := range []display.State{
+		submenuScreen("FAN MANAGEMENT", "NORMAL"),
+		submenuScreen("SAVE", "NORMAL"),
+		storingScreen(),
+		homeScreen(),
+	} {
+		controller.ObserveDisplay(DisplayObservation{
+			State:                   state,
+			Generation:              uint64(generation + 1),
+			TX:                      boolPtr(false),
+			Operate:                 boolPtr(false),
+			SerialSessionGeneration: 1,
+		})
+	}
+	assertNoThirdSeriesPassiveReceipt(t, controller)
+}
+
+func TestThirdSeriesPassiveSaveResetsOnUnsafeStatusEvidence(t *testing.T) {
+	for _, interruption := range []string{"tx", "tx unknown", "operate", "operating unknown"} {
+		t.Run(interruption, func(t *testing.T) {
+			controller, _, settings, status := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+			observeThirdSeriesPassivePath(t, controller, 1, 1,
+				"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+				"report_00acd527_18_g392_fan_menu_save.state.json")
+			changed := status
+			switch interruption {
+			case "tx":
+				changed.TX = boolPtr(true)
+			case "tx unknown":
+				changed.TX = nil
+			case "operate":
+				changed.OperatingState = "operate"
+			case "operating unknown":
+				changed.OperatingState = ""
+			}
+			controller.ObserveFromSerialSession(changed, settings, 1)
+			controller.ObserveFromSerialSession(status, settings, 1)
+			observeThirdSeriesPassivePath(t, controller, 3, 1,
+				"report_00acd527_19_g394_storing.state.json",
+				"report_00acd527_00_g367_home.state.json")
+			assertNoThirdSeriesPassiveReceipt(t, controller)
+		})
+	}
+}
+
+func TestThirdSeriesPassiveSaveRejectsUnboundOrUnsafeDisplayEvidence(t *testing.T) {
+	for _, interruption := range []string{"session zero", "tx unknown", "operate unknown", "phase discontinuity"} {
+		t.Run(interruption, func(t *testing.T) {
+			controller, _, _, _ := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+			controller.ObserveDisplay(thirdSeriesPassiveObservation(t,
+				"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json", 1, 1))
+			observation := thirdSeriesPassiveObservation(t, "report_00acd527_18_g392_fan_menu_save.state.json", 2, 1)
+			switch interruption {
+			case "session zero":
+				observation.SerialSessionGeneration = 0
+			case "tx unknown":
+				observation.TX = nil
+			case "operate unknown":
+				observation.Operate = nil
+			case "phase discontinuity":
+				observation.State = loadThirdSeriesReportState(t, "report_00acd527_00_g367_home.state.json")
+			}
+			controller.ObserveDisplay(observation)
+			observeThirdSeriesPassivePath(t, controller, 3, 1,
+				"report_00acd527_19_g394_storing.state.json",
+				"report_00acd527_00_g367_home.state.json")
+			assertNoThirdSeriesPassiveReceipt(t, controller)
+		})
+	}
+}
+
+func TestThirdSeriesAllCapturedStoringVariantsAndDirectHome(t *testing.T) {
+	for _, name := range []string{
+		"report_00acd527_19_g394_storing.state.json", "report_00acd527_20_g395_storing.state.json",
+		"report_00acd527_21_g396_storing.state.json", "report_00acd527_22_g2378_storing.state.json",
+	} {
+		if !matchesThirdSeriesStoring(loadThirdSeriesReportState(t, name)) {
+			t.Fatalf("captured storing fixture %s did not match", name)
+		}
+	}
+}
+
+func TestThirdSeriesFixtureProvenanceManifest(t *testing.T) {
+	type entry struct {
+		File          string `json:"file"`
+		EvidenceIndex int    `json:"evidenceIndex"`
+		Generation    uint64 `json:"generation"`
+		Fingerprint   string `json:"fingerprint"`
+	}
+	var manifest struct {
+		SchemaVersion string  `json:"schemaVersion"`
+		ReportID      string  `json:"reportId"`
+		Model         string  `json:"model"`
+		Firmware      string  `json:"firmware"`
+		ServerVersion string  `json:"serverVersion"`
+		Fixtures      []entry `json:"fixtures"`
+	}
+	data, err := os.ReadFile(filepath.Join("..", "server", "testdata", "third_series", "report_00acd527_provenance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ReportID != "00acd5279f994baf497f58cf607f9efea6b770fbf3679beae301a88ce177b715" || manifest.Model != "EXPERT 2K-FA" || manifest.Firmware != ThirdSeriesEvidenceFirmware || len(manifest.Fixtures) != 23 {
+		t.Fatalf("manifest header=%+v", manifest)
+	}
+	seenFiles, seenIndexes := map[string]bool{}, map[int]bool{}
+	for _, fixture := range manifest.Fixtures {
+		if seenFiles[fixture.File] || seenIndexes[fixture.EvidenceIndex] {
+			t.Fatalf("duplicate provenance entry %+v", fixture)
+		}
+		seenFiles[fixture.File], seenIndexes[fixture.EvidenceIndex] = true, true
+		state := loadThirdSeriesReportState(t, fixture.File)
+		if got := menudebug.Analyze(state).Fingerprint; got != fixture.Fingerprint {
+			t.Fatalf("%s fingerprint=%s want=%s", fixture.File, got, fixture.Fingerprint)
+		}
+		if fixture.Generation == 0 {
+			t.Fatalf("%s has zero generation", fixture.File)
+		}
+	}
+	files, err := filepath.Glob(filepath.Join("..", "server", "testdata", "third_series", "report_00acd527_*.state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != len(manifest.Fixtures) {
+		t.Fatalf("fixture files=%d manifest=%d", len(files), len(manifest.Fixtures))
+	}
+}
+
+func TestThirdSeriesTXAndStaleReceiptsDoNotAuthorizeFollowup(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesEvidenceFirmware}
+	status := statusAt(81, "standby", true)
+	status.ModelName = "EXPERT 2K-FA"
+	result := controller.Observe(status, settings)
+	if !containsBlock(result.BlockedBy, "rx") {
+		t.Fatalf("TX result=%+v", result)
+	}
+	controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, "report_00acd527_00_g367_home.state.json"), Generation: 1, TX: boolPtr(true), Operate: boolPtr(false)})
+	if len(buttons.actions) != 0 {
+		t.Fatalf("TX wrote %v", buttons.actions)
+	}
+
+	status = statusAt(81, "standby", false)
+	status.ModelName = "EXPERT 2K-FA"
+	controller.Observe(status, settings)
+	controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, "report_00acd527_00_g367_home.state.json"), Generation: 2, TX: boolPtr(false), Operate: boolPtr(false)})
+	if strings.Join(buttons.actions, ",") != "set" {
+		t.Fatalf("home actions=%v", buttons.actions)
+	}
+	controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, "report_00acd527_01_g368_setup_menu_config.state.json"), Generation: 2, TX: boolPtr(false), Operate: boolPtr(false)})
+	if strings.Join(buttons.actions, ",") != "set" {
+		t.Fatalf("stale receipt wrote follow-up: %v", buttons.actions)
+	}
+	controller.Tick(time.Now().Add(navigationTimeout + time.Second))
+	if strings.Join(buttons.actions, ",") != "set" {
+		t.Fatalf("timeout sent blind recovery: %v", buttons.actions)
+	}
+	if !controller.Current().Navigation.MayBeInMenu || controller.Current().State != StateFailed {
+		t.Fatalf("timeout did not fail closed: %+v", controller.Current())
+	}
+}
+
+func loadThirdSeriesReportState(t *testing.T, name string) display.State {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "server", "testdata", "third_series", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state display.State
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func boolPtr(value bool) *bool { return &value }
 
 func TestControllerIgnoresLiveHomeTelemetryChangesWhileWaitingForSetup(t *testing.T) {
 	buttons := &recordingButtons{}

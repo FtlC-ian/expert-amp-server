@@ -73,12 +73,19 @@ type navState struct {
 	failureAfterGen         uint64
 	profile                 string
 	setupIndex              int
+	expectedThirdSelection  string
 }
 
 type passiveSaveState struct {
 	candidatePolicy string
 	sawSave         bool
 	sawStoring      bool
+	thirdSeries     bool
+	phase           string
+	model           string
+	firmware        string
+	serialSession   uint64
+	lastGeneration  uint64
 }
 
 type PersistentState struct {
@@ -414,6 +421,7 @@ func (c *Controller) ObserveSerialSession(serialSessionGeneration uint64) {
 	}
 	c.serialSessionGeneration = serialSessionGeneration
 	c.statusSerialSessionGeneration = 0
+	c.passive = passiveSaveState{}
 	if c.nav.active {
 		c.failLocked("serial session changed during fan-policy navigation")
 	}
@@ -457,6 +465,10 @@ func (c *Controller) observe(status api.Status, settings Settings, protocolObser
 			c.clearVerifiedPolicyLocked()
 			c.persistLocked()
 		}
+	}
+	if c.passive.thirdSeries && ((!protocolObservation && !c.thirdSeriesPassiveStatusBindingAllowedLocked()) ||
+		(protocolObservation && (serialSessionGeneration == 0 || !c.thirdSeriesPassiveStatusBindingAllowedLocked()))) {
+		c.passive = passiveSaveState{}
 	}
 
 	switch {
@@ -514,6 +526,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 	}
 
 	now := c.now()
+	previousDisplayGeneration := c.lastDisplayGen
 	key := semanticDisplayKey(observation.State)
 	c.lastDisplayGen = observation.Generation
 	c.lastDisplayKey = key
@@ -530,7 +543,10 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 		operate := *observation.Operate
 		c.displayOperate = &operate
 	}
-	if !c.nav.active {
+	if !c.nav.active && (observation.Generation == 0 ||
+		(previousDisplayGeneration != 0 && observation.Generation <= previousDisplayGeneration)) {
+		c.passive = passiveSaveState{}
+	} else if !c.nav.active {
 		c.observePassiveSaveLocked(observation)
 	}
 	status := c.currentStatusLocked(now)
@@ -810,13 +826,45 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 	}
 	switch c.nav.step {
 	case "setup:identify":
-		profile, initialKey, ok := identifyFanDisplayProfile(observation.State, c.status.ModelName)
+		profile, initialKey, ok := identifyFanDisplayProfile(observation.State, c.status.ModelName, c.settings.FirmwareVersion)
 		if !ok || key != initialKey {
 			return c.unexpectedLocked(observation.State)
 		}
 		c.nav.profile = profile.id
 		c.nav.setupIndex = 0
 		return c.advanceProfileSetupLocked(observation, key)
+	case "third-fan:entry":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok {
+			return c.unexpectedLocked(observation.State)
+		}
+		c.nav.observedPolicy = active
+		if c.nav.verifyOnly {
+			c.nav.target = active
+		}
+		return c.advanceThirdSeriesTargetLocked(observation, key, selected, active)
+	case "third-fan:target":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok || selected != c.nav.expectedThirdSelection || active != c.nav.observedPolicy {
+			return c.unexpectedLocked(observation.State)
+		}
+		return c.advanceThirdSeriesTargetLocked(observation, key, selected, active)
+	case "third-fan:toggled":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok || selected != thirdSeriesSelectionForPolicy(c.nav.target) || active != c.nav.target {
+			return c.unexpectedLocked(observation.State)
+		}
+		c.nav.observedPolicy = active
+		return c.sendThirdSeriesRightLocked("third-fan:save", observation.Generation, key, selected)
+	case "third-fan:save":
+		selected, active, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok || selected != c.nav.expectedThirdSelection || active != c.nav.target {
+			return c.unexpectedLocked(observation.State)
+		}
+		if selected == "save" {
+			return c.sendLocked("set", "submenu:STORING", observation.Generation, key)
+		}
+		return c.sendThirdSeriesRightLocked("third-fan:save", observation.Generation, key, selected)
 	case "submenu:TEMPERATURE SCALE":
 		policy, ok := submenuPolicy(observation.State, "TEMPERATURE SCALE")
 		if !ok {
@@ -861,7 +909,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 			c.nav.step = "home"
 			return c.advanceLocked(observation, key)
 		}
-		if !matchesStoring(observation.State) {
+		if !matchesStoring(observation.State) && !(c.nav.profile == ThirdSeriesDisplayProfile && matchesThirdSeriesStoring(observation.State)) {
 			return c.unexpectedLocked(observation.State)
 		}
 		c.lastVerifiedScreen = key
@@ -923,10 +971,36 @@ func (c *Controller) advanceProfileSetupLocked(observation DisplayObservation, k
 	}
 	c.lastVerifiedScreen = key
 	if c.nav.setupIndex == len(profile.setupKeys)-1 {
-		return c.sendLocked("set", "submenu:TEMPERATURE SCALE", observation.Generation, key)
+		next := "submenu:TEMPERATURE SCALE"
+		if profile.id == ThirdSeriesDisplayProfile {
+			next = "third-fan:entry"
+		}
+		return c.sendLocked("set", next, observation.Generation, key)
 	}
 	c.nav.setupIndex++
 	return c.sendLocked("right", profile.setupKeys[c.nav.setupIndex], observation.Generation, key)
+}
+
+func (c *Controller) advanceThirdSeriesTargetLocked(observation DisplayObservation, key, selected, active string) bool {
+	targetSelection := thirdSeriesSelectionForPolicy(c.nav.target)
+	if targetSelection == "" {
+		return c.unexpectedLocked(observation.State)
+	}
+	if active == c.nav.target {
+		return c.sendThirdSeriesRightLocked("third-fan:save", observation.Generation, key, selected)
+	}
+	if selected == targetSelection {
+		return c.sendLocked("set", "third-fan:toggled", observation.Generation, key)
+	}
+	return c.sendThirdSeriesRightLocked("third-fan:target", observation.Generation, key, selected)
+}
+
+func (c *Controller) sendThirdSeriesRightLocked(step string, generation uint64, key, selected string) bool {
+	c.nav.expectedThirdSelection = nextThirdSeriesSelection(selected)
+	if c.nav.expectedThirdSelection == "" {
+		return false
+	}
+	return c.sendLocked("right", step, generation, key)
 }
 
 func (c *Controller) sendLocked(action, nextStep string, generation uint64, previousKey string) bool {
@@ -1255,10 +1329,18 @@ func (c *Controller) clearVerifiedPolicyLocked() {
 }
 
 func (c *Controller) observePassiveSaveLocked(observation DisplayObservation) {
+	if c.thirdSeriesModelLocked() {
+		c.observeThirdSeriesPassiveSaveLocked(observation)
+		return
+	}
+	if c.passive.thirdSeries {
+		c.passive = passiveSaveState{}
+	}
 	if policy, ok := submenuPolicy(observation.State, "FAN MANAGEMENT"); ok {
 		c.passive.candidatePolicy = policy
 		c.passive.sawSave = false
 		c.passive.sawStoring = false
+		c.passive.thirdSeries = false
 		return
 	}
 	if matchesSubmenuSelection(observation.State, "SAVE") && c.passive.candidatePolicy != "" {
@@ -1276,6 +1358,100 @@ func (c *Controller) observePassiveSaveLocked(observation DisplayObservation) {
 		c.recordVerifiedPolicyLocked(c.passive.candidatePolicy, c.now(), "observed-front-panel-save")
 	}
 	c.passive = passiveSaveState{}
+}
+
+func (c *Controller) observeThirdSeriesPassiveSaveLocked(observation DisplayObservation) {
+	if c.passive.thirdSeries {
+		c.observeThirdSeriesPassiveContinuationLocked(observation)
+		return
+	}
+	c.passive = passiveSaveState{}
+	selected, policy, ok := ThirdSeriesFanScreen(observation.State)
+	if !ok || selected == "save" || !c.thirdSeriesPassiveEvidenceAllowedLocked(observation) {
+		return
+	}
+	c.passive = passiveSaveState{
+		candidatePolicy: policy,
+		thirdSeries:     true,
+		phase:           "fan",
+		model:           strings.TrimSpace(c.status.ModelName),
+		firmware:        strings.TrimSpace(c.settings.FirmwareVersion),
+		serialSession:   observation.SerialSessionGeneration,
+		lastGeneration:  observation.Generation,
+	}
+}
+
+func (c *Controller) observeThirdSeriesPassiveContinuationLocked(observation DisplayObservation) {
+	if !c.thirdSeriesPassiveEvidenceAllowedLocked(observation) || observation.Generation <= c.passive.lastGeneration {
+		c.passive = passiveSaveState{}
+		return
+	}
+	c.passive.lastGeneration = observation.Generation
+	switch c.passive.phase {
+	case "fan":
+		selected, policy, ok := ThirdSeriesFanScreen(observation.State)
+		if !ok {
+			c.passive = passiveSaveState{}
+			return
+		}
+		if selected == "save" {
+			if policy != c.passive.candidatePolicy {
+				c.passive = passiveSaveState{}
+				return
+			}
+			c.passive.phase = "save"
+			return
+		}
+		c.passive.candidatePolicy = policy
+	case "save":
+		if selected, policy, ok := ThirdSeriesFanScreen(observation.State); ok && selected == "save" && policy == c.passive.candidatePolicy {
+			return
+		}
+		if !matchesThirdSeriesStoring(observation.State) {
+			c.passive = passiveSaveState{}
+			return
+		}
+		c.passive.phase = "storing"
+	case "storing":
+		if matchesThirdSeriesStoring(observation.State) {
+			return
+		}
+		if !matchesStandbyHome(observation.State) {
+			c.passive = passiveSaveState{}
+			return
+		}
+		c.recordVerifiedPolicyLocked(c.passive.candidatePolicy, c.now(), "observed-front-panel-save")
+		c.passive = passiveSaveState{}
+	default:
+		c.passive = passiveSaveState{}
+	}
+}
+
+func (c *Controller) thirdSeriesPassiveEvidenceAllowedLocked(observation DisplayObservation) bool {
+	if !c.thirdSeriesPassiveStatusBindingAllowedLocked() || observation.Generation == 0 ||
+		observation.SerialSessionGeneration == 0 || observation.SerialSessionGeneration != c.serialSessionGeneration ||
+		observation.TX == nil || *observation.TX || observation.Operate == nil || *observation.Operate {
+		return false
+	}
+	if !c.passive.thirdSeries {
+		return true
+	}
+	return c.passive.serialSession == observation.SerialSessionGeneration &&
+		c.passive.model == strings.TrimSpace(c.status.ModelName) &&
+		c.passive.firmware == strings.TrimSpace(c.settings.FirmwareVersion)
+}
+
+func (c *Controller) thirdSeriesPassiveStatusBindingAllowedLocked() bool {
+	profile, bound := verifiedFanDisplayProfileForModel(c.status.ModelName, c.settings.FirmwareVersion)
+	status := c.currentStatusLocked(c.now())
+	return bound && profile.id == ThirdSeriesDisplayProfile && c.serialSessionGeneration != 0 &&
+		c.statusSerialSessionGeneration == c.serialSessionGeneration && status.RecentContact &&
+		normalizeOperatingState(status.OperatingState) == "standby" && status.TX != nil && !*status.TX
+}
+
+func (c *Controller) thirdSeriesModelLocked() bool {
+	profile, ok := fanDisplayProfileByID(ThirdSeriesDisplayProfile)
+	return ok && strings.EqualFold(strings.TrimSpace(c.status.ModelName), profile.model)
 }
 
 func (c *Controller) persistentStateLocked() PersistentState {
@@ -1375,7 +1551,7 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 	if !c.currentVerifiedAt.IsZero() {
 		base.CurrentPolicyVerifiedAt = c.currentVerifiedAt.UTC().Format(time.RFC3339)
 	}
-	_, supportedProfile := verifiedFanDisplayProfileForModel(base.Observations.ModelName)
+	_, supportedProfile := verifiedFanDisplayProfileForModel(base.Observations.ModelName, settings.FirmwareVersion)
 	base.ActionAvailable = c.transport != nil && supportedProfile
 	if base.ControlActive {
 		switch {

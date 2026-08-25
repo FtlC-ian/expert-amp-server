@@ -12,9 +12,12 @@ const (
 	PolicyNormal  = "normal"
 	PolicyHigh    = "high-cooling"
 
-	FirstSeriesDisplayProfile  = "expert-1.3k-fa-first-series-v1"
-	SecondSeriesDisplayProfile = "expert-1.5k-fa-second-series-v1"
-	SupportedDisplayProfile    = FirstSeriesDisplayProfile
+	FirstSeriesDisplayProfile   = "expert-1.3k-fa-first-series-v1"
+	SecondSeriesDisplayProfile  = "expert-1.5k-fa-second-series-v1"
+	ThirdSeriesDisplayProfile   = "expert-2k-fa-third-series-fan-normal-quiet-v1"
+	ThirdSeriesEvidenceFirmware = "Rel.26_03_24_A"
+	ThirdSeriesCurrentFirmware  = "Rel.08_06_26_A"
+	SupportedDisplayProfile     = FirstSeriesDisplayProfile
 
 	StateDisabled    = "disabled"
 	StateUnavailable = "unavailable"
@@ -32,6 +35,7 @@ type Settings struct {
 	HighTemperatureC   float64
 	NormalTemperatureC float64
 	DisplayProfile     string
+	FirmwareVersion    string
 	SafetyStandbyArmed bool
 	SafetyStandbyTripC float64
 	OverridePolicy     string
@@ -122,7 +126,7 @@ func Evaluate(status api.Status, settings Settings, previousDesired string) Resu
 		CurrentPolicy:           PolicyUnknown,
 		CurrentPolicyConfidence: "unknown",
 		BlockedBy:               []string{},
-		SupportedModes:          supportedFanModesForModel(status.ModelName),
+		SupportedModes:          supportedFanModesForModel(status.ModelName, settings.FirmwareVersion),
 		Navigation:              Navigation{State: "idle", ActionsTaken: []string{}},
 		ManualOverride:          ManualOverride{Active: overridePolicy != PolicyUnknown},
 		Verification:            Verification{Requested: settings.VerifyRequested},
@@ -222,8 +226,11 @@ func actionBlocks(status api.Status, settings Settings) []string {
 	if operatingState != "standby" && operatingState != "operate" {
 		blocked = append(blocked, "operating-state")
 	}
-	if _, ok := verifiedFanDisplayProfileForModel(status.ModelName); !ok {
+	profile, ok := verifiedFanDisplayProfileForModel(status.ModelName, settings.FirmwareVersion)
+	if !ok {
 		blocked = append(blocked, "supported-fan-profile")
+	} else if profile.standbyOnly && operatingState != "standby" {
+		blocked = append(blocked, "standby-only-profile")
 	}
 	if settings.SafetyStandbyArmed && settings.SafetyStandbyTripC > 0 {
 		if temperature, _ := maximumTemperature(

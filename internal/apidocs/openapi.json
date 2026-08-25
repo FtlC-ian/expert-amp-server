@@ -2503,6 +2503,10 @@
             ],
             "description": "Legacy compatibility field. The current experimental path is selected automatically and verifies observed screens at runtime."
           },
+          "fanPolicyFirmwareVersion": {
+            "type": "string",
+            "description": "Explicit operator-declared actual amplifier firmware binding, not a profile alias. Third Series Expert 2K-FA requires exact Rel.26_03_24_A or Rel.08_06_26_A because the live status protocol does not report firmware; empty, typo, case-variant, or other values fail closed."
+          },
           "verifyFanModeOnStartup": {
             "type": "boolean",
             "default": false,
@@ -2663,6 +2667,11 @@
               "expert-1.3k-fa-first-series-v1"
             ],
             "description": "Legacy compatibility field; no longer required to use the experimental verified path."
+          },
+          "fanPolicyFirmwareVersion": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Explicit operator-declared actual firmware gate for production fan navigation, not a profile alias. Third Series Expert 2K-FA requires exact Rel.26_03_24_A or Rel.08_06_26_A; empty, typo, case-variant, or any other value fails closed before SET."
           },
           "verifyFanModeOnStartup": {
             "type": "boolean",

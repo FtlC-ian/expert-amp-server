@@ -149,6 +149,21 @@ func TestEvaluateAdvertisesModesOnlyForPromotedProfiles(t *testing.T) {
 	if modes := Evaluate(status, settings, "").SupportedModes; len(modes) != 0 {
 		t.Fatalf("unsupported model advertised modes: %v", modes)
 	}
+
+	status.ModelName = "EXPERT 2K-FA"
+	for _, firmware := range []string{ThirdSeriesEvidenceFirmware, ThirdSeriesCurrentFirmware} {
+		settings.FirmwareVersion = firmware
+		if got := strings.Join(Evaluate(status, settings, "").SupportedModes, ","); got != "normal,contest" {
+			t.Fatalf("Third Series firmware %q supported modes = %q", firmware, got)
+		}
+	}
+	for _, firmware := range []string{"", "Rel.08_06_26", "rel.08_06_26_a", "Rel.08_06_26_B"} {
+		settings.FirmwareVersion = firmware
+		result := Evaluate(status, settings, "")
+		if len(result.SupportedModes) != 0 || !containsBlock(result.BlockedBy, "supported-fan-profile") {
+			t.Fatalf("unsupported Third Series firmware %q was advertised or unblocked: %+v", firmware, result)
+		}
+	}
 }
 
 func statusAt(temperature float64, operatingState string, tx bool) api.Status {
