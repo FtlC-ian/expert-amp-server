@@ -2,9 +2,70 @@
 
 ## Unreleased
 
+### Added
+
+- Add a candidate-only Expert 2K-FA Third Series reporting workflow bound to the exact model, reviewed setup topology, and firmware `Rel.26_03_24_A`. The guarded test runs hardware NORMAL → QUIET → NORMAL only from verified STANDBY/RX, records raw LCD evidence, requires physical apply and restore confirmation, and never sends DISPLAY or changes OPERATE/STANDBY.
+- Add narrowly scoped startup-verification recovery for the reviewed First Series 1.3K-FA and Second Series 1.5K-FA top-level setup grids. A failed verification may send DISPLAY once only from an exact eligible setup waypoint with fresh STANDBY/RX evidence; it remains failed and latched until explicitly cleared.
+
 ### Fixed
 
 - Preserve explicit `false` values for `serialAssertDTR` and `serialAssertRTS` across settings responses, config rewrites, unrelated settings saves, and restarts while retaining the existing `true` default for absent fields.
+- Preserve fixed-column display telemetry values containing spaces, such as `80 m` and `90 F`, without shifting ANT, CAT, output-level, SWR, or temperature fields.
+- Accept ordinary repeated LCD spaces in reviewed setup labels such as `RX  ANT` while continuing to reject changed labels, split highlights, controls, Unicode separators, and unsafe SAVE matches.
+- Accept the reviewed Second Series setup topology on either INPUT 1 or INPUT 2 without weakening model or layout binding.
+- Surface bounded collector validation errors, keep transient report loading and recovery retryable, improve terminal announcements and Menu Debug accessibility, and prevent cross-model, reconnect, stale-evidence, or ambiguous-screen data from authorizing a candidate transaction.
+
+### Validation and scope
+
+- The Third Series candidate completed one physically confirmed NORMAL → QUIET → NORMAL evidence run, but production 2K-FA fan control remains excluded pending the separate production-path hardware gate in draft PR #34.
+- The First Series Expert 1.3K-FA and Second Series Expert 1.5K-FA remain the only production fan profiles on `main`.
+
+## v0.4.6 - 2026-08-12
+
+Built-in Menu Debug report collector release.
+
+### Added
+
+- Include the public receive-only Menu Debug collector URL in official builds so operators can explicitly upload completed, sanitized reports without configuring an environment variable.
+- Keep upload opt-in through an explicit consent checkbox and one-shot action; incomplete reports remain local-only, and the collector has no amplifier-control route.
+- Preserve the existing environment-variable and command-line overrides for development, self-hosting, or complete upload opt-out.
+
+### Validation
+
+- Verified the full Go suite, collector TypeScript and Vitest checks, live collector health, embedded build metadata, release assets, and SHA-256 checksums before publication.
+
+## v0.4.5 - 2026-08-03
+
+Expert 1.5K-FA production fan-control release.
+
+### Added
+
+- Promote the hardware-verified Expert 1.5K-FA Second Series CONFIG-first fan profile for display-verified NORMAL and CONTEST control.
+- Retain production support for the First Series Expert 1.3K-FA while leaving F-KFA and unknown layouts blocked before value changes or SAVE.
+
+### Safety hardening
+
+- Bind every menu and OPERATE write to the exact live serial session, amplifier model, expected operating state, and RX status.
+- Discard callbacks from retired serial sessions before they can affect navigation, recovery, passive SAVE evidence, or verified policy receipts.
+- Bind persisted verified fan-policy receipts to the amplifier model and clear them after model or serial-session replacement.
+- Fail closed if the connected amplifier changes, including between two otherwise supported models.
+
+### Validation
+
+- Promote the 1.5K profile from a complete, physically confirmed NORMAL → CONTEST → NORMAL guarded report.
+
+## v0.4.4 - 2026-08-03
+
+Complete fan-only Menu Debug report corrective release.
+
+### Fixed
+
+- Finalize the built-in wizard report immediately after successful fan restoration confirmation instead of silently continuing into unrelated bank discovery.
+- Keep bank topology available only to API clients that deliberately request it.
+
+### Safety
+
+- Preserve one authorization and one newer display receipt per amplifier command, fail closed on TX or stale state, refuse incomplete uploads, and never blindly retry or restore OPERATE.
 
 ## v0.4.3 - 2026-08-02
 
