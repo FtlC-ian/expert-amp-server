@@ -12,11 +12,12 @@ const (
 	PolicyNormal  = "normal"
 	PolicyHigh    = "high-cooling"
 
-	FirstSeriesDisplayProfile  = "expert-1.3k-fa-first-series-v1"
-	SecondSeriesDisplayProfile = "expert-1.5k-fa-second-series-v1"
-	ThirdSeriesDisplayProfile  = "expert-2k-fa-third-series-fan-normal-quiet-v1"
-	ThirdSeriesFirmware        = "Rel.26_03_24_A"
-	SupportedDisplayProfile    = FirstSeriesDisplayProfile
+	FirstSeriesDisplayProfile   = "expert-1.3k-fa-first-series-v1"
+	SecondSeriesDisplayProfile  = "expert-1.5k-fa-second-series-v1"
+	ThirdSeriesDisplayProfile   = "expert-2k-fa-third-series-fan-normal-quiet-v1"
+	ThirdSeriesEvidenceFirmware = "Rel.26_03_24_A"
+	ThirdSeriesCurrentFirmware  = "Rel.08_06_26_A"
+	SupportedDisplayProfile     = FirstSeriesDisplayProfile
 
 	StateDisabled    = "disabled"
 	StateUnavailable = "unavailable"

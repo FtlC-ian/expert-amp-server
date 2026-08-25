@@ -20,3 +20,9 @@ profile maps hardware QUIET to logical normal cooling and hardware NORMAL to
 logical high cooling. It remains STANDBY/RX-only and never authorizes DISPLAY.
 `report_00acd527_provenance.json` maps every fixture to the full report ID,
 original evidence-array index, display generation, and analyzer fingerprint.
+
+After the same amplifier was upgraded to `Rel.08_06_26_A`, Justin separately
+performed a read-only re-capture of the top setup grid and FAN NOISE page/cursor
+topology and reported them exactly unchanged. No new fixture or report is added
+for that observation: it is not a second complete reversible run, and all 23
+`report_00acd527_*` states retain their original `Rel.26_03_24_A` provenance.

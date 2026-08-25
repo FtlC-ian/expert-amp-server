@@ -4,6 +4,10 @@
 
 Actuation-coordination safety release.
 
+### Added
+
+- Allow the exact operator-declared Third Series Expert 2K-FA firmware values `Rel.26_03_24_A` and `Rel.08_06_26_A` on the existing model-, topology-, and STANDBY/RX-bound production fan path. Empty, mistyped, case-variant, or other firmware values advertise no modes and send no amplifier commands; the newer firmware evidence is limited to a read-only confirmation of unchanged setup and FAN NOISE topology.
+
 ### Fixed
 
 - Prevent wake/serial-lifecycle lock inversions from deadlocking Menu Debug lease acquisition, stale lease release, or the synchronous overtemperature callback. Wake now reserves actuation without holding the coordinator mutex across serial I/O; safety defers without latching, retries on a newer authoritative status poll after wake, and then preempts.
