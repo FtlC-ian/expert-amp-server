@@ -587,7 +587,7 @@ func TestThirdSeriesProductionUsesExactCapturedNormalQuietPath(t *testing.T) {
 	if err := controller.SetManualOverride(PolicyNormal, 0); err != nil {
 		t.Fatal(err)
 	}
-	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesFirmware}
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesCurrentFirmware}
 	status := statusAt(70, "standby", false)
 	status.ModelName = "EXPERT 2K-FA"
 	controller.Observe(status, settings)
@@ -640,7 +640,7 @@ func TestThirdSeriesDirectSaveHomeMapsContestRequestToHardwareNormal(t *testing.
 	if err := controller.SetManualOverride(PolicyHigh, 0); err != nil {
 		t.Fatal(err)
 	}
-	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesFirmware}
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesCurrentFirmware}
 	status := statusAt(70, "standby", false)
 	status.ModelName = "EXPERT 2K-FA"
 	controller.Observe(status, settings)
@@ -677,7 +677,8 @@ func TestThirdSeriesProductionRequiresExactFirmwareAndStandbyBeforeWrites(t *tes
 	}{
 		{"missing firmware", "", "standby", "supported-fan-profile"},
 		{"wrong firmware", "Rel.26_03_24_B", "standby", "supported-fan-profile"},
-		{"operate", ThirdSeriesFirmware, "operate", "standby-only-profile"},
+		{"case variant", "rel.08_06_26_a", "standby", "supported-fan-profile"},
+		{"operate", ThirdSeriesCurrentFirmware, "operate", "standby-only-profile"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			buttons := &recordingButtons{}
@@ -705,7 +706,7 @@ func TestThirdSeriesChangeLegendCannotAuthorizeSetupFollowup(t *testing.T) {
 	}
 	buttons := &recordingButtons{}
 	controller := NewController(buttons)
-	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesFirmware}
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesEvidenceFirmware}
 	status := statusAt(81, "standby", false)
 	status.ModelName = "EXPERT 2K-FA"
 	controller.Observe(status, settings)
@@ -754,7 +755,7 @@ func newThirdSeriesPassiveController(t *testing.T, current, desired string) (*Co
 	t.Helper()
 	buttons := &recordingButtons{}
 	controller := NewController(buttons)
-	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesFirmware}
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesEvidenceFirmware}
 	status := statusAt(81, "standby", false)
 	status.ModelName = "EXPERT 2K-FA"
 	controller.manualOverride = desired
@@ -1007,7 +1008,7 @@ func TestThirdSeriesFixtureProvenanceManifest(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ReportID != "00acd5279f994baf497f58cf607f9efea6b770fbf3679beae301a88ce177b715" || manifest.Model != "EXPERT 2K-FA" || manifest.Firmware != ThirdSeriesFirmware || len(manifest.Fixtures) != 23 {
+	if manifest.ReportID != "00acd5279f994baf497f58cf607f9efea6b770fbf3679beae301a88ce177b715" || manifest.Model != "EXPERT 2K-FA" || manifest.Firmware != ThirdSeriesEvidenceFirmware || len(manifest.Fixtures) != 23 {
 		t.Fatalf("manifest header=%+v", manifest)
 	}
 	seenFiles, seenIndexes := map[string]bool{}, map[int]bool{}
@@ -1036,7 +1037,7 @@ func TestThirdSeriesFixtureProvenanceManifest(t *testing.T) {
 func TestThirdSeriesTXAndStaleReceiptsDoNotAuthorizeFollowup(t *testing.T) {
 	buttons := &recordingButtons{}
 	controller := NewController(buttons)
-	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesFirmware}
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesEvidenceFirmware}
 	status := statusAt(81, "standby", true)
 	status.ModelName = "EXPERT 2K-FA"
 	result := controller.Observe(status, settings)

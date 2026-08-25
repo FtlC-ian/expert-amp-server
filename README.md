@@ -64,7 +64,7 @@ If no serial port is configured, the app starts in setup/fixture mode and the Se
 
 The advanced `serialAssertDTR` and `serialAssertRTS` settings default to `true` when absent. Set them to `false` for transports such as PTYs or network serial bridges that do not support modem-control ioctls; explicit `false` values remain preserved across settings saves and restarts.
 
-Third Series Expert 2K-FA production fan control additionally requires the operator-declared `fanPolicyFirmwareVersion` setting to equal `Rel.26_03_24_A` exactly. Status polling does not attest firmware, so other or unset firmware values remain blocked.
+Third Series Expert 2K-FA production fan control additionally requires the operator-declared actual `fanPolicyFirmwareVersion` setting to equal `Rel.26_03_24_A` or `Rel.08_06_26_A` exactly. Status polling does not attest firmware, so empty, mistyped, case-variant, or other values advertise no supported modes and remain blocked before any amplifier command.
 
 ## API highlights
 
@@ -110,7 +110,7 @@ The advanced Menu Debug wizard is disabled by default and intended for supervise
 
 The reviewed First Series Expert 1.3K-FA profile may propose reversible fan and two-bank A/B tests. The Expert 1.5K-FA Second Series fan profile follows its captured CONFIG-first topology; both fan profiles have physically verified apply and restoration evidence and are eligible for production fan control. Unknown models and F-KFA NORMAL/QUIET layouts remain topology-only; QUIET is never treated as high cooling. TX is latched immediately. TX, stale evidence, an unexpected screen, timeout, abort, transport failure, or safety preemption stops the session fail-closed; the wizard never retries blindly, restores OPERATE, or performs blind menu recovery.
 
-The reporting wizard retains the Expert 2K-FA Third Series reversible evidence path. Production promotion is separately bound to exact model, topology, operator-declared firmware `Rel.26_03_24_A`, STANDBY/RX, and the reviewed complete D1 report fixtures. Second Series setup recognition accepts either input number.
+The reporting wizard retains the Expert 2K-FA Third Series reversible evidence path on `Rel.26_03_24_A`. Production promotion is separately bound to exact model, topology, an exact operator-declared actual firmware allowlist (`Rel.26_03_24_A` or `Rel.08_06_26_A`), and STANDBY/RX. The original firmware has the complete reversible D1 report; the newer firmware has Justin's separate read-only confirmation of the unchanged top setup grid and FAN NOISE page/cursor topology, not a second complete apply/restore report. Second Series setup recognition accepts either input number.
 
 For unfamiliar layouts, discovery may enter an exact highlighted fan candidate only when the live legend says `[SET]:CONFIRM`; `[SET]:CHANGE` stops before SET because it may write immediately. Once a candidate fan page is captured, the wizard sends no selector, SAVE, or DISPLAY command and retains exclusive actuation ownership until the operator physically returns the amplifier to a newer checksum-valid STANDBY home screen.
 

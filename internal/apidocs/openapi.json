@@ -2505,7 +2505,7 @@
           },
           "fanPolicyFirmwareVersion": {
             "type": "string",
-            "description": "Explicit operator-declared amplifier firmware binding. Required to equal Rel.26_03_24_A for the Third Series Expert 2K-FA production fan profile because the live status protocol does not report firmware."
+            "description": "Explicit operator-declared actual amplifier firmware binding, not a profile alias. Third Series Expert 2K-FA requires exact Rel.26_03_24_A or Rel.08_06_26_A because the live status protocol does not report firmware; empty, typo, case-variant, or other values fail closed."
           },
           "verifyFanModeOnStartup": {
             "type": "boolean",
@@ -2671,7 +2671,7 @@
           "fanPolicyFirmwareVersion": {
             "type": "string",
             "maxLength": 64,
-            "description": "Explicit operator-declared firmware gate for production fan navigation. Third Series Expert 2K-FA requires exact Rel.26_03_24_A; empty or any other value fails closed before SET."
+            "description": "Explicit operator-declared actual firmware gate for production fan navigation, not a profile alias. Third Series Expert 2K-FA requires exact Rel.26_03_24_A or Rel.08_06_26_A; empty, typo, case-variant, or any other value fails closed before SET."
           },
           "verifyFanModeOnStartup": {
             "type": "boolean",

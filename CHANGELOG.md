@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Allow the exact operator-declared Third Series Expert 2K-FA firmware values `Rel.26_03_24_A` and `Rel.08_06_26_A` on the existing model-, topology-, and STANDBY/RX-bound production fan path. Empty, mistyped, case-variant, or other firmware values advertise no modes and send no amplifier commands; the newer firmware evidence is limited to a read-only confirmation of unchanged setup and FAN NOISE topology.
+
 ### Fixed
 
 - Preserve explicit `false` values for `serialAssertDTR` and `serialAssertRTS` across settings responses, config rewrites, unrelated settings saves, and restarts while retaining the existing `true` default for absent fields.

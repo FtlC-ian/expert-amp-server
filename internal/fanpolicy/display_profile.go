@@ -291,14 +291,14 @@ type fanDisplayProfile struct {
 	supportedModes                  []string
 	verified                        bool
 	startupSetupDisplayExitVerified bool
-	expectedFirmware                string
+	allowedFirmwares                []string
 	standbyOnly                     bool
 }
 
 var fanDisplayProfiles = []fanDisplayProfile{
 	{id: FirstSeriesDisplayProfile, model: "EXPERT 1.3K-FA", setupKeys: []string{"setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true, startupSetupDisplayExitVerified: true},
 	{id: SecondSeriesDisplayProfile, model: "EXPERT 1.5K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP/FANS"}, supportedModes: []string{"normal", "contest"}, verified: true, startupSetupDisplayExitVerified: true},
-	{id: ThirdSeriesDisplayProfile, model: "EXPERT 2K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP.", "setup:ALARMS LOG", "setup:TUN ANT", "setup:RX ANT", "setup:FAN NOISE"}, supportedModes: []string{"normal", "contest"}, verified: true, expectedFirmware: ThirdSeriesFirmware, standbyOnly: true},
+	{id: ThirdSeriesDisplayProfile, model: "EXPERT 2K-FA", setupKeys: []string{"setup:CONFIG", "setup:ANTENNA", "setup:CAT", "setup:MANUAL TUNE", "setup:DISPLAY", "setup:BEEP", "setup:START", "setup:TEMP.", "setup:ALARMS LOG", "setup:TUN ANT", "setup:RX ANT", "setup:FAN NOISE"}, supportedModes: []string{"normal", "contest"}, verified: true, allowedFirmwares: []string{ThirdSeriesEvidenceFirmware, ThirdSeriesCurrentFirmware}, standbyOnly: true},
 }
 
 func fanDisplayProfileByID(id string) (fanDisplayProfile, bool) {
@@ -312,12 +312,24 @@ func fanDisplayProfileByID(id string) (fanDisplayProfile, bool) {
 
 func fanDisplayProfileForModel(model, firmware string) (fanDisplayProfile, bool) {
 	for _, profile := range fanDisplayProfiles {
-		if strings.EqualFold(strings.TrimSpace(model), profile.model) &&
-			(profile.expectedFirmware == "" || strings.TrimSpace(firmware) == profile.expectedFirmware) {
+		if strings.EqualFold(strings.TrimSpace(model), profile.model) && firmwareAllowed(profile.allowedFirmwares, firmware) {
 			return profile, true
 		}
 	}
 	return fanDisplayProfile{}, false
+}
+
+func firmwareAllowed(allowlist []string, firmware string) bool {
+	if len(allowlist) == 0 {
+		return true
+	}
+	actual := strings.TrimSpace(firmware)
+	for _, allowed := range allowlist {
+		if actual == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func verifiedFanDisplayProfileForModel(model, firmware string) (fanDisplayProfile, bool) {

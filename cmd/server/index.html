@@ -1711,7 +1711,7 @@
       <!-- Automatic Fan Policy -->
       <div class="settings-card">
         <h3 class="settings-card-title">Automatic Fan Cooling</h3>
-        <p class="needs-restart-note">Experimental and disabled by default. Automatic fan cooling supports the verified First Series Expert 1.3K-FA, CONFIG-first Second Series Expert 1.5K-FA, and firmware-bound Third Series Expert 2K-FA paths. Third Series requires exact firmware Rel.26_03_24_A and is STANDBY/RX-only; it never sends DISPLAY or changes OPERATE/STANDBY. Unsupported model, firmware, or topology combinations are blocked before selector movement.</p>
+        <p class="needs-restart-note">Experimental and disabled by default. Automatic fan cooling supports the verified First Series Expert 1.3K-FA, CONFIG-first Second Series Expert 1.5K-FA, and firmware-bound Third Series Expert 2K-FA paths. Third Series requires the amplifier's actual firmware to be exactly Rel.26_03_24_A or Rel.08_06_26_A and is STANDBY/RX-only; it never sends DISPLAY or changes OPERATE/STANDBY. Unsupported model, firmware, or topology combinations are blocked before selector movement.</p>
 
         <div class="settings-section" style="margin-top:14px;">
           <div class="settings-checkbox-row">
@@ -1724,7 +1724,7 @@
           </div>
           <div class="settings-row">
             <label class="settings-label" for="s-fan-policy-firmware">Amplifier firmware binding</label>
-            <input id="s-fan-policy-firmware" class="settings-input" type="text" maxlength="64" placeholder="Required for Third Series, e.g. Rel.26_03_24_A">
+            <input id="s-fan-policy-firmware" class="settings-input" type="text" maxlength="64" placeholder="Actual Third Series firmware, exactly as shown">
           </div>
           <div class="settings-row">
             <label class="settings-label" for="s-fan-boost-duration">Fan Boost duration</label>
@@ -1765,7 +1765,7 @@
         <div id="menu-debug-body">
           <div class="settings-section">
             <p class="settings-hint">One guarded start automatically discovers and runs the frozen fan transaction. Every individual command still requires newer matching display evidence before the next command. The wizard pauses only for physical candidate and restored confirmation.</p>
-            <p class="settings-hint">Expert 2K-FA Third Series Menu Debug remains the evidence workflow for unpromoted firmware and topologies. The exact <code>Rel.26_03_24_A</code> production profile is configured separately above and remains STANDBY/RX-only.</p>
+            <p class="settings-hint">Expert 2K-FA Third Series Menu Debug remains the evidence workflow for unpromoted firmware and topologies. Production accepts only an actual firmware value of <code>Rel.26_03_24_A</code> or <code>Rel.08_06_26_A</code>, configured separately above, and remains STANDBY/RX-only.</p>
             <ol class="menu-debug-plan">
               <li>Discover and temporarily change the fan setting; you verify it; the server restores the original.</li>
             </ol>
