@@ -1305,3 +1305,30 @@ func TestSerialPollSchedulerSkipsMissedSlotsWithoutDoubleFire(t *testing.T) {
 		t.Fatalf("immediate second due = %q, want no double-fire", got)
 	}
 }
+
+func TestSerialPollSchedulerBothModeRemainsFairAfterRepeatedDelayedWakeups(t *testing.T) {
+	start := time.Unix(100, 0)
+	for _, tc := range []struct {
+		name      string
+		firstCall time.Duration
+		wakeEvery time.Duration
+	}{
+		{name: "even half-interval multiples after initial poll", firstCall: 0, wakeEvery: 200 * time.Millisecond},
+		{name: "even half-interval multiples from delayed initial poll", firstCall: 200 * time.Millisecond, wakeEvery: 200 * time.Millisecond},
+		{name: "odd half-interval multiples", firstCall: 0, wakeEvery: 150 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSerialPollScheduler(start, "both", 100*time.Millisecond, true, true)
+			want := []string{"status", "display", "status", "display", "status", "display"}
+			for index, expected := range want {
+				at := tc.firstCall + time.Duration(index)*tc.wakeEvery
+				if got := s.nextDue(start.Add(at), "both"); got != expected {
+					t.Fatalf("nextDue(%s) = %q, want %q at index %d", at, got, expected, index)
+				}
+				if got := s.nextDue(start.Add(at), "both"); got != "" {
+					t.Fatalf("second nextDue(%s) = %q, want no catch-up poll", at, got)
+				}
+			}
+		})
+	}
+}

@@ -1013,23 +1013,20 @@ func (s *serialPollScheduler) advance(now time.Time) {
 		} else {
 			s.phase = "status"
 		}
-		s.next = s.next.Add(s.halfInterval)
+		s.advanceDeadlinePast(now, s.halfInterval)
 	} else {
 		s.phase = s.mode
-		s.next = s.next.Add(s.interval)
+		s.advanceDeadlinePast(now, s.interval)
 	}
-	for !s.next.After(now) {
-		if s.mode == "both" {
-			s.next = s.next.Add(s.halfInterval)
-			if s.phase == "status" {
-				s.phase = "display"
-			} else {
-				s.phase = "status"
-			}
-		} else {
-			s.next = s.next.Add(s.interval)
-		}
+}
+
+func (s *serialPollScheduler) advanceDeadlinePast(now time.Time, step time.Duration) {
+	s.next = s.next.Add(step)
+	if s.next.After(now) {
+		return
 	}
+	missed := now.Sub(s.next)/step + 1
+	s.next = s.next.Add(missed * step)
 }
 
 func (s *serialPollScheduler) effectiveMode(mode string) string {
