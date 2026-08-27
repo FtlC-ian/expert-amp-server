@@ -105,6 +105,13 @@ func TestStatusFromResponseMapsDocumentedFields(t *testing.T) {
 	}
 }
 
+func TestStatusFromResponseRecognizesTaurusIdentifier(t *testing.T) {
+	status := StatusFromResponse(StatusResponse{PAIdentifier: "15T"}, "serial")
+	if status.ModelName != "EXPERT 1.5K TAURUS" {
+		t.Fatalf("ModelName = %q, want EXPERT 1.5K TAURUS", status.ModelName)
+	}
+}
+
 func TestParseStatusFrameLiveCapture(t *testing.T) {
 	frameHex := "aaaaaa432c31334b2c532c522c412c322c30352c34622c30722c4c2c303030302c20302e30302c20302e30302c20302e302c20302e302c2032352c3030302c3030302c4e2c4e2c3b0d2c0d0a"
 	frame, err := hex.DecodeString(frameHex)
