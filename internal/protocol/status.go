@@ -254,6 +254,8 @@ func modelNameFromIdentifier(id string) string {
 		return "EXPERT 1.3K-FA"
 	case "15K":
 		return "EXPERT 1.5K-FA"
+	case "15T":
+		return "EXPERT 1.5K TAURUS"
 	default:
 		return ""
 	}
