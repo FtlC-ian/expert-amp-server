@@ -59,12 +59,15 @@ type Navigation struct {
 	LastAction            string   `json:"lastAction,omitempty"`
 	LastError             string   `json:"lastError,omitempty"`
 	LastVerifiedScreen    string   `json:"lastVerifiedScreen,omitempty"`
+	WaypointTrace         []string `json:"waypointTrace"`
 	ActionsTaken          []string `json:"actionsTaken"`
 	Paused                bool     `json:"paused"`
 	PauseReason           string   `json:"pauseReason,omitempty"`
 	MayBeInMenu           bool     `json:"mayBeInMenu"`
 	ChangedOperatingState bool     `json:"changedOperatingState"`
 	RestoreOperatePending bool     `json:"restoreOperatePending"`
+	RecoveryAttempted     bool     `json:"recoveryAttempted"`
+	RecoveryFromScreen    string   `json:"recoveryFromScreen,omitempty"`
 	RecoveryState         string   `json:"recoveryState"`
 	RecoveryInstructions  string   `json:"recoveryInstructions,omitempty"`
 }
@@ -123,7 +126,7 @@ func Evaluate(status api.Status, settings Settings, previousDesired string) Resu
 		CurrentPolicyConfidence: "unknown",
 		BlockedBy:               []string{},
 		SupportedModes:          supportedFanModesForModel(status.ModelName),
-		Navigation:              Navigation{State: "idle", ActionsTaken: []string{}},
+		Navigation:              Navigation{State: "idle", WaypointTrace: []string{}, ActionsTaken: []string{}},
 		ManualOverride:          ManualOverride{Active: overridePolicy != PolicyUnknown},
 		Verification:            Verification{Requested: settings.VerifyRequested},
 	}

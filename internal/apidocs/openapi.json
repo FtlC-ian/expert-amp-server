@@ -1995,6 +1995,8 @@
         "required": [
           "state",
           "paused",
+          "waypointTrace",
+          "recoveryAttempted",
           "actionsTaken"
         ],
         "properties": {
@@ -2015,7 +2017,8 @@
             "enum": [
               "operate",
               "set",
-              "right"
+              "right",
+              "display"
             ]
           },
           "lastError": {
@@ -2025,6 +2028,14 @@
           "lastVerifiedScreen": {
             "type": "string",
             "description": "Last semantic LCD waypoint verified by the captured profile."
+          },
+          "waypointTrace": {
+            "type": "array",
+            "maxItems": 32,
+            "description": "Chronological bounded receipt of exact verified semantic LCD waypoints. Consecutive duplicates are suppressed and raw LCD content is never included.",
+            "items": {
+              "type": "string"
+            }
           },
           "paused": {
             "type": "boolean",
@@ -2046,13 +2057,22 @@
             "type": "boolean",
             "description": "True when this transaction originally disabled OPERATE and restoration is still pending or requires operator recovery."
           },
+          "recoveryAttempted": {
+            "type": "boolean",
+            "description": "True after unattended startup verification sent its one allowed model-reviewed DISPLAY recovery command."
+          },
+          "recoveryFromScreen": {
+            "type": "string",
+            "description": "Exact recognized setup waypoint from which the bounded DISPLAY recovery was attempted."
+          },
           "recoveryState": {
             "type": "string",
             "enum": [
               "not-needed",
-              "operator-required"
+              "operator-required",
+              "verified-home"
             ],
-            "description": "Automatic menu recovery is disabled until a safe EXIT path is hardware-captured."
+            "description": "Whether recovery was unnecessary, requires the operator, or returned to a newer verified STANDBY/RX home after the one model-reviewed DISPLAY exit."
           },
           "recoveryInstructions": {
             "type": "string",
@@ -2065,7 +2085,8 @@
               "enum": [
                 "operate",
                 "set",
-                "right"
+                "right",
+                "display"
               ]
             }
           }

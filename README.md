@@ -94,6 +94,8 @@ Manual Fan Boost, Fan Normal, Fan Auto, and Verify controls use a display-verifi
 
 Production fan control is hardware-confirmed on the First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA. The API advertises `supportedModes` per promoted model; both profiles report `normal` and `contest`. Unsupported models report no modes and stop before SET; an unexpected screen stops the transaction rather than continuing.
 
+Each navigation receipt retains the newest 32 exact verified semantic LCD waypoints in `navigation.waypointTrace`, suppresses consecutive duplicates, and reports any one-shot DISPLAY recovery attempt and recognized origin separately. It never includes raw LCD content, and a replacement transaction starts with a fresh trace.
+
 Unattended startup verification has one narrowly reviewed recovery capability for the First Series 1.3K-FA and Second Series 1.5K-FA: after a mismatch or timeout while actively traversing that profile's exact setup-grid waypoint, it may send DISPLAY once and retain ownership until a newer checksum-valid STANDBY/RX home frame arrives. It never runs from a submenu, stale or cross-family screen, TX or unknown RX state, another model, or a manual/API transaction. Recovery does not make verification successful; the failed transaction remains latched until explicitly cleared.
 
 Automatic fan cooling is disabled by default. Optional overtemperature standby is separately armed, requires fresh protocol-native OPERATE and RX status, sends one documented OPERATE toggle per hot episode, and never retries, powers off, or wakes the amplifier.

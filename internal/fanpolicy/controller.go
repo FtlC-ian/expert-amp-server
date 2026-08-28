@@ -17,6 +17,7 @@ const (
 	navigationTimeout     = 4 * time.Second
 	statusContactWindow   = 5 * time.Second
 	normalRestoreCooldown = 15 * time.Minute
+	waypointTraceLimit    = 32
 )
 
 type ButtonTransport interface {
@@ -56,6 +57,7 @@ type navState struct {
 	lastAction              string
 	lastError               string
 	actions                 []string
+	waypointTrace           []string
 	paused                  bool
 	pauseReason             string
 	pauseStatusGen          uint64
@@ -69,6 +71,7 @@ type navState struct {
 	leaseHeld               bool
 	verifyOnly              bool
 	recoveryAttempted       bool
+	recoveryFromScreen      string
 	recoveryVerified        bool
 	failureAfterGen         uint64
 	profile                 string
@@ -154,7 +157,7 @@ func NewController(transports ...ButtonTransport) *Controller {
 			DesiredPolicy: PolicyUnknown,
 			CurrentPolicy: PolicyUnknown,
 			BlockedBy:     []string{},
-			Navigation:    Navigation{State: "idle", ActionsTaken: []string{}},
+			Navigation:    Navigation{State: "idle", WaypointTrace: []string{}, ActionsTaken: []string{}},
 		},
 	}
 }
@@ -583,7 +586,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
-		c.lastVerifiedScreen = "home:standby"
+		c.recordVerifiedScreenLocked("home:standby")
 		if !c.sendLocked("set", "setup:identify", observation.Generation, "home") {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
@@ -601,7 +604,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
-		c.lastVerifiedScreen = "home:operate"
+		c.recordVerifiedScreenLocked("home:operate")
 		if c.nav.verifyOnly {
 			c.verifyRequested = false
 			c.verifyReason = ""
@@ -627,7 +630,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
-		c.lastVerifiedScreen = "home:standby"
+		c.recordVerifiedScreenLocked("home:standby")
 		c.mayBeInMenu = false
 		c.nav.active = false
 		c.nav.failed = true
@@ -694,19 +697,21 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
-		c.lastVerifiedScreen = key
-		c.nav.active = true
-		c.nav.leaseHeld = true
-		c.nav.model = strings.TrimSpace(status.ModelName)
-		c.nav.serialSessionGeneration = c.serialSessionGeneration
-		c.nav.verifyOnly = c.verifyRequested
-		c.nav.target = c.desired
+		c.nav = navState{
+			active:                  true,
+			leaseHeld:               true,
+			model:                   strings.TrimSpace(status.ModelName),
+			serialSessionGeneration: c.serialSessionGeneration,
+			verifyOnly:              c.verifyRequested,
+			target:                  c.desired,
+		}
 		operatingState := normalizeOperatingState(status.OperatingState)
 		switch operatingState {
 		case "operate":
 			if !matchesOperateHome(observation.State) || observation.Operate == nil || !*observation.Operate {
 				c.failLocked("OPERATE status did not match a checksum-valid OPERATE home display")
 			} else {
+				c.recordVerifiedScreenLocked("home:operate")
 				c.nav.restoreOperate = true
 				c.nav.controlUncertain = true
 				c.nav.afterStatusGen = c.statusGeneration
@@ -718,7 +723,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			if !matchesStandbyHome(observation.State) || observation.Operate == nil || *observation.Operate {
 				c.failLocked("STANDBY status did not match a checksum-valid STANDBY home display")
 			} else {
-				c.lastVerifiedScreen = "home:standby"
+				c.recordVerifiedScreenLocked("home:standby")
 				c.sendLocked("set", "setup:identify", observation.Generation, "home")
 			}
 		default:
@@ -822,7 +827,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		if !ok {
 			return c.unexpectedLocked(observation.State)
 		}
-		c.lastVerifiedScreen = key
+		c.recordVerifiedScreenLocked(key)
 		c.nav.observedPolicy = policy
 		return c.sendLocked("right", "submenu:FAN MANAGEMENT", observation.Generation, key)
 	case "submenu:FAN MANAGEMENT":
@@ -830,7 +835,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		if !ok {
 			return c.unexpectedLocked(observation.State)
 		}
-		c.lastVerifiedScreen = key
+		c.recordVerifiedScreenLocked(key)
 		c.nav.observedPolicy = policy
 		if c.nav.verifyOnly {
 			c.nav.target = policy
@@ -844,14 +849,14 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		if !ok || policy != c.nav.target {
 			return c.unexpectedLocked(observation.State)
 		}
-		c.lastVerifiedScreen = key
+		c.recordVerifiedScreenLocked(key)
 		c.nav.observedPolicy = policy
 		return c.sendLocked("right", "submenu:SAVE", observation.Generation, key)
 	case "submenu:SAVE":
 		if !matchesSubmenuSelection(observation.State, "SAVE") {
 			return c.unexpectedLocked(observation.State)
 		}
-		c.lastVerifiedScreen = key
+		c.recordVerifiedScreenLocked(key)
 		return c.sendLocked("set", "submenu:STORING", observation.Generation, key)
 	case "submenu:STORING":
 		if matchesStandbyHome(observation.State) && observation.Operate != nil && !*observation.Operate {
@@ -864,7 +869,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		if !matchesStoring(observation.State) {
 			return c.unexpectedLocked(observation.State)
 		}
-		c.lastVerifiedScreen = key
+		c.recordVerifiedScreenLocked(key)
 		c.nav.step = "home"
 		c.nav.afterGeneration = observation.Generation
 		c.nav.previousKey = key
@@ -875,7 +880,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 			return c.unexpectedLocked(observation.State)
 		}
 		now := c.now()
-		c.lastVerifiedScreen = "home:standby"
+		c.recordVerifiedScreenLocked("home:standby")
 		c.mayBeInMenu = false
 		source := "automatic-temperature"
 		if c.nav.verifyOnly {
@@ -921,7 +926,7 @@ func (c *Controller) advanceProfileSetupLocked(observation DisplayObservation, k
 	if key != expected || !matchesProfileSetupSelection(observation.State, profile.id, expected) {
 		return c.unexpectedLocked(observation.State)
 	}
-	c.lastVerifiedScreen = key
+	c.recordVerifiedScreenLocked(key)
 	if c.nav.setupIndex == len(profile.setupKeys)-1 {
 		return c.sendLocked("set", "submenu:TEMPERATURE SCALE", observation.Generation, key)
 	}
@@ -1088,6 +1093,7 @@ func (c *Controller) startVerifiedSetupExitLocked(cause string) bool {
 		return false
 	}
 	c.nav.recoveryAttempted = true
+	c.nav.recoveryFromScreen = c.lastDisplayKey
 	c.nav.lastError = cause
 	c.nav.failureAfterGen = c.lastDisplayGen
 	if !c.sendLocked("display", "recover:home", c.lastDisplayGen, c.lastDisplayKey) && c.nav.paused {
@@ -1106,6 +1112,22 @@ func (c *Controller) failLocked(message string) {
 	c.nav.failureAfterGen = c.lastDisplayGen
 	c.nav.deadline = time.Time{}
 	c.releaseLeaseLocked()
+}
+
+func (c *Controller) recordVerifiedScreenLocked(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	c.lastVerifiedScreen = key
+	if count := len(c.nav.waypointTrace); count != 0 && c.nav.waypointTrace[count-1] == key {
+		return
+	}
+	c.nav.waypointTrace = append(c.nav.waypointTrace, key)
+	if len(c.nav.waypointTrace) > waypointTraceLimit {
+		copy(c.nav.waypointTrace, c.nav.waypointTrace[len(c.nav.waypointTrace)-waypointTraceLimit:])
+		c.nav.waypointTrace = c.nav.waypointTrace[:waypointTraceLimit]
+	}
 }
 
 func (c *Controller) acquireLeaseLocked() bool {
@@ -1396,13 +1418,19 @@ func (c *Controller) decorateLocked(base Result, settings Settings) Result {
 		LastAction:            c.nav.lastAction,
 		LastError:             c.nav.lastError,
 		LastVerifiedScreen:    c.lastVerifiedScreen,
+		WaypointTrace:         append([]string(nil), c.nav.waypointTrace...),
 		ActionsTaken:          append([]string(nil), c.nav.actions...),
 		Paused:                c.nav.paused,
 		PauseReason:           c.nav.pauseReason,
 		MayBeInMenu:           c.mayBeInMenu,
 		ChangedOperatingState: c.nav.changedOperate,
 		RestoreOperatePending: c.nav.restoreOperate && (c.nav.active || c.nav.failed),
+		RecoveryAttempted:     c.nav.recoveryAttempted,
+		RecoveryFromScreen:    c.nav.recoveryFromScreen,
 		RecoveryState:         "not-needed",
+	}
+	if base.Navigation.WaypointTrace == nil {
+		base.Navigation.WaypointTrace = []string{}
 	}
 	if base.Navigation.ActionsTaken == nil {
 		base.Navigation.ActionsTaken = []string{}

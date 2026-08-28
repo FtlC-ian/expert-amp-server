@@ -3,6 +3,8 @@ package fanpolicy
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -455,6 +457,60 @@ func TestControllerClearsVerifiedReceiptWhenSupportedModelChanges(t *testing.T) 
 	result := controller.Observe(status, Settings{})
 	if result.CurrentPolicy != PolicyUnknown || result.CurrentPolicyConfidence != "unknown" || controller.currentModel != "" {
 		t.Fatalf("replacement model inherited verified receipt: %+v", result)
+	}
+}
+
+func TestSamePolicyReplacementTransactionStartsFreshWaypointTrace(t *testing.T) {
+	controller := NewController(&recordingButtons{})
+	settings := Settings{Enabled: true, HighTemperatureC: 80, NormalTemperatureC: 75}
+	driveToSave(controller, settings, PolicyHigh)
+	controller.ObserveDisplay(rxObservation(submenuScreen("SAVE", "CONTEST"), 22))
+	controller.ObserveDisplay(rxObservation(storingScreen(), 23))
+	first := controller.ObserveDisplay(rxObservation(homeScreen(), 24))
+	if first.State != StateSucceeded || first.CurrentPolicy != PolicyHigh || len(first.Navigation.WaypointTrace) == 0 {
+		t.Fatalf("first high-cooling transaction did not complete: %+v", first)
+	}
+
+	replacement := statusAt(81, "standby", false)
+	replacement.ModelName = "EXPERT 1.5K-FA"
+	controller.Observe(replacement, settings)
+	controller.Observe(statusAt(81, "standby", false), settings)
+
+	generation := uint64(25)
+	observe := func(state display.State) Result {
+		result := controller.ObserveDisplay(rxObservation(state, generation))
+		generation++
+		return result
+	}
+	observe(homeScreen())
+	for _, selected := range []string{"ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP", "START", "TEMP/FANS"} {
+		observe(setupScreenWithValues(selected, "On", "Stby"))
+	}
+	observe(submenuScreen("TEMPERATURE SCALE", "NORMAL"))
+	observe(submenuScreen("FAN MANAGEMENT", "NORMAL"))
+	observe(submenuScreen("FAN MANAGEMENT", "CONTEST"))
+	observe(submenuScreen("SAVE", "CONTEST"))
+	observe(storingScreen())
+	result := observe(homeScreen())
+
+	want := []string{
+		"home:standby",
+		"setup:ANTENNA",
+		"setup:CAT",
+		"setup:MANUAL TUNE",
+		"setup:DISPLAY",
+		"setup:BEEP",
+		"setup:START",
+		"setup:TEMP/FANS",
+		"submenu:TEMPERATURE SCALE:normal",
+		"submenu:FAN MANAGEMENT:normal",
+		"submenu:FAN MANAGEMENT:high-cooling",
+		"submenu:SAVE:high-cooling",
+		"submenu:STORING",
+		"home:standby",
+	}
+	if result.State != StateSucceeded || !slices.Equal(result.Navigation.WaypointTrace, want) {
+		t.Fatalf("replacement transaction trace = %v, want fresh %v; result=%+v", result.Navigation.WaypointTrace, want, result)
 	}
 }
 
@@ -1493,6 +1549,74 @@ func TestStartupVerificationRefreshesPersistedStaleReceipt(t *testing.T) {
 	}
 }
 
+func TestSecondSeriesStartupVerificationRetainsVerifiedWaypointTrace(t *testing.T) {
+	controller := NewController(&recordingButtons{})
+	controller.ConfigurePersistence(PersistentState{}, true, nil)
+	settings := Settings{HighTemperatureC: 50, NormalTemperatureC: 42}
+	status := statusAt(30, "standby", false)
+	status.ModelName = "EXPERT 1.5K-FA"
+	controller.Observe(status, settings)
+
+	home := homeScreen()
+	home.SetRow(1, "                       EXPERT 1.5K-FA")
+	generation := uint64(1)
+	observe := func(state display.State) Result {
+		result := controller.ObserveDisplay(rxObservation(state, generation))
+		generation++
+		return result
+	}
+	observe(home)
+	for _, selected := range []string{"CONFIG", "ANTENNA", "CAT", "MANUAL TUNE", "DISPLAY", "BEEP", "START", "TEMP/FANS"} {
+		observe(secondSeriesSetupScreen(selected))
+	}
+	observe(submenuScreen("TEMPERATURE SCALE", "NORMAL"))
+	observe(submenuScreen("FAN MANAGEMENT", "NORMAL"))
+	observe(submenuScreen("SAVE", "NORMAL"))
+	observe(storingScreen())
+	result := observe(home)
+
+	want := []string{
+		"home:standby",
+		"setup:CONFIG",
+		"setup:ANTENNA",
+		"setup:CAT",
+		"setup:MANUAL TUNE",
+		"setup:DISPLAY",
+		"setup:BEEP",
+		"setup:START",
+		"setup:TEMP/FANS",
+		"submenu:TEMPERATURE SCALE:normal",
+		"submenu:FAN MANAGEMENT:normal",
+		"submenu:SAVE:normal",
+		"submenu:STORING",
+		"home:standby",
+	}
+	if result.State != StateSucceeded || !slices.Equal(result.Navigation.WaypointTrace, want) {
+		t.Fatalf("completed Second Series trace = %v, want %v; result=%+v", result.Navigation.WaypointTrace, want, result)
+	}
+	if result.Navigation.RecoveryAttempted || result.Navigation.RecoveryFromScreen != "" {
+		t.Fatalf("ordinary completion reported recovery diagnostics: %+v", result.Navigation)
+	}
+}
+
+func TestVerifiedWaypointTraceSuppressesDuplicatesAndKeepsNewestBound(t *testing.T) {
+	controller := NewController()
+	controller.recordVerifiedScreenLocked("home:standby")
+	controller.recordVerifiedScreenLocked("home:standby")
+	for index := 0; index < waypointTraceLimit; index++ {
+		controller.recordVerifiedScreenLocked(fmt.Sprintf("setup:%02d", index))
+	}
+	controller.recordVerifiedScreenLocked("home:standby")
+
+	trace := controller.nav.waypointTrace
+	if len(trace) != waypointTraceLimit {
+		t.Fatalf("waypoint trace length = %d, want %d: %v", len(trace), waypointTraceLimit, trace)
+	}
+	if trace[0] != "setup:01" || trace[len(trace)-1] != "home:standby" {
+		t.Fatalf("bounded waypoint trace did not retain the newest terminal receipt: %v", trace)
+	}
+}
+
 func TestStartupVerificationTimeoutUsesVerifiedFirstSeriesDisplayExit(t *testing.T) {
 	buttons := &leaseRecordingButtons{}
 	controller := NewController(buttons)
@@ -1556,6 +1680,9 @@ func TestStartupVerificationTimeoutUsesVerifiedSecondSeriesDisplayExit(t *testin
 	if result.State != StateNavigating || result.Navigation.State != "recover:home" ||
 		result.Navigation.LastAction != "display" || strings.Count(strings.Join(buttons.actions, ","), "display") != 1 {
 		t.Fatalf("Second Series timeout did not start one bounded DISPLAY exit: result=%+v actions=%v", result, buttons.actions)
+	}
+	if !result.Navigation.RecoveryAttempted || result.Navigation.RecoveryFromScreen != "setup:BEEP" {
+		t.Fatalf("Second Series recovery origin was not retained: %+v", result.Navigation)
 	}
 	if !result.Navigation.MayBeInMenu || buttons.releases != 0 {
 		t.Fatalf("Second Series recovery released safety ownership before verified home: result=%+v releases=%d", result, buttons.releases)

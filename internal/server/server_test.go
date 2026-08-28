@@ -3019,6 +3019,10 @@ func TestV1FanPolicyReportsDesiredHighCoolingWithoutActuating(t *testing.T) {
 		body.Data.ActionAvailable || body.Data.Pending {
 		t.Fatalf("unexpected fan-policy result: %+v", body.Data)
 	}
+	if body.Data.Navigation.WaypointTrace == nil || body.Data.Navigation.RecoveryAttempted ||
+		body.Data.Navigation.RecoveryFromScreen != "" {
+		t.Fatalf("fan-policy endpoint omitted or overclaimed navigation diagnostics: %+v", body.Data.Navigation)
+	}
 	if buttons.calls != 0 {
 		t.Fatalf("GET actuated button transport %d times", buttons.calls)
 	}
