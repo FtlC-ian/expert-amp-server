@@ -6,9 +6,12 @@
 
 - Add a candidate-only Expert 2K-FA Third Series reporting workflow bound to the exact model, reviewed setup topology, and firmware `Rel.26_03_24_A`. The guarded test runs hardware NORMAL → QUIET → NORMAL only from verified STANDBY/RX, records raw LCD evidence, requires physical apply and restore confirmation, and never sends DISPLAY or changes OPERATE/STANDBY.
 - Add narrowly scoped startup-verification recovery for the reviewed First Series 1.3K-FA and Second Series 1.5K-FA top-level setup grids. A failed verification may send DISPLAY once only from an exact eligible setup waypoint with fresh STANDBY/RX evidence; it remains failed and latched until explicitly cleared.
+- Recognize protocol identifier `15T` as `EXPERT 1.5K TAURUS` without assuming or enabling any Taurus menu-navigation profile.
+- Retain a bounded fan-policy diagnostic trace of up to 32 verified semantic LCD waypoints, plus one-shot DISPLAY recovery attempt and origin fields, without storing raw LCD content or changing navigation behavior.
 
 ### Fixed
 
+- Keep unified `both` polling fair after delayed serial reads so status and display requests continue alternating without catch-up bursts or starvation.
 - Preserve explicit `false` values for `serialAssertDTR` and `serialAssertRTS` across settings responses, config rewrites, unrelated settings saves, and restarts while retaining the existing `true` default for absent fields.
 - Preserve fixed-column display telemetry values containing spaces, such as `80 m` and `90 F`, without shifting ANT, CAT, output-level, SWR, or temperature fields.
 - Accept ordinary repeated LCD spaces in reviewed setup labels such as `RX  ANT` while continuing to reject changed labels, split highlights, controls, Unicode separators, and unsafe SAVE matches.
