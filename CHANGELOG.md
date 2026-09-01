@@ -6,7 +6,7 @@ Actuation-coordination safety release.
 
 ### Fixed
 
-- Prevent a wake/serial-lifecycle lock inversion from deadlocking Menu Debug lease acquisition or stale lease release. Wake now reserves actuation without holding the coordinator mutex across serial I/O; ordinary acquisitions fail busy, while overtemperature safety waits and then preempts.
+- Prevent wake/serial-lifecycle lock inversions from deadlocking Menu Debug lease acquisition, stale lease release, or the synchronous overtemperature callback. Wake now reserves actuation without holding the coordinator mutex across serial I/O; safety defers without latching, retries on a newer authoritative status poll after wake, and then preempts.
 - Bind every successful automatic-actuation acquisition to an opaque lease instance. Same-named owners can no longer acquire concurrently, and an idempotent stale release cannot clear a newer owner’s reservation.
 
 ### Validation

@@ -185,9 +185,12 @@ func TestActuationCoordinatorReservesWakeWithoutHoldingMutex(t *testing.T) {
 	safetyDone := make(chan ActuationLease, 1)
 	go func() { safetyDone <- safety.Acquire() }()
 	select {
-	case <-safetyDone:
-		t.Fatal("safety acquisition did not wait for wake")
-	case <-time.After(50 * time.Millisecond):
+	case acquired := <-safetyDone:
+		if acquired != nil {
+			t.Fatal("safety acquired the actuator during wake")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("safety acquisition blocked the serial callback during wake")
 	}
 
 	close(raw.wakeRelease)
@@ -199,13 +202,8 @@ func TestActuationCoordinatorReservesWakeWithoutHoldingMutex(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("wake did not finish")
 	}
-	select {
-	case acquired := <-safetyDone:
-		if acquired == nil {
-			t.Fatal("safety did not acquire the actuator after wake")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("safety did not resume after wake")
+	if safety.Acquire() == nil {
+		t.Fatal("safety did not acquire the actuator after wake")
 	}
 }
 

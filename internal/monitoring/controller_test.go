@@ -16,6 +16,23 @@ type recordingTransport struct {
 	err     error
 }
 
+type deferredSafetyTransport struct {
+	recordingTransport
+	ready    bool
+	releases int
+}
+
+type deferredSafetyLease struct{ transport *deferredSafetyTransport }
+
+func (l *deferredSafetyLease) Release() { l.transport.releases++ }
+
+func (t *deferredSafetyTransport) Acquire() transport.ActuationLease {
+	if !t.ready {
+		return nil
+	}
+	return &deferredSafetyLease{transport: t}
+}
+
 func (t *recordingTransport) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
 	t.actions = append(t.actions, action)
 	return api.ActionResult{Name: action.Name, Sent: t.err == nil}, t.err
@@ -45,6 +62,26 @@ func TestControllerRequestsStandbyExactlyOncePerLatchedEpisode(t *testing.T) {
 	controller.Observe(context.Background(), status, settings)
 	if len(buttons.actions) != 2 {
 		t.Fatalf("actions after reset = %d, want 2", len(buttons.actions))
+	}
+}
+
+func TestControllerDefersWithoutLatchingWhenWakeOwnsActuation(t *testing.T) {
+	buttons := &deferredSafetyTransport{}
+	controller := NewController(buttons)
+	settings := armedSettings()
+	status := tripStatus(46)
+
+	controller.Observe(context.Background(), status, settings)
+	result := controller.Apply(Evaluate(status, true, settings.Thresholds), true)
+	if result.Latched || len(buttons.actions) != 0 {
+		t.Fatalf("busy safety acquisition latched or sent: result=%+v actions=%+v", result, buttons.actions)
+	}
+
+	buttons.ready = true
+	controller.Observe(context.Background(), status, settings)
+	result = controller.Apply(Evaluate(status, true, settings.Thresholds), true)
+	if !result.Latched || len(buttons.actions) != 1 || buttons.actions[0].Name != "operate" {
+		t.Fatalf("newer authoritative poll did not retry safety action: result=%+v actions=%+v", result, buttons.actions)
 	}
 }
 

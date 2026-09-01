@@ -91,13 +91,12 @@ func (t *ownedButtonTransport) Acquire() ActuationLease {
 		return nil
 	}
 	c := t.coordinator
-	if t.safety {
-		c.lockAfterWake()
-	} else {
-		c.mu.Lock()
-	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
 	if t.safety {
+		if c.wakeDone != nil {
+			return nil
+		}
 		if c.lease != nil && c.lease.owner.safety {
 			return nil
 		}
@@ -200,21 +199,6 @@ func (t *gatedWakeTransport) SendWake(ctx context.Context) (api.ActionResult, er
 		c.mu.Unlock()
 	}()
 	return t.transport.SendWake(ctx)
-}
-
-// lockAfterWake preserves safety preemption semantics without holding the
-// coordinator mutex across wake I/O. The safety controller historically
-// waited for an in-flight wake because SendWake held mu for the full call.
-func (c *ActuationCoordinator) lockAfterWake() {
-	for {
-		c.mu.Lock()
-		if c.wakeDone == nil {
-			return
-		}
-		done := c.wakeDone
-		c.mu.Unlock()
-		<-done
-	}
 }
 
 func (c *ActuationCoordinator) busyOwnerLocked() string {

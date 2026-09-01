@@ -98,13 +98,21 @@ func (c *Controller) Observe(ctx context.Context, status api.Status, settings Co
 		return
 	}
 
-	// Latch before attempting the toggle. This is the key no-retry guarantee.
-	c.latched = true
 	if leased, ok := c.transport.(safetyLeaseButtonTransport); ok {
 		// Safety ownership preempts any lower-priority automatic transaction
-		// and remains held for the full overtemperature excursion.
+		// and remains held for the full overtemperature excursion. An in-flight
+		// wake defers acquisition so this serial callback never blocks the read
+		// loop that wake is waiting to retire; the next fresh poll retries.
 		c.lease = leased.Acquire()
+		if c.lease == nil {
+			c.mu.Unlock()
+			return
+		}
 	}
+	// Latch only after reserving actuation and before attempting the toggle.
+	// This preserves the no-retry guarantee for ambiguous writes while allowing
+	// a busy wake reservation to defer until a newer authoritative poll.
+	c.latched = true
 	c.action = ActionStatus{
 		State:       ActionPending,
 		Name:        "standby",
