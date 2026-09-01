@@ -25,6 +25,12 @@ type leaseRecordingButtons struct {
 	releases int
 }
 
+type recordingLease struct {
+	releases *int
+}
+
+func (l *recordingLease) Release() { (*l.releases)++ }
+
 type sessionRecordingButtons struct {
 	actions        []string
 	authorizations []transport.SerialSessionWriteAuthorization
@@ -40,10 +46,10 @@ func (r *sessionRecordingButtons) SendButtonForSerialSession(_ context.Context, 
 	return api.ActionResult{Name: action.Name, Sent: true}, nil
 }
 
-func (r *leaseRecordingButtons) Acquire() bool      { return true }
-func (r *leaseRecordingButtons) Release()           { r.releases++ }
-func (r *leaseRecordingButtons) SafetyHold() bool   { return false }
-func (r *leaseRecordingButtons) SetSafetyHold(bool) {}
+func (r *leaseRecordingButtons) Acquire() transport.ActuationLease {
+	return &recordingLease{releases: &r.releases}
+}
+func (r *leaseRecordingButtons) SafetyHold() bool { return false }
 
 func (r *recordingButtons) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
 	r.actions = append(r.actions, action.Name)
@@ -1082,7 +1088,7 @@ func TestControllerRecoveryFailsClosedWhenPersistenceFails(t *testing.T) {
 	standbyRX := statusAt(81, "standby", false)
 	rx := false
 	controller.manualOverride = PolicyHigh
-	controller.nav = navState{failed: true, leaseHeld: true, failureAfterGen: 1}
+	controller.nav = navState{failed: true, leaseHeld: true, lease: buttons.Acquire(), failureAfterGen: 1}
 	controller.mayBeInMenu = true
 	controller.lastDisplayGen = 2
 	controller.lastDisplayKey = "home"

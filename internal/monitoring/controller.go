@@ -35,9 +35,7 @@ type ControlSettings struct {
 
 type safetyLeaseButtonTransport interface {
 	transport.ButtonTransport
-	Acquire() bool
-	Release()
-	SetSafetyHold(bool)
+	Acquire() transport.ActuationLease
 }
 
 // Controller performs the one deliberately narrow safety action supported by
@@ -54,6 +52,7 @@ type Controller struct {
 	now       func() time.Time
 	latched   bool
 	action    ActionStatus
+	lease     transport.ActuationLease
 }
 
 func NewController(buttonTransport transport.ButtonTransport) *Controller {
@@ -104,8 +103,7 @@ func (c *Controller) Observe(ctx context.Context, status api.Status, settings Co
 	if leased, ok := c.transport.(safetyLeaseButtonTransport); ok {
 		// Safety ownership preempts any lower-priority automatic transaction
 		// and remains held for the full overtemperature excursion.
-		leased.Acquire()
-		leased.SetSafetyHold(true)
+		c.lease = leased.Acquire()
 	}
 	c.action = ActionStatus{
 		State:       ActionPending,
@@ -130,9 +128,9 @@ func (c *Controller) Observe(ctx context.Context, status api.Status, settings Co
 }
 
 func (c *Controller) releaseSafetyHoldLocked() {
-	if leased, ok := c.transport.(safetyLeaseButtonTransport); ok {
-		leased.SetSafetyHold(false)
-		leased.Release()
+	if c.lease != nil {
+		c.lease.Release()
+		c.lease = nil
 	}
 }
 

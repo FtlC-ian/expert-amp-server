@@ -15,6 +15,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
+	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
 	"github.com/FtlC-ian/expert-amp-server/internal/transport"
@@ -141,6 +142,50 @@ type sequenceSerialOpener struct {
 	opened chan int
 }
 
+type deadlockGateOpener struct {
+	port    serial.Port
+	entered chan struct{}
+	release chan struct{}
+
+	mu    sync.Mutex
+	opens int
+}
+
+func (g *deadlockGateOpener) Open(string, int) (serial.Port, error) {
+	g.mu.Lock()
+	g.opens++
+	openNumber := g.opens
+	g.mu.Unlock()
+	if openNumber == 1 {
+		close(g.entered)
+		<-g.release
+		return g.port, nil
+	}
+	return nil, errors.New("no further test serial ports")
+}
+
+type signalingWakeTransport struct {
+	transport transport.WakeTransport
+	entered   chan struct{}
+	once      sync.Once
+}
+
+func (t *signalingWakeTransport) SendWake(ctx context.Context) (api.ActionResult, error) {
+	t.once.Do(func() { close(t.entered) })
+	return t.transport.SendWake(ctx)
+}
+
+type signalingLease struct {
+	transport.LeaseButtonTransport
+	acquireEntered chan struct{}
+	once           sync.Once
+}
+
+func (l *signalingLease) Acquire() transport.ActuationLease {
+	l.once.Do(func() { close(l.acquireEntered) })
+	return l.LeaseButtonTransport.Acquire()
+}
+
 func (m *sequenceSerialOpener) Open(string, int) (serial.Port, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -162,6 +207,34 @@ func (m *sequenceSerialOpener) openCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.opens
+}
+
+func deadlockRegressionConfig() SerialSourceConfig {
+	return SerialSourceConfig{
+		Port:             "/dev/ttyDEADLOCK",
+		BaudRate:         115200,
+		ReadTimeout:      10 * time.Millisecond,
+		ReadSize:         64,
+		MinFrameLen:      64,
+		MaxBuffer:        4096,
+		IOTimeout:        500 * time.Millisecond,
+		ReconnectBackoff: time.Second,
+	}
+}
+
+func deadlockMenuPrerequisites() menudebug.Prerequisites {
+	return menudebug.Prerequisites{
+		DebugEnabled:         true,
+		RecentProtocolStatus: true,
+		ProtocolStandby:      true,
+		ProtocolRX:           true,
+		ChecksumValidDisplay: true,
+		DisplayStandby:       true,
+		DisplayRX:            true,
+		HomeDisplay:          true,
+		DisplayGeneration:    1,
+		StatusGeneration:     1,
+	}
 }
 
 func mustDecodeHex(t *testing.T, s string) []byte {
@@ -466,6 +539,128 @@ func TestSerialSourceWakeQuiescesLiveSessionAndReconnects(t *testing.T) {
 	}
 	if len(rts) != 2 || !rts[0] || rts[1] {
 		t.Fatalf("unexpected wake RTS sequence: %v", rts)
+	}
+}
+
+func TestSerialSourceWakeDoesNotDeadlockWithMenuDebugLeaseAcquire(t *testing.T) {
+	live := &mockSerialPort{blockRead: true}
+	opener := &deadlockGateOpener{port: live, entered: make(chan struct{}), release: make(chan struct{})}
+	src := NewSerialSource(deadlockRegressionConfig(), opener, Update{})
+	coordinator := transport.NewActuationCoordinator(src)
+	wakeEntered := make(chan struct{})
+	wake := coordinator.GateWake(&signalingWakeTransport{transport: src, entered: wakeEntered})
+	acquireEntered := make(chan struct{})
+	menuLease := &signalingLease{LeaseButtonTransport: coordinator.Owner(transport.ActuationOwnerMenuDebug, false), acquireEntered: acquireEntered}
+	menuController := menudebug.NewController(menuLease)
+	src.ConfigureMenuDebugController(menuController)
+
+	view, token, err := menuController.Arm(menudebug.Acknowledgement, deadlockMenuPrerequisites())
+	if err != nil {
+		t.Fatalf("arm menu-debug session: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src.Start(ctx)
+	select {
+	case <-opener.entered:
+	case <-time.After(time.Second):
+		t.Fatal("read loop did not enter the blocked serial open")
+	}
+
+	wakeDone := make(chan error, 1)
+	go func() {
+		_, err := wake.SendWake(context.Background())
+		wakeDone <- err
+	}()
+	select {
+	case <-wakeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("wake did not enter the serial transport")
+	}
+
+	beginDone := make(chan error, 1)
+	go func() {
+		_, err := menuController.Begin(token, view.Revision, menudebug.CapabilityFan)
+		beginDone <- err
+	}()
+	select {
+	case <-acquireEntered:
+	case <-time.After(time.Second):
+		t.Fatal("menu-debug begin did not attempt to acquire the actuator")
+	}
+	close(opener.release)
+
+	select {
+	case err := <-beginDone:
+		if err == nil {
+			t.Fatal("menu-debug acquired the actuator during wake")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("menu-debug begin deadlocked behind wake")
+	}
+	select {
+	case <-wakeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wake deadlocked with serial session activation and menu-debug begin")
+	}
+}
+
+func TestSerialSourceWakeDoesNotDeadlockWithStaleMenuDebugLeaseRelease(t *testing.T) {
+	live := &mockSerialPort{blockRead: true}
+	opener := &deadlockGateOpener{port: live, entered: make(chan struct{}), release: make(chan struct{})}
+	src := NewSerialSource(deadlockRegressionConfig(), opener, Update{})
+	coordinator := transport.NewActuationCoordinator(src)
+	wakeEntered := make(chan struct{})
+	wake := coordinator.GateWake(&signalingWakeTransport{transport: src, entered: wakeEntered})
+	menuController := menudebug.NewController(coordinator.Owner(transport.ActuationOwnerMenuDebug, false))
+	src.ConfigureMenuDebugController(menuController)
+	safetyController := monitoring.NewController(coordinator.Owner(transport.ActuationOwnerSafety, true))
+
+	view, token, err := menuController.Arm(menudebug.Acknowledgement, deadlockMenuPrerequisites())
+	if err != nil {
+		t.Fatalf("arm menu-debug session: %v", err)
+	}
+	if _, err := menuController.Begin(token, view.Revision, menudebug.CapabilityFan); err != nil {
+		t.Fatalf("begin menu-debug capability: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src.Start(ctx)
+	select {
+	case <-opener.entered:
+	case <-time.After(time.Second):
+		t.Fatal("read loop did not enter the blocked serial open")
+	}
+
+	temperature := 95.0
+	tx := false
+	safetyController.Observe(context.Background(), api.Status{
+		Telemetry:     api.Telemetry{OperatingState: "operate", TX: &tx, TemperatureC: &temperature, Provenance: "status-poll"},
+		RecentContact: true,
+	}, monitoring.ControlSettings{
+		Enabled:    true,
+		Armed:      true,
+		Thresholds: monitoring.Thresholds{TemperatureWarningC: 60, TemperatureTripC: 70, TemperatureResetC: 50},
+	})
+
+	wakeDone := make(chan error, 1)
+	go func() {
+		_, err := wake.SendWake(context.Background())
+		wakeDone <- err
+	}()
+	select {
+	case <-wakeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("wake did not enter the serial transport after safety released its hold")
+	}
+	close(opener.release)
+
+	select {
+	case <-wakeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wake deadlocked with stale menu-debug lease release")
 	}
 }
 
