@@ -8,6 +8,7 @@ import (
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
+	"github.com/FtlC-ian/expert-amp-server/internal/transport"
 )
 
 type fakeLease struct {
@@ -15,14 +16,17 @@ type fakeLease struct {
 	busy, safety       bool
 }
 
-func (l *fakeLease) Acquire() bool {
+type fakeLeaseToken struct{ lease *fakeLease }
+
+func (t *fakeLeaseToken) Release() { t.lease.released++ }
+
+func (l *fakeLease) Acquire() transport.ActuationLease {
 	if l.busy {
-		return false
+		return nil
 	}
 	l.acquired++
-	return true
+	return &fakeLeaseToken{lease: l}
 }
-func (l *fakeLease) Release()         { l.released++ }
 func (l *fakeLease) SafetyHold() bool { return l.safety }
 
 func readyPrerequisites() Prerequisites {

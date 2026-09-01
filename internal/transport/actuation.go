@@ -19,17 +19,22 @@ const (
 // interleave with manual API writes.
 type LeaseButtonTransport interface {
 	ButtonTransport
-	Acquire() bool
-	Release()
+	Acquire() ActuationLease
 	SafetyHold() bool
-	SetSafetyHold(bool)
+}
+
+// ActuationLease is the identity of one successful coordinator acquisition.
+// Release is idempotent and affects the coordinator only while this exact
+// lease remains current.
+type ActuationLease interface {
+	Release()
 }
 
 type ActuationCoordinator struct {
-	mu         sync.Mutex
-	transport  ButtonTransport
-	owner      string
-	safetyHold bool
+	mu        sync.Mutex
+	transport ButtonTransport
+	lease     *actuationLease
+	wakeDone  chan struct{}
 }
 
 type ownedButtonTransport struct {
@@ -41,6 +46,12 @@ type ownedButtonTransport struct {
 type gatedWakeTransport struct {
 	coordinator *ActuationCoordinator
 	transport   WakeTransport
+}
+
+type actuationLease struct {
+	coordinator *ActuationCoordinator
+	owner       *ownedButtonTransport
+	released    bool
 }
 
 func NewActuationCoordinator(buttonTransport ButtonTransport) *ActuationCoordinator {
@@ -69,40 +80,51 @@ func (c *ActuationCoordinator) SendButton(ctx context.Context, action api.Button
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.owner != "" || c.safetyHold {
-		return api.ActionResult{Name: action.Name}, ActuationBusyError(c.owner)
+	if c.lease != nil || c.wakeDone != nil {
+		return api.ActionResult{Name: action.Name}, ActuationBusyError(c.busyOwnerLocked())
 	}
 	return c.transport.SendButton(ctx, action)
 }
 
-func (t *ownedButtonTransport) Acquire() bool {
+func (t *ownedButtonTransport) Acquire() ActuationLease {
 	if t == nil || t.coordinator == nil {
-		return false
+		return nil
 	}
 	c := t.coordinator
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if t.safety {
-		c.safetyHold = true
-		c.owner = t.owner
-		return true
+		if c.wakeDone != nil {
+			return nil
+		}
+		if c.lease != nil && c.lease.owner.safety {
+			return nil
+		}
+		lease := &actuationLease{coordinator: c, owner: t}
+		c.lease = lease
+		return lease
 	}
-	if c.safetyHold || (c.owner != "" && c.owner != t.owner) {
-		return false
+	if c.wakeDone != nil || c.lease != nil {
+		return nil
 	}
-	c.owner = t.owner
-	return true
+	lease := &actuationLease{coordinator: c, owner: t}
+	c.lease = lease
+	return lease
 }
 
-func (t *ownedButtonTransport) Release() {
-	if t == nil || t.coordinator == nil {
+func (l *actuationLease) Release() {
+	if l == nil || l.coordinator == nil {
 		return
 	}
-	c := t.coordinator
+	c := l.coordinator
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.owner == t.owner {
-		c.owner = ""
+	if l.released {
+		return
+	}
+	l.released = true
+	if c.lease == l {
+		c.lease = nil
 	}
 }
 
@@ -112,22 +134,7 @@ func (t *ownedButtonTransport) SafetyHold() bool {
 	}
 	t.coordinator.mu.Lock()
 	defer t.coordinator.mu.Unlock()
-	return t.coordinator.safetyHold
-}
-
-func (t *ownedButtonTransport) SetSafetyHold(active bool) {
-	if t == nil || t.coordinator == nil || !t.safety {
-		return
-	}
-	c := t.coordinator
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.safetyHold = active
-	if active {
-		c.owner = t.owner
-	} else if c.owner == t.owner {
-		c.owner = ""
-	}
+	return t.coordinator.lease != nil && t.coordinator.lease.owner.safety
 }
 
 func (t *ownedButtonTransport) SendButton(ctx context.Context, action api.ButtonAction) (api.ActionResult, error) {
@@ -137,8 +144,8 @@ func (t *ownedButtonTransport) SendButton(ctx context.Context, action api.Button
 	c := t.coordinator
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.owner != t.owner || (!t.safety && c.safetyHold) {
-		return api.ActionResult{Name: action.Name}, ActuationBusyError(c.owner)
+	if c.lease == nil || c.lease.owner != t {
+		return api.ActionResult{Name: action.Name}, ActuationBusyError(c.busyOwnerLocked())
 	}
 	return c.transport.SendButton(ctx, action)
 }
@@ -150,8 +157,8 @@ func (t *ownedButtonTransport) SendButtonForSerialSession(ctx context.Context, a
 	c := t.coordinator
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.owner != t.owner || (!t.safety && c.safetyHold) {
-		return api.ActionResult{Name: action.Name}, ActuationBusyError(c.owner)
+	if c.lease == nil || c.lease.owner != t {
+		return api.ActionResult{Name: action.Name}, ActuationBusyError(c.busyOwnerLocked())
 	}
 	transport, ok := c.transport.(SerialSessionButtonTransport)
 	if !ok {
@@ -172,12 +179,36 @@ func (t *gatedWakeTransport) SendWake(ctx context.Context) (api.ActionResult, er
 	if t == nil || t.coordinator == nil || t.transport == nil {
 		return api.ActionResult{Name: "wake"}, WakeTransportUnavailableError()
 	}
-	t.coordinator.mu.Lock()
-	defer t.coordinator.mu.Unlock()
-	if t.coordinator.owner != "" || t.coordinator.safetyHold {
-		return api.ActionResult{Name: "wake"}, ActuationBusyError(t.coordinator.owner)
+	c := t.coordinator
+	c.mu.Lock()
+	if c.lease != nil || c.wakeDone != nil {
+		owner := c.busyOwnerLocked()
+		c.mu.Unlock()
+		return api.ActionResult{Name: "wake"}, ActuationBusyError(owner)
 	}
+	done := make(chan struct{})
+	c.wakeDone = done
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		if c.wakeDone == done {
+			c.wakeDone = nil
+			close(done)
+		}
+		c.mu.Unlock()
+	}()
 	return t.transport.SendWake(ctx)
+}
+
+func (c *ActuationCoordinator) busyOwnerLocked() string {
+	if c.wakeDone != nil {
+		return "wake"
+	}
+	if c.lease != nil {
+		return c.lease.owner.owner
+	}
+	return ""
 }
 
 func ActuationBusyError(owner string) *ButtonActionError {

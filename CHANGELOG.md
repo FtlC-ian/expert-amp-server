@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.8 - 2026-08-31
+
+Actuation-coordination safety release.
+
+### Fixed
+
+- Prevent wake/serial-lifecycle lock inversions from deadlocking Menu Debug lease acquisition, stale lease release, or the synchronous overtemperature callback. Wake now reserves actuation without holding the coordinator mutex across serial I/O; safety defers without latching, retries on a newer authoritative status poll after wake, and then preempts.
+- Bind every successful automatic-actuation acquisition to an opaque lease instance. Same-named owners can no longer acquire concurrently, and an idempotent stale release cannot clear a newer owner’s reservation.
+
+### Validation
+
+- Verified the full Go suite, race detector, vet, repeated coordinator concurrency tests, and repeated serial wake deadlock regressions.
+
 ## v0.4.7 - 2026-08-28
 
 ### Added

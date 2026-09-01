@@ -24,8 +24,7 @@ const (
 )
 
 type lease interface {
-	Acquire() bool
-	Release()
+	Acquire() transport.ActuationLease
 	SafetyHold() bool
 }
 
@@ -53,6 +52,7 @@ type session struct {
 	expiresAt                      time.Time
 	actionsAttempted, actionBudget int
 	mayBeInMenu, leaseHeld         bool
+	lease                          transport.ActuationLease
 	failure                        string
 	completed                      []Capability
 	seen                           map[string]struct{}
@@ -550,9 +550,11 @@ func (c *Controller) Begin(token string, revision uint64, capability Capability)
 	if c.lease == nil {
 		return c.viewLocked(), errors.New("menu-debug actuation lease is unavailable")
 	}
-	if !c.lease.Acquire() {
+	lease := c.lease.Acquire()
+	if lease == nil {
 		return c.viewLocked(), errors.New("amplifier actuation is busy")
 	}
+	c.session.lease = lease
 	c.session.leaseHeld = true
 	c.session.capability = capability
 	c.session.phase = PhaseDiscovering
@@ -1234,8 +1236,11 @@ func (c *Controller) failViewLocked(reason string) (SessionView, error) {
 
 func (c *Controller) releaseLocked() {
 	if c.session.leaseHeld && c.lease != nil {
-		c.lease.Release()
+		if c.session.lease != nil {
+			c.session.lease.Release()
+		}
 	}
+	c.session.lease = nil
 	c.session.leaseHeld = false
 }
 func (c *Controller) bumpLocked() { c.session.revision++ }

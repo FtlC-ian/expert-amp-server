@@ -26,8 +26,7 @@ type ButtonTransport interface {
 
 type leaseButtonTransport interface {
 	ButtonTransport
-	Acquire() bool
-	Release()
+	Acquire() transport.ActuationLease
 	SafetyHold() bool
 }
 
@@ -69,6 +68,7 @@ type navState struct {
 	changedOperate          bool
 	controlUncertain        bool
 	leaseHeld               bool
+	lease                   transport.ActuationLease
 	verifyOnly              bool
 	recoveryAttempted       bool
 	recoveryFromScreen      string
@@ -697,9 +697,11 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 			c.result = c.decorateLocked(base, c.settings)
 			return c.result
 		}
+		lease := c.nav.lease
 		c.nav = navState{
 			active:                  true,
 			leaseHeld:               true,
+			lease:                   lease,
 			model:                   strings.TrimSpace(status.ModelName),
 			serialSessionGeneration: c.serialSessionGeneration,
 			verifyOnly:              c.verifyRequested,
@@ -1134,8 +1136,12 @@ func (c *Controller) acquireLeaseLocked() bool {
 	if c.nav.leaseHeld {
 		return true
 	}
-	if transport, ok := c.transport.(leaseButtonTransport); ok && !transport.Acquire() {
-		return false
+	if leased, ok := c.transport.(leaseButtonTransport); ok {
+		lease := leased.Acquire()
+		if lease == nil {
+			return false
+		}
+		c.nav.lease = lease
 	}
 	c.nav.leaseHeld = true
 	return true
@@ -1145,8 +1151,9 @@ func (c *Controller) releaseLeaseLocked() {
 	if !c.nav.leaseHeld {
 		return
 	}
-	if transport, ok := c.transport.(leaseButtonTransport); ok {
-		transport.Release()
+	if c.nav.lease != nil {
+		c.nav.lease.Release()
+		c.nav.lease = nil
 	}
 	c.nav.leaseHeld = false
 }

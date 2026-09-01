@@ -2,15 +2,20 @@ package transport
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
 )
 
 type recordingActuator struct {
+	mu             sync.Mutex
 	actions        []string
 	authorizations []SerialSessionWriteAuthorization
 	wakes          int
+	wakeStarted    chan struct{}
+	wakeRelease    chan struct{}
 }
 
 func (r *recordingActuator) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
@@ -25,6 +30,14 @@ func (r *recordingActuator) SendButtonForSerialSession(_ context.Context, action
 }
 
 func (r *recordingActuator) SendWake(_ context.Context) (api.ActionResult, error) {
+	if r.wakeStarted != nil {
+		close(r.wakeStarted)
+	}
+	if r.wakeRelease != nil {
+		<-r.wakeRelease
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.wakes++
 	return api.ActionResult{Name: "wake", Sent: true}, nil
 }
@@ -33,7 +46,8 @@ func TestActuationCoordinatorRejectsManualWritesDuringAutomaticLease(t *testing.
 	raw := &recordingActuator{}
 	coordinator := NewActuationCoordinator(raw)
 	fan := coordinator.Owner(ActuationOwnerFan, false)
-	if !fan.Acquire() {
+	fanLease := fan.Acquire()
+	if fanLease == nil {
 		t.Fatal("fan lease was not acquired")
 	}
 
@@ -46,7 +60,7 @@ func TestActuationCoordinatorRejectsManualWritesDuringAutomaticLease(t *testing.
 		t.Fatalf("rejected manual write reached actuator: %v", raw.actions)
 	}
 
-	fan.Release()
+	fanLease.Release()
 	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "set"}); err != nil {
 		t.Fatalf("manual write after release failed: %v", err)
 	}
@@ -57,18 +71,23 @@ func TestActuationCoordinatorSafetyPreemptsFanAndHoldsActuator(t *testing.T) {
 	coordinator := NewActuationCoordinator(raw)
 	fan := coordinator.Owner(ActuationOwnerFan, false)
 	safety := coordinator.Owner(ActuationOwnerSafety, true)
-	if !fan.Acquire() {
+	fanLease := fan.Acquire()
+	if fanLease == nil {
 		t.Fatal("fan lease was not acquired")
 	}
-	if !safety.Acquire() {
+	safetyLease := safety.Acquire()
+	if safetyLease == nil {
 		t.Fatal("safety lease was not acquired")
 	}
-	safety.SetSafetyHold(true)
+	if !safety.SafetyHold() {
+		t.Fatal("safety acquisition did not establish a safety hold")
+	}
+	fanLease.Release()
 
 	if _, err := fan.SendButton(context.Background(), api.ButtonAction{Name: "set"}); err == nil {
 		t.Fatal("preempted fan owner was allowed to write")
 	}
-	if fan.Acquire() {
+	if fan.Acquire() != nil {
 		t.Fatal("fan reacquired actuator during safety hold")
 	}
 	if _, err := safety.SendButton(context.Background(), api.ButtonAction{Name: "operate"}); err != nil {
@@ -78,9 +97,11 @@ func TestActuationCoordinatorSafetyPreemptsFanAndHoldsActuator(t *testing.T) {
 		t.Fatalf("raw actions = %v, want one safety operate toggle", raw.actions)
 	}
 
-	safety.SetSafetyHold(false)
-	safety.Release()
-	if !fan.Acquire() {
+	safetyLease.Release()
+	if safety.SafetyHold() {
+		t.Fatal("safety hold remained active after its lease released")
+	}
+	if fan.Acquire() == nil {
 		t.Fatal("fan could not acquire actuator after safety reset")
 	}
 }
@@ -90,7 +111,8 @@ func TestActuationCoordinatorRejectsWakeDuringAutomaticLease(t *testing.T) {
 	coordinator := NewActuationCoordinator(raw)
 	wake := coordinator.GateWake(raw)
 	fan := coordinator.Owner(ActuationOwnerFan, false)
-	if !fan.Acquire() {
+	fanLease := fan.Acquire()
+	if fanLease == nil {
 		t.Fatal("fan lease was not acquired")
 	}
 	if _, err := wake.SendWake(context.Background()); err == nil {
@@ -99,7 +121,7 @@ func TestActuationCoordinatorRejectsWakeDuringAutomaticLease(t *testing.T) {
 	if raw.wakes != 0 {
 		t.Fatalf("rejected wake reached transport %d times", raw.wakes)
 	}
-	fan.Release()
+	fanLease.Release()
 	if _, err := wake.SendWake(context.Background()); err != nil {
 		t.Fatalf("wake after release failed: %v", err)
 	}
@@ -108,10 +130,87 @@ func TestActuationCoordinatorRejectsWakeDuringAutomaticLease(t *testing.T) {
 	}
 }
 
+func TestActuationCoordinatorReservesWakeWithoutHoldingMutex(t *testing.T) {
+	raw := &recordingActuator{wakeStarted: make(chan struct{}), wakeRelease: make(chan struct{})}
+	coordinator := NewActuationCoordinator(raw)
+	wake := coordinator.GateWake(raw)
+	menu := coordinator.Owner(ActuationOwnerMenuDebug, false)
+	safety := coordinator.Owner(ActuationOwnerSafety, true)
+	staleMenuLease := menu.Acquire()
+	if staleMenuLease == nil {
+		t.Fatal("menu-debug lease was not acquired for stale-release setup")
+	}
+	staleMenuLease.Release()
+
+	wakeDone := make(chan error, 1)
+	go func() {
+		_, err := wake.SendWake(context.Background())
+		wakeDone <- err
+	}()
+	select {
+	case <-raw.wakeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("wake transport did not start")
+	}
+
+	acquireDone := make(chan ActuationLease, 1)
+	go func() { acquireDone <- menu.Acquire() }()
+	select {
+	case acquired := <-acquireDone:
+		if acquired != nil {
+			t.Fatal("menu-debug acquired the actuator during wake")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("menu-debug acquire blocked behind wake")
+	}
+
+	releaseDone := make(chan struct{})
+	go func() {
+		staleMenuLease.Release()
+		close(releaseDone)
+	}()
+	select {
+	case <-releaseDone:
+	case <-time.After(time.Second):
+		t.Fatal("stale lease release blocked behind wake")
+	}
+
+	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "set"}); err == nil {
+		t.Fatal("manual write was accepted during wake")
+	}
+	if _, err := wake.SendWake(context.Background()); err == nil {
+		t.Fatal("second wake was accepted during wake")
+	}
+
+	safetyDone := make(chan ActuationLease, 1)
+	go func() { safetyDone <- safety.Acquire() }()
+	select {
+	case acquired := <-safetyDone:
+		if acquired != nil {
+			t.Fatal("safety acquired the actuator during wake")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("safety acquisition blocked the serial callback during wake")
+	}
+
+	close(raw.wakeRelease)
+	select {
+	case err := <-wakeDone:
+		if err != nil {
+			t.Fatalf("wake failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("wake did not finish")
+	}
+	if safety.Acquire() == nil {
+		t.Fatal("safety did not acquire the actuator after wake")
+	}
+}
+
 func TestOwnedActuationForwardsSerialSessionBinding(t *testing.T) {
 	raw := &recordingActuator{}
 	menu := NewActuationCoordinator(raw).Owner(ActuationOwnerMenuDebug, false)
-	if !menu.Acquire() {
+	if menu.Acquire() == nil {
 		t.Fatal("menu-debug lease was not acquired")
 	}
 	sessionTransport, ok := menu.(SerialSessionButtonTransport)
@@ -124,5 +223,45 @@ func TestOwnedActuationForwardsSerialSessionBinding(t *testing.T) {
 	}
 	if len(raw.actions) != 1 || raw.actions[0] != "set" || len(raw.authorizations) != 1 || raw.authorizations[0] != authorization {
 		t.Fatalf("forwarded actions=%v authorizations=%v", raw.actions, raw.authorizations)
+	}
+}
+
+func TestActuationCoordinatorUsesLeaseInstanceIdentity(t *testing.T) {
+	raw := &recordingActuator{}
+	coordinator := NewActuationCoordinator(raw)
+	firstOwner := coordinator.Owner("raw-passthrough", false)
+	secondOwner := coordinator.Owner("raw-passthrough", false)
+
+	firstLease := firstOwner.Acquire()
+	if firstLease == nil {
+		t.Fatal("first same-named owner did not acquire the actuator")
+	}
+	if firstOwner.Acquire() != nil {
+		t.Fatal("same owner view acquired a second concurrent lease")
+	}
+	if secondOwner.Acquire() != nil {
+		t.Fatal("second same-named owner acquired the active lease")
+	}
+
+	firstLease.Release()
+	secondLease := secondOwner.Acquire()
+	if secondLease == nil {
+		t.Fatal("second same-named owner did not acquire after release")
+	}
+
+	firstLease.Release()
+	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "set"}); err == nil {
+		t.Fatal("stale release cleared a newer same-named lease")
+	}
+	if _, err := firstOwner.SendButton(context.Background(), api.ButtonAction{Name: "set"}); err == nil {
+		t.Fatal("stale same-named owner was allowed to write")
+	}
+	if _, err := secondOwner.SendButton(context.Background(), api.ButtonAction{Name: "set"}); err != nil {
+		t.Fatalf("current same-named owner write failed: %v", err)
+	}
+
+	secondLease.Release()
+	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "set"}); err != nil {
+		t.Fatalf("manual write after exact lease release failed: %v", err)
 	}
 }
