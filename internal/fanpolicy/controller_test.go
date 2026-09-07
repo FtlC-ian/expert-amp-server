@@ -689,6 +689,32 @@ func TestThirdSeriesProductionUsesExactCapturedNormalQuietPath(t *testing.T) {
 	if result.State != StateSucceeded || result.CurrentPolicy != PolicyNormal || result.Navigation.Profile != ThirdSeriesDisplayProfile {
 		t.Fatalf("result=%+v", result)
 	}
+	wantTrace := []string{
+		"home:standby",
+		"setup:CONFIG",
+		"setup:ANTENNA",
+		"setup:CAT",
+		"setup:MANUAL TUNE",
+		"setup:DISPLAY",
+		"setup:BEEP",
+		"setup:START",
+		"setup:TEMP.",
+		"setup:ALARMS LOG",
+		"setup:TUN ANT",
+		"setup:RX ANT",
+		"setup:FAN NOISE",
+		"third-fan:hardware-normal:high-cooling",
+		"third-fan:save:high-cooling",
+		"third-fan:quiet:high-cooling",
+		"third-fan:quiet:normal",
+		"third-fan:hardware-normal:normal",
+		"third-fan:save:normal",
+		"third-fan:STORING",
+		"home:standby",
+	}
+	if !slices.Equal(result.Navigation.WaypointTrace, wantTrace) {
+		t.Fatalf("Third Series trace = %v, want %v", result.Navigation.WaypointTrace, wantTrace)
+	}
 	for _, action := range buttons.actions {
 		if action == "display" || action == "operate" {
 			t.Fatalf("forbidden Third Series action %q in %v", action, buttons.actions)
@@ -916,6 +942,33 @@ func TestThirdSeriesPassiveSaveCannotStartFromReplayedFan(t *testing.T) {
 	observeThirdSeriesPassivePath(t, controller, 9, 1,
 		"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json")
 	observeThirdSeriesPassivePath(t, controller, 11, 1,
+		"report_00acd527_18_g392_fan_menu_save.state.json",
+		"report_00acd527_19_g394_storing.state.json",
+		"report_00acd527_00_g367_home.state.json")
+	assertNoThirdSeriesPassiveReceipt(t, controller)
+}
+
+func TestThirdSeriesPassiveSaveRejectedGenerationCannotRewindHighWater(t *testing.T) {
+	controller, _, _, _ := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+	controller.ObserveDisplay(thirdSeriesPassiveObservation(t,
+		"report_00acd527_00_g367_home.state.json", 100, 1))
+	observeThirdSeriesPassivePath(t, controller, 1, 1,
+		"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+		"report_00acd527_18_g392_fan_menu_save.state.json",
+		"report_00acd527_19_g394_storing.state.json",
+		"report_00acd527_00_g367_home.state.json")
+	if controller.lastDisplayGen != 100 {
+		t.Fatalf("rejected display rewound generation high-water to %d", controller.lastDisplayGen)
+	}
+	assertNoThirdSeriesPassiveReceipt(t, controller)
+}
+
+func TestThirdSeriesPassiveSaveRequiresProtocolNativeStatus(t *testing.T) {
+	controller, _, settings, status := newThirdSeriesPassiveController(t, PolicyNormal, PolicyNormal)
+	status.Provenance = "display-frame"
+	controller.ObserveFromSerialSession(status, settings, 1)
+	observeThirdSeriesPassivePath(t, controller, 1, 1,
+		"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
 		"report_00acd527_18_g392_fan_menu_save.state.json",
 		"report_00acd527_19_g394_storing.state.json",
 		"report_00acd527_00_g367_home.state.json")

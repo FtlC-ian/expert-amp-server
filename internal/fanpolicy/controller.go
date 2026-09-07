@@ -424,6 +424,11 @@ func (c *Controller) ObserveSerialSession(serialSessionGeneration uint64) {
 	}
 	c.serialSessionGeneration = serialSessionGeneration
 	c.statusSerialSessionGeneration = 0
+	c.lastDisplayGen = 0
+	c.lastDisplayKey = ""
+	c.lastDisplayState = display.State{}
+	c.displayTX = nil
+	c.displayOperate = nil
 	c.passive = passiveSaveState{}
 	if c.nav.active {
 		c.failLocked("serial session changed during fan-policy navigation")
@@ -527,9 +532,14 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 	if observation.SerialSessionGeneration != 0 && observation.SerialSessionGeneration != c.serialSessionGeneration {
 		return c.result
 	}
+	if observation.Generation == 0 || (c.lastDisplayGen != 0 && observation.Generation <= c.lastDisplayGen) {
+		if !c.nav.active {
+			c.passive = passiveSaveState{}
+		}
+		return c.result
+	}
 
 	now := c.now()
-	previousDisplayGeneration := c.lastDisplayGen
 	key := semanticDisplayKey(observation.State)
 	c.lastDisplayGen = observation.Generation
 	c.lastDisplayKey = key
@@ -546,10 +556,7 @@ func (c *Controller) ObserveDisplay(observation DisplayObservation) Result {
 		operate := *observation.Operate
 		c.displayOperate = &operate
 	}
-	if !c.nav.active && (observation.Generation == 0 ||
-		(previousDisplayGeneration != 0 && observation.Generation <= previousDisplayGeneration)) {
-		c.passive = passiveSaveState{}
-	} else if !c.nav.active {
+	if !c.nav.active {
 		c.observePassiveSaveLocked(observation)
 	}
 	status := c.currentStatusLocked(now)
@@ -845,6 +852,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		if !ok {
 			return c.unexpectedLocked(observation.State)
 		}
+		c.recordVerifiedScreenLocked(key)
 		c.nav.observedPolicy = active
 		if c.nav.verifyOnly {
 			c.nav.target = active
@@ -855,12 +863,14 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		if !ok || selected != c.nav.expectedThirdSelection || active != c.nav.observedPolicy {
 			return c.unexpectedLocked(observation.State)
 		}
+		c.recordVerifiedScreenLocked(key)
 		return c.advanceThirdSeriesTargetLocked(observation, key, selected, active)
 	case "third-fan:toggled":
 		selected, active, ok := ThirdSeriesFanScreen(observation.State)
 		if !ok || selected != thirdSeriesSelectionForPolicy(c.nav.target) || active != c.nav.target {
 			return c.unexpectedLocked(observation.State)
 		}
+		c.recordVerifiedScreenLocked(key)
 		c.nav.observedPolicy = active
 		return c.sendThirdSeriesRightLocked("third-fan:save", observation.Generation, key, selected)
 	case "third-fan:save":
@@ -868,6 +878,7 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 		if !ok || selected != c.nav.expectedThirdSelection || active != c.nav.target {
 			return c.unexpectedLocked(observation.State)
 		}
+		c.recordVerifiedScreenLocked(key)
 		if selected == "save" {
 			return c.sendLocked("set", "submenu:STORING", observation.Generation, key)
 		}
@@ -1474,7 +1485,7 @@ func (c *Controller) thirdSeriesPassiveStatusBindingAllowedLocked() bool {
 	profile, bound := verifiedFanDisplayProfileForModel(c.status.ModelName, c.settings.FirmwareVersion)
 	status := c.currentStatusLocked(c.now())
 	return bound && profile.id == ThirdSeriesDisplayProfile && c.serialSessionGeneration != 0 &&
-		c.statusSerialSessionGeneration == c.serialSessionGeneration && status.RecentContact &&
+		c.statusSerialSessionGeneration == c.serialSessionGeneration && status.Provenance == "status-poll" && status.RecentContact &&
 		normalizeOperatingState(status.OperatingState) == "standby" && status.TX != nil && !*status.TX
 }
 
