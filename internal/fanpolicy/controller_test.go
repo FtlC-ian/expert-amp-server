@@ -1090,6 +1090,51 @@ func TestThirdSeriesPassiveSaveRejectsUnboundOrUnsafeDisplayEvidence(t *testing.
 	}
 }
 
+func TestThirdSeriesProductionRejectsGenericStoringScreen(t *testing.T) {
+	buttons := &recordingButtons{}
+	controller := NewController(buttons)
+	if err := controller.SetManualOverride(PolicyNormal, 0); err != nil {
+		t.Fatal(err)
+	}
+	settings := Settings{HighTemperatureC: 80, NormalTemperatureC: 75, FirmwareVersion: ThirdSeriesEvidenceFirmware}
+	status := statusAt(70, "standby", false)
+	status.ModelName = "EXPERT 2K-FA"
+	controller.Observe(status, settings)
+
+	files := []string{
+		"report_00acd527_00_g367_home.state.json",
+		"report_00acd527_01_g368_setup_menu_config.state.json",
+		"report_00acd527_02_g369_setup_menu_antenna.state.json",
+		"report_00acd527_03_g371_setup_menu_cat.state.json",
+		"report_00acd527_04_g372_setup_menu_manual_tune.state.json",
+		"report_00acd527_05_g374_setup_menu_display.state.json",
+		"report_00acd527_06_g375_setup_menu_beep_on.state.json",
+		"report_00acd527_07_g377_setup_menu_start_oprt.state.json",
+		"report_00acd527_08_g379_setup_menu_temp_f.state.json",
+		"report_00acd527_09_g380_setup_menu_alarms_log.state.json",
+		"report_00acd527_10_g381_setup_menu_tun_ant.state.json",
+		"report_00acd527_11_g383_setup_menu_rx_ant.state.json",
+		"report_00acd527_12_g384_setup_menu_fan_noise.state.json",
+		"report_00acd527_13_g385_fan_menu_normal_mode_all_modes.state.json",
+		"report_00acd527_14_g387_fan_menu_save.state.json",
+		"report_00acd527_15_g388_fan_menu_quiet_mode_ssb_only.state.json",
+		"report_00acd527_16_g389_fan_menu_quiet_mode_ssb_only.state.json",
+		"report_00acd527_17_g391_fan_menu_normal_mode_all_modes.state.json",
+		"report_00acd527_18_g392_fan_menu_save.state.json",
+	}
+	for generation, name := range files {
+		controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, name), Generation: uint64(generation + 1), TX: boolPtr(false), Operate: boolPtr(false)})
+	}
+	result := controller.ObserveDisplay(DisplayObservation{State: storingScreen(), Generation: uint64(len(files) + 1), TX: boolPtr(false), Operate: boolPtr(false)})
+	if result.State != StateFailed || !strings.Contains(result.Navigation.LastError, "unexpected display") {
+		t.Fatalf("generic storing screen did not fail closed: %+v", result)
+	}
+	result = controller.ObserveDisplay(DisplayObservation{State: loadThirdSeriesReportState(t, "report_00acd527_00_g367_home.state.json"), Generation: uint64(len(files) + 2), TX: boolPtr(false), Operate: boolPtr(false)})
+	if result.State == StateSucceeded || result.CurrentPolicy == PolicyNormal {
+		t.Fatalf("mismatched storing screen produced a verified receipt: %+v", result)
+	}
+}
+
 func TestThirdSeriesAllCapturedStoringVariantsAndDirectHome(t *testing.T) {
 	for _, name := range []string{
 		"report_00acd527_19_g394_storing.state.json", "report_00acd527_20_g395_storing.state.json",

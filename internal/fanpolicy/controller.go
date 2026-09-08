@@ -927,7 +927,11 @@ func (c *Controller) advanceLocked(observation DisplayObservation, key string) b
 			c.nav.step = "home"
 			return c.advanceLocked(observation, key)
 		}
-		if !matchesStoring(observation.State) && !(c.nav.profile == ThirdSeriesDisplayProfile && matchesThirdSeriesStoring(observation.State)) {
+		storingMatches := matchesStoring(observation.State)
+		if c.nav.profile == ThirdSeriesDisplayProfile {
+			storingMatches = matchesThirdSeriesStoring(observation.State)
+		}
+		if !storingMatches {
 			return c.unexpectedLocked(observation.State)
 		}
 		c.recordVerifiedScreenLocked(key)
