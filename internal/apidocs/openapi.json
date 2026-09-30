@@ -378,7 +378,7 @@
           "Status"
         ],
         "summary": "Status websocket feed",
-        "description": "WebSocket endpoint for the same canonical status model returned by GET /api/v1/status. After connect, the server sends one status snapshot immediately and then pushes changed snapshots only. Delivery is event-driven from the authoritative status path. The canonical endpoint does not support pace query strings. OpenAPI does not model websocket frames cleanly, so this operation is documented descriptively rather than with a full message schema exchange.",
+        "description": "WebSocket endpoint for the same canonical status model returned by GET /api/v1/status. After connect, the server sends one status snapshot immediately and then pushes changed snapshots only. Content events trigger immediate re-resolution; a one-second recheck also detects unchanged-frame contact and clock-driven expiry. Unchanged status payloads are not repeated. The canonical endpoint does not support pace query strings. OpenAPI does not model websocket frames cleanly, so this operation is documented descriptively rather than with a full message schema exchange.",
         "responses": {
           "101": {
             "description": "WebSocket upgrade accepted. Text messages carry Status objects without the standard envelope."
