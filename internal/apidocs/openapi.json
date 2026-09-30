@@ -1611,11 +1611,12 @@
             "properties": {
               "recentContact": {
                 "type": "boolean",
-                "description": "Conservative recent-contact indicator, not the same as operate or TX state."
+                "description": "True for five seconds after a successfully decoded display or protocol-native status arrival, including identical display frames. Cached polls and fixture changes do not count. Link liveness does not grant actuation authority or fresh status-poll evidence."
               },
               "lastContactAt": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "description": "Later of accepted display arrival and eligible protocol-native status contact; omitted when neither has been observed."
               },
               "bandCode": {
                 "type": "string",
@@ -2339,7 +2340,13 @@
           },
           "updatedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Content-change clock; identical arrivals do not advance it."
+          },
+          "displayReceivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Latest successfully decoded display arrival, including identical frames. Zero timestamp means unobserved; cached source polls do not advance it."
           }
         }
       },
