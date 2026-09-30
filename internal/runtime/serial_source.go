@@ -694,11 +694,12 @@ func (s *SerialSource) applyFrameFromSession(frame []byte, sessionGeneration uin
 
 	s.mu.Lock()
 	s.latest = Update{
-		State:     state,
-		Telemetry: telemetry,
-		Frame:     meta,
-		FrameKind: "serial",
-		Source:    "serial",
+		State:             state,
+		Telemetry:         telemetry,
+		Frame:             meta,
+		FrameKind:         "serial",
+		Source:            "serial",
+		DisplayReceivedAt: time.Now().UTC(),
 	}
 	s.diag = IngestDiagnostics{
 		FramesSeen:      s.framesSeen.Load(),

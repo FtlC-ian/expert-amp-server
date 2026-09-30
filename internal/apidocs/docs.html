@@ -158,7 +158,8 @@
       <div class="panel">
         <h2>Status honesty notes</h2>
         <ul class="small">
-          <li><code>recentContact</code> is a conservative recent-heard-from-the-amp indicator. It is not the same as TX or operate state.</li>
+          <li><code>recentContact</code> reports a successfully decoded display or protocol-native status arrival within five seconds; <code>lastContactAt</code> records the later contact. Identical display arrivals count, cached polls and fixture changes do not. This link-liveness indicator does not grant actuation authority or fresh status-poll evidence.</li>
+          <li>Runtime <code>displayReceivedAt</code> is the display arrival clock (zero means unobserved). Display <code>sequence</code> and <code>updatedAt</code> remain content-change identity; identical arrivals do not publish display-change events or change display-vs-status field ordering.</li>
           <li><code>bandCode</code>, <code>warningCode</code>, and <code>alarmCode</code> are protocol-backed raw fields when present.</li>
           <li><code>bandText</code>, <code>warningsText</code>, and <code>alarmsText</code> are decoded companions, not stronger truth than the raw codes.</li>
           <li><code>warnings</code> and <code>activeAlarms</code> are compatibility aliases retained for consumers already using them.</li>

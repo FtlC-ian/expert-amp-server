@@ -338,6 +338,10 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 
 `display.State` remains the pivot for screen mirroring and rendered LCD output. `StatusState` is the pivot for machine-readable amp status: it prefers protocol-native status-poll data and fills only the remaining gaps from the current runtime/display snapshot.
 
+Display content and link contact have separate clocks. Runtime `sequence` and `updatedAt` advance only when decoded content changes; identical arrivals do not publish display-change events. Runtime `displayReceivedAt` records the latest successfully decoded display arrival, including identical frames. Cached source polls, fixture content, malformed frames, and frames rejected from retired serial sessions do not advance that clock. A zero arrival timestamp means no display contact has been observed.
+
+Canonical status `lastContactAt` uses the later of display arrival and eligible protocol-native status contact; `recentContact` expires after five seconds without either. Display-vs-status field ordering still uses the content-change clock, not repeated display arrivals. Link contact is not actuation authority: direct status-poll freshness, provenance, and serial-session authorization remain separately required by control paths.
+
 ---
 
 ## What is wired vs. what remains deliberately limited

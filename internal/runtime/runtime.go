@@ -12,21 +12,23 @@ import (
 )
 
 type Snapshot struct {
-	State     display.State `json:"state"`
-	Telemetry api.Telemetry `json:"telemetry"`
-	Frame     api.FrameInfo `json:"frame"`
-	FrameKind string        `json:"frameKind,omitempty"`
-	Source    string        `json:"source,omitempty"`
-	Sequence  uint64        `json:"sequence"`
-	UpdatedAt time.Time     `json:"updatedAt,omitempty"`
+	State             display.State `json:"state"`
+	Telemetry         api.Telemetry `json:"telemetry"`
+	Frame             api.FrameInfo `json:"frame"`
+	FrameKind         string        `json:"frameKind,omitempty"`
+	Source            string        `json:"source,omitempty"`
+	Sequence          uint64        `json:"sequence"`
+	UpdatedAt         time.Time     `json:"updatedAt,omitempty"`
+	DisplayReceivedAt time.Time     `json:"displayReceivedAt,omitempty"`
 }
 
 type Update struct {
-	State     display.State
-	Telemetry api.Telemetry
-	Frame     api.FrameInfo
-	FrameKind string
-	Source    string
+	State             display.State
+	Telemetry         api.Telemetry
+	Frame             api.FrameInfo
+	FrameKind         string
+	Source            string
+	DisplayReceivedAt time.Time
 }
 
 type Source interface {
@@ -88,6 +90,9 @@ func (s *Store) Subscribe(buffer int) (<-chan Snapshot, func()) {
 
 func (s *Store) Apply(update Update) (Snapshot, bool) {
 	s.mu.Lock()
+	if update.DisplayReceivedAt.After(s.snapshot.DisplayReceivedAt) {
+		s.snapshot.DisplayReceivedAt = update.DisplayReceivedAt
+	}
 
 	resolvedSource := update.Source
 	if resolvedSource == "" {
@@ -108,13 +113,14 @@ func (s *Store) Apply(update Update) (Snapshot, bool) {
 	}
 
 	next := Snapshot{
-		State:     update.State,
-		Telemetry: update.Telemetry,
-		Frame:     update.Frame,
-		FrameKind: update.FrameKind,
-		Source:    resolvedSource,
-		Sequence:  s.snapshot.Sequence + 1,
-		UpdatedAt: time.Now().UTC(),
+		State:             update.State,
+		Telemetry:         update.Telemetry,
+		Frame:             update.Frame,
+		FrameKind:         update.FrameKind,
+		Source:            resolvedSource,
+		Sequence:          s.snapshot.Sequence + 1,
+		UpdatedAt:         time.Now().UTC(),
+		DisplayReceivedAt: s.snapshot.DisplayReceivedAt,
 	}
 	s.snapshot = next
 	// Publication shares the lock with unsubscribe so channels stay open and
