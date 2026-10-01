@@ -19,6 +19,10 @@ var statusWebsocketUpgrader = websocket.Upgrader{
 	},
 }
 
+// Canonical freshness can change without a content event, both on unchanged
+// arrivals and on silence expiry. Match the safety contact loop cadence.
+const statusRecheckInterval = time.Second
+
 func handleStatusWebsocket(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !allowMethodAPI(w, r, http.MethodGet) {
@@ -34,19 +38,21 @@ func handleStatusWebsocket(opts Options) http.HandlerFunc {
 		_ = conn.SetReadDeadline(time.Time{})
 		conn.SetPongHandler(func(string) error { return nil })
 
+		statusUpdates, unsubscribeStatus := subscribeStatus(opts)
+		defer unsubscribeStatus()
+		snapshotUpdates, unsubscribeSnapshots := subscribeSnapshots(opts.Store)
+		defer unsubscribeSnapshots()
+
 		status := selectedStatus(opts)
 		if err := writeStatusWebsocketMessage(conn, status); err != nil {
 			return
 		}
 		last := status
 
-		statusUpdates, unsubscribeStatus := subscribeStatus(opts)
-		defer unsubscribeStatus()
-		snapshotUpdates, unsubscribeSnapshots := subscribeSnapshots(opts.Store)
-		defer unsubscribeSnapshots()
-
 		pingTicker := time.NewTicker(30 * time.Second)
 		defer pingTicker.Stop()
+		recheckTicker := time.NewTicker(statusRecheckInterval)
+		defer recheckTicker.Stop()
 
 		sendIfChanged := func() error {
 			status := selectedStatus(opts)
@@ -67,6 +73,10 @@ func handleStatusWebsocket(opts Options) http.HandlerFunc {
 			case <-pingTicker.C:
 				_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			case <-recheckTicker.C:
+				if err := sendIfChanged(); err != nil {
 					return
 				}
 			case _, ok := <-statusUpdates:

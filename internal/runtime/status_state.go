@@ -108,16 +108,16 @@ func (s *StatusState) Subscribe(buffer int) (<-chan api.Status, func()) {
 func (s *StatusState) Resolve(snapshot Snapshot) api.Status {
 	fallback := StatusFromSnapshot(snapshot)
 	if s == nil {
-		return applyContactMetadata(fallback, snapshot.UpdatedAt, time.Time{})
+		return applyContactMetadata(fallback, snapshot.DisplayReceivedAt, time.Time{})
 	}
 	status := s.CurrentProtocolNative()
 	protocolAt := s.protocolUpdatedAt()
 	if status.Provenance != "status-poll" {
-		return applyContactMetadata(fallback, snapshot.UpdatedAt, protocolAt)
+		return applyContactMetadata(fallback, snapshot.DisplayReceivedAt, protocolAt)
 	}
 	resolved := mergeProtocolNativeStatus(status, fallback)
 	resolved = applyFreshDisplayOverrides(resolved, fallback, status, snapshot.UpdatedAt, protocolAt)
-	return applyContactMetadata(resolved, snapshot.UpdatedAt, protocolAt)
+	return applyContactMetadata(resolved, snapshot.DisplayReceivedAt, protocolAt)
 }
 
 func (s *StatusState) protocolUpdatedAt() time.Time {

@@ -416,6 +416,7 @@ func TestStatusStateKeepsProtocolValuesWhenDisplaySnapshotIsNotNewer(t *testing.
 	}})
 
 	snapshot := Snapshot{
+		DisplayReceivedAt: time.Now().UTC(),
 		Telemetry: api.Telemetry{
 			OperatingState: "standby",
 			Mode:           "standby",
