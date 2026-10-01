@@ -117,15 +117,12 @@ func (s *Store) Apply(update Update) (Snapshot, bool) {
 		UpdatedAt: time.Now().UTC(),
 	}
 	s.snapshot = next
-	subscribers := make([]chan Snapshot, 0, len(s.subscribers))
+	// Publication shares the lock with unsubscribe so channels stay open and
+	// concurrent Apply calls deliver snapshots in sequence order.
 	for ch := range s.subscribers {
-		subscribers = append(subscribers, ch)
-	}
-	s.mu.Unlock()
-
-	for _, ch := range subscribers {
 		pushSnapshot(ch, next)
 	}
+	s.mu.Unlock()
 	return next, true
 }
 
