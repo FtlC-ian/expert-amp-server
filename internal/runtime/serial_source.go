@@ -129,7 +129,17 @@ type SerialSource struct {
 	lifecycleMu          sync.Mutex
 	reconnectNow         chan struct{}
 
-	writeMu          sync.Mutex
+	writeMu sync.Mutex
+	// rawPassthroughActive is read and written only while writeMu is held. Both
+	// SendWake and writeFrameForSerialSession take writeMu before touching
+	// lifecycleMu, so checking it here is race-free and lets them fail fast
+	// instead of blocking on a lifecycleMu that a passthrough session holds for
+	// its entire, externally controlled duration.
+	rawPassthroughActive bool
+	// rawPassthroughClaim serializes passthrough sessions themselves so a second
+	// concurrent client is rejected rather than queued.
+	rawPassthroughClaim sync.Mutex
+
 	specs            map[string]transport.ButtonSpec
 	safetyController *monitoring.Controller
 	safetySettings   func() monitoring.ControlSettings
@@ -300,6 +310,13 @@ func (s *SerialSource) sendButton(ctx context.Context, action api.ButtonAction, 
 func (s *SerialSource) SendWake(ctx context.Context) (api.ActionResult, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// Checked under writeMu and before lifecycleMu: a passthrough session holds
+	// lifecycleMu for as long as its client stays connected, so acquiring it
+	// here would block this call, and with it every actuation path that waits
+	// behind the coordinator mutex this call is invoked under.
+	if s.rawPassthroughActive {
+		return api.ActionResult{Name: "wake", Queued: false, Sent: false, Transport: "serial-live-wake"}, transport.RawPassthroughActiveError()
+	}
 	s.lifecycleMu.Lock()
 	defer func() {
 		s.lifecycleMu.Unlock()
@@ -468,6 +485,12 @@ func (s *SerialSource) writeFrameForSerialSession(ctx context.Context, frame []b
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
+	if s.rawPassthroughActive {
+		// The port is still open, but it belongs to the passthrough client.
+		// Report that plainly rather than as a generic transport outage.
+		return transport.RawPassthroughActiveError()
+	}
+
 	s.portMu.RLock()
 	port := s.port
 	currentGeneration := s.portGeneration
@@ -580,6 +603,13 @@ func (s *SerialSource) retirePortIfCurrent(port serial.Port) {
 }
 
 func (s *SerialSource) retireCurrentSession(ctx context.Context) error {
+	return s.retireCurrentSessionForReason(ctx, "wake")
+}
+
+// retireCurrentSessionForReason closes the live port and waits for the read loop
+// that owns it to unwind, so the caller can take exclusive control of the
+// device. reason appears in error text only.
+func (s *SerialSource) retireCurrentSessionForReason(ctx context.Context, reason string) error {
 	s.portMu.Lock()
 	port := s.port
 	done := s.portDone
@@ -593,7 +623,7 @@ func (s *SerialSource) retireCurrentSession(ctx context.Context) error {
 	}
 	if port != nil {
 		if err := port.Close(); err != nil {
-			return fmt.Errorf("close live serial session for wake: %w", err)
+			return fmt.Errorf("close live serial session for %s: %w", reason, err)
 		}
 	}
 	if done == nil {
@@ -605,9 +635,9 @@ func (s *SerialSource) retireCurrentSession(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("wake canceled while waiting for live serial session: %w", ctx.Err())
+		return fmt.Errorf("%s canceled while waiting for live serial session: %w", reason, ctx.Err())
 	case <-wait.C:
-		return fmt.Errorf("timeout waiting for live serial session to stop before wake")
+		return fmt.Errorf("timeout waiting for live serial session to stop before %s", reason)
 	}
 }
 

@@ -61,6 +61,17 @@ func WakeTransportUnavailableError() *ButtonActionError {
 	return &ButtonActionError{StatusCode: 503, Message: "wake transport unavailable"}
 }
 
+// RawPassthroughActiveError reports that a raw serial-over-TCP client currently
+// holds the physical port. It is returned before any lock that the passthrough
+// session holds for its full duration, so server writes fail fast instead of
+// blocking for as long as the external client stays connected.
+func RawPassthroughActiveError() *ButtonActionError {
+	return &ButtonActionError{
+		StatusCode: 409,
+		Message:    "serial port is held by a raw passthrough client; disconnect it to restore server control",
+	}
+}
+
 func ButtonStatusCode(err error) int {
 	if actionErr := buttonActionError(err); actionErr != nil {
 		return actionErr.StatusCode

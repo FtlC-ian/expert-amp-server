@@ -66,6 +66,87 @@ The advanced `serialAssertDTR` and `serialAssertRTS` settings default to `true` 
 
 Third Series Expert 2K-FA production fan control additionally requires the operator-declared actual `fanPolicyFirmwareVersion` setting to equal `Rel.26_03_24_A` or `Rel.08_06_26_A` exactly. Status polling does not attest firmware, so empty, mistyped, case-variant, or other values advertise no supported modes and remain blocked before any amplifier command.
 
+### Raw serial-over-TCP passthrough (optional, off by default)
+
+`rawPassthroughEnabled` exposes the amplifier's serial link on
+`rawPassthroughListenAddress` (default `:7388`, matching the SPE-LAN-UNIT's own
+virtual COM port) so a single external client — such as SPE Expert Controller
+over TCP/IP — can drive the amplifier through the machine already running this
+server, with no second cable.
+
+**It requires a configured `serialPort` and a `pollingMode` other than `off`.**
+Passthrough leases the serial source, and no serial source is created while
+polling is off, so the two settings contradict each other: `POST
+/api/v1/settings` refuses the combination with HTTP 400 rather than saving a
+configuration that asks for passthrough and reports it unavailable. A
+configuration already on disk still starts — a conflict you can fix with one
+request should not stop the server and take overtemperature standby down with
+it — and `GET /api/v1/raw-passthrough` says in `note` which setting won.
+
+The amplifier tolerates one serial master, so this is an exclusive lease. While
+a client is connected the server stops its own polling and refuses its own
+button and wake writes with HTTP 409; on disconnect it reclaims the port and
+resumes automatically. A second concurrent client is rejected.
+
+**Server-side automatic controls are unavailable during a session, and a session
+is refused rather than started while one is armed.** If automatic fan control or
+overtemperature standby is armed, a connecting client is refused: the server
+closes the connection without sending a byte, so the client sees a clean EOF (or
+`ECONNRESET` if it wrote first) and some clients show only a retry spinner. The
+reason is not delivered on the raw socket — that socket carries the amplifier's
+stream and nothing else. Read it from the server log or
+`GET /api/v1/raw-passthrough`, which names each control to disarm. Nothing is
+silently suspended and nothing is automatically restored afterwards — choosing
+passthrough means knowingly running without those controls for as long as the
+client is connected. The amplifier's own firmware stepdown is unaffected.
+
+The dashboard and API keep working meanwhile: the server passively decodes the
+amplifier→client direction as it forwards it, so while the external client polls
+status, telemetry keeps updating. That state is labelled
+`provenance: "passthrough-tap"`, is shown for display only, goes stale normally
+when the client stops polling, and is never accepted as authority to actuate the
+amplifier. The server injects no bytes of its own while the lease is held.
+
+A client that never polls `0x90` is normal — Expert Controller Plus reads the
+display and nothing else, in receive and under transmit alike. In that case
+there is no tapped status to show, so canonical status reports display-derived
+state alone for the session: the pre-lease status-poll reading is dropped as the
+lease begins rather than served as though something were still refreshing it.
+
+What that looks like in practice depends on the field. Values the amplifier also
+prints on its LCD — temperature, output level, SWR, TX — keep being reported,
+because the display tap is still decoding them, but they arrive as
+`provenance: "display-frame"` with display-derived confidence rather than as a
+status poll. Values only the status reply carries, such as the protocol band
+code and text, drop out until polling resumes. `recentContact` follows the
+display snapshot, which advances when the decoded screen changes rather than on
+every frame, so a static screen ages out of the contact window while frames are
+still arriving.
+
+A client that does ask for `0x90` gets its reply reported as
+`provenance: "passthrough-tap"`, but only while it keeps asking. Nothing obliges
+it to, so a tap that stops being refreshed expires back to display-derived state
+rather than outranking newer display telemetry indefinitely — the same place a
+lease that never tapped anything starts from.
+
+Check `GET /api/v1/raw-passthrough`: it reports `blockedByArmedControls` when a
+session would be refused, `tapFresh` for display freshness, and
+`automaticControlsAvailable`, which reports whether the server owns the serial
+port — false for the lifetime of a lease, true when no client is connected. It
+does not report whether a control is armed; `blockedByArmedControls` does that.
+`listenerAvailable` reports whether the TCP listener actually bound. `enabled`
+means configured *and* running, so a listener that failed to bind reports
+`enabled: false` alongside `listenerAvailable: false`, with the bind error in
+`note` — that pair is what tells a passthrough that could not start from one you
+turned off.
+
+Arming automatic fan control or overtemperature standby is refused with HTTP 409
+while a client holds the port. Those controls cannot act during a lease, so
+accepting the change would leave a control that reads as armed and does nothing.
+Disarming is always allowed. `rawPassthroughEnabled` and
+`rawPassthroughListenAddress` take effect on restart, because the listener is
+built from the startup configuration.
+
 ## API highlights
 
 Canonical API routes live under `/api/v1/...`.

@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -810,5 +811,68 @@ func TestUpdateRejectsObviouslyBadSerialPort(t *testing.T) {
 	_, err = mgr.Update(Settings{SerialPort: "/dev/ttyUSB0\nrm -rf /", PollingMode: string(PollingModeBoth), DisplayPollingEnabled: true, StatusPollingEnabled: true})
 	if err == nil {
 		t.Fatal("Update error = nil, want validation error")
+	}
+}
+
+// Normalized exists so a caller can judge a candidate update before committing
+// it. That is only worth anything if it answers for the value Update will
+// actually store, in every spelling that reaches the same place.
+func TestNormalizedAnswersForTheStoredForm(t *testing.T) {
+	mgr, err := NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	for _, mode := range []string{"off", "OFF", "Off", " off ", "\toff\n"} {
+		candidate := Settings{SerialPort: "/dev/ttyUSB0", PollingMode: mode}
+		if got := mgr.Normalized(candidate).PollingMode; got != string(PollingModeOff) {
+			t.Fatalf("Normalized(%q).PollingMode = %q, want %q", mode, got, PollingModeOff)
+		}
+		stored, err := mgr.Update(candidate)
+		if err != nil {
+			t.Fatalf("Update(%q): %v", mode, err)
+		}
+		if stored.Settings.PollingMode != string(PollingModeOff) {
+			t.Fatalf("Update(%q) stored %q, want %q", mode, stored.Settings.PollingMode, PollingModeOff)
+		}
+	}
+
+	// A blank mode is derived from the legacy booleans rather than passed
+	// through, so a caller reading the raw field would see neither the
+	// requested value nor the stored one.
+	blank := Settings{SerialPort: "/dev/ttyUSB0", PollingMode: "   "}
+	if got := mgr.Normalized(blank).PollingMode; got != string(PollingModeOff) {
+		t.Fatalf("Normalized(blank, all polling false).PollingMode = %q, want %q", got, PollingModeOff)
+	}
+
+	// The handler commits the normalized value it validated, which is only
+	// safe while normalizing twice is the same as normalizing once.
+	once := mgr.Normalized(Settings{SerialPort: " /dev/ttyUSB0 ", PollingMode: "BOTH"})
+	if twice := mgr.Normalized(once); !reflect.DeepEqual(once, twice) {
+		t.Fatalf("Normalized is not idempotent:\n once  = %+v\n twice = %+v", once, twice)
+	}
+}
+
+// controlsNewlyArmedBy compares an armed set across a normalization boundary,
+// so normalization must not be able to change what counts as armed. It does not
+// today -- these fields are copied through verbatim -- and this fails if that
+// ever stops being true.
+func TestNormalizedDoesNotChangeTheArmedControls(t *testing.T) {
+	mgr, err := NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	for _, armed := range []Settings{
+		{SerialPort: "/dev/ttyUSB0", PollingMode: "both", AutomaticFanPolicyEnabled: true},
+		{SerialPort: "/dev/ttyUSB0", PollingMode: "both", SafetyMonitoringEnabled: true, OvertemperatureStandbyArmed: true},
+		{SerialPort: "/dev/ttyUSB0", PollingMode: "both", OvertemperatureStandbyArmed: true},
+		{SerialPort: "/dev/ttyUSB0", PollingMode: "both"},
+	} {
+		got := mgr.Normalized(armed)
+		if got.AutomaticFanPolicyEnabled != armed.AutomaticFanPolicyEnabled ||
+			got.SafetyMonitoringEnabled != armed.SafetyMonitoringEnabled ||
+			got.OvertemperatureStandbyArmed != armed.OvertemperatureStandbyArmed {
+			t.Fatalf("normalization changed the armed set:\n in  = %+v\n out = %+v", armed, got)
+		}
 	}
 }

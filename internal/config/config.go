@@ -21,6 +21,11 @@ const (
 	DefaultFanNormalTemperatureC = 42
 	MinimumFanHysteresisC        = 5
 	FanDisplayProfileFirstSeries = "expert-1.3k-fa-first-series-v1"
+
+	// DefaultRawPassthroughListenAddress matches the TCP port the SPE-LAN-UNIT
+	// exposes its virtual COM port on, so clients already configured for that
+	// unit need no change to point at this server instead.
+	DefaultRawPassthroughListenAddress = ":7388"
 )
 
 type PollingMode string
@@ -83,6 +88,16 @@ type Settings struct {
 	StatusPollIntervalMs     int  `json:"statusPollIntervalMs,omitempty"`
 	SerialAssertDTR          bool `json:"serialAssertDTR"`
 	SerialAssertRTS          bool `json:"serialAssertRTS"`
+
+	// Raw serial-over-TCP passthrough hands the physical port to a single
+	// external client (for example SPE Expert Controller) for the lifetime of
+	// one TCP connection. Disabled by default: while a client is connected the
+	// server cannot issue button writes, and no server-side automatic control is
+	// available for the session. Overtemperature protection never runs on tapped
+	// telemetry -- a session is refused outright while that protection or
+	// automatic fan control is armed.
+	RawPassthroughEnabled       bool   `json:"rawPassthroughEnabled"`
+	RawPassthroughListenAddress string `json:"rawPassthroughListenAddress,omitempty"`
 }
 
 type Snapshot struct {
@@ -148,6 +163,9 @@ type rawSettings struct {
 	SerialPollIntervalMs     *int  `json:"serialPollIntervalMs,omitempty"`
 	SerialAssertDTR          *bool `json:"serialAssertDTR,omitempty"`
 	SerialAssertRTS          *bool `json:"serialAssertRTS,omitempty"`
+
+	RawPassthroughEnabled       *bool   `json:"rawPassthroughEnabled,omitempty"`
+	RawPassthroughListenAddress *string `json:"rawPassthroughListenAddress,omitempty"`
 }
 
 func DefaultSettings(listenAddress string) Settings {
@@ -173,6 +191,11 @@ func DefaultSettings(listenAddress string) Settings {
 		StatusPollIntervalMs:     DefaultPollIntervalMs,
 		SerialAssertDTR:          true,
 		SerialAssertRTS:          true,
+
+		// Off by default. The default address mirrors the SPE-LAN-UNIT's own
+		// virtual-COM port so existing client configurations line up.
+		RawPassthroughEnabled:       false,
+		RawPassthroughListenAddress: DefaultRawPassthroughListenAddress,
 	}
 }
 
@@ -251,6 +274,25 @@ func (m *Manager) Get() Snapshot {
 		NeedsSetup: m.cur.SerialPort == "",
 		Path:       m.path,
 	}
+}
+
+// Normalized returns next exactly as Update would store it, without storing it
+// or validating it.
+//
+// Callers that have to judge a candidate update before committing it need to
+// judge the stored form, not the requested one. Update trims and lowercases
+// pollingMode and, when it is blank, derives it from the legacy polling
+// booleans instead -- so "OFF", " off " and three false booleans all reach disk
+// as "off" while comparing equal to none of it beforehand. Answering such a
+// question against the raw request is how a check comes to accept exactly the
+// state it exists to refuse.
+//
+// Normalization is pure and idempotent, so normalizing here and letting Update
+// normalize again on commit costs nothing and cannot disagree.
+func (m *Manager) Normalized(next Settings) Settings {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return normalizeSettings(next, DefaultSettings(m.cur.ListenAddress))
 }
 
 func (m *Manager) Update(next Settings) (Snapshot, error) {
@@ -393,6 +435,12 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.SerialAssertRTS != nil {
 		out.SerialAssertRTS = *r.SerialAssertRTS
 	}
+	if r.RawPassthroughEnabled != nil {
+		out.RawPassthroughEnabled = *r.RawPassthroughEnabled
+	}
+	if r.RawPassthroughListenAddress != nil && strings.TrimSpace(*r.RawPassthroughListenAddress) != "" {
+		out.RawPassthroughListenAddress = strings.TrimSpace(*r.RawPassthroughListenAddress)
+	}
 	return syncLegacyPollingFields(out)
 }
 
@@ -447,6 +495,10 @@ func normalizeSettings(in, defaults Settings) Settings {
 	}
 	out.SerialAssertDTR = in.SerialAssertDTR
 	out.SerialAssertRTS = in.SerialAssertRTS
+	out.RawPassthroughEnabled = in.RawPassthroughEnabled
+	if strings.TrimSpace(in.RawPassthroughListenAddress) != "" {
+		out.RawPassthroughListenAddress = strings.TrimSpace(in.RawPassthroughListenAddress)
+	}
 	return syncLegacyPollingFields(out)
 }
 

@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	ActuationOwnerFan       = "fan-policy"
-	ActuationOwnerMenuDebug = "menu-debug"
-	ActuationOwnerSafety    = "overtemperature-safety"
+	ActuationOwnerFan            = "fan-policy"
+	ActuationOwnerMenuDebug      = "menu-debug"
+	ActuationOwnerSafety         = "overtemperature-safety"
+	ActuationOwnerRawPassthrough = "raw-passthrough"
 )
 
 // LeaseButtonTransport is an owner-scoped view of an ActuationCoordinator.
