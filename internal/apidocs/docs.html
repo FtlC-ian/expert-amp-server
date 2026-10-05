@@ -149,7 +149,8 @@
         <li><strong class="note-ok">Canonical status:</strong> <code>GET /api/v1/status</code> is the preferred machine-readable status route.</li>
         <li><strong class="note-ok">Canonical REST surface:</strong> new clients should target the documented <code>/api/v1/...</code> routes; older non-v1 routes are compatibility aliases or legacy helpers.</li>
         <li><strong class="note-warn">Fallbacks matter:</strong> some status fields are protocol-native, some are display-derived fallback, some are compatibility aliases, and some are omitted when unknown.</li>
-        <li><strong class="note-warn">Alarms endpoint:</strong> <code>/api/v1/alarms</code> is still an explicit stub in phase 1.</li>
+        <li><strong class="note-warn">Alarms endpoint:</strong> <code>/api/v1/alarms</code> reports protocol warnings/alarms, configurable monitoring, and the separately armed one-shot overtemperature standby controller.</li>
+        <li><strong class="note-warn">Access boundary:</strong> HTTP and raw TCP have no built-in authentication; raw TCP is unencrypted and WebSocket origins are unrestricted. Restrict access to trusted operators, not merely a network named LAN or VPN.</li>
         <li><strong>Raw artifact:</strong> <a href="/api/v1/openapi.json">/api/v1/openapi.json</a></li>
       </ul>
     </section>
@@ -160,6 +161,7 @@
         <ul class="small">
           <li><code>recentContact</code> reports a successfully decoded display or protocol-native status arrival within five seconds; <code>lastContactAt</code> records the later contact. Identical display arrivals count, cached polls and fixture changes do not. This link-liveness indicator does not grant actuation authority or fresh status-poll evidence.</li>
           <li>Runtime <code>displayReceivedAt</code> is the display arrival clock (zero means unobserved). Display <code>sequence</code> and <code>updatedAt</code> remain content-change identity; identical arrivals do not publish display-change events or change display-vs-status field ordering.</li>
+          <li>Raw passthrough requires automatic fan control and overtemperature standby to be disarmed. Tapped <code>passthrough-tap</code> status is display evidence only; neither provenance nor contact alone authorizes actuation.</li>
           <li><code>bandCode</code>, <code>warningCode</code>, and <code>alarmCode</code> are protocol-backed raw fields when present.</li>
           <li><code>bandText</code>, <code>warningsText</code>, and <code>alarmsText</code> are decoded companions, not stronger truth than the raw codes.</li>
           <li><code>warnings</code> and <code>activeAlarms</code> are compatibility aliases retained for consumers already using them.</li>

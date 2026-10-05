@@ -17,9 +17,13 @@ Captured behavior from the real amp wins over documents, notes, and reasonable-s
 
 For amp status, keep the authority order explicit:
 
-1. **Protocol-native vendor status poll data is authoritative** when the documented status poll/response path is available.
+1. **Direct protocol-native vendor status poll data is preferred for machine-readable status** when the documented status poll/response path is available. Actuation additionally requires fresh native evidence, model/session binding, and action-specific gates; a provenance label alone is not authority.
 2. **Display-derived telemetry is fallback data** for fields the status poll does not currently provide, or when protocol-native status is temporarily unavailable.
 3. **Rendered display state and parsed screen text are never the canonical machine-readable contract.** They are useful for UI mirroring, debugging, and conservative fallback extraction.
+
+During a raw TCP lease, passively observed status is labelled `passthrough-tap` and may be shown while fresh, but is never accepted as server actuation authority. Automatic fan control and overtemperature standby must be explicitly disarmed before a lease can start. HTTP/raw TCP are unauthenticated, raw TCP is unencrypted, and WebSocket origins are unrestricted; use explicit trusted-operator access controls.
+
+Contact and content are separate: successfully decoded live display arrivals, including identical frames, update runtime `displayReceivedAt`; content `sequence`/`updatedAt` change only when decoded content changes. Canonical `recentContact` expires after five seconds without eligible contact, and open status WebSockets re-resolve once a second as well as on events. Cached polls, fixture changes, malformed frames, and retired-session frames do not renew display contact. Link liveness is not command acknowledgement or safety authorization.
 
 Protocol work touches four separate things that are easy to conflate. Keep them distinct:
 
@@ -51,7 +55,7 @@ STANDBY
 
 **Where it lives:** `protocol.ScreenText` and `protocol.FrameMeta.ScreenText`.
 
-**Key point:** Parsed text is useful for quick human review and debugging. It is not the same as telemetry — you would need to parse field positions and label patterns out of the text to extract structured values. We have not done that systematically yet.
+**Key point:** Parsed text is useful for human review, but is not itself telemetry. `internal/protocol/telemetry.go` already extracts conservative fixed-column display fallback fields; native status remains preferred.
 
 ---
 
@@ -181,17 +185,17 @@ For protocol work, start the server with `-lcd-flag-debug` to log checksum-valid
 
 ### Character encoding
 
-Each character cell is a single byte. `DecodeDisplayChar` maps byte values:
+Each character cell is a single byte. `DecodeDisplayChar` preserves ROM indices for rendering, while `DecodeTextChar` separately produces readable text:
 
-| Byte range | Decoded as |
-|---|---|
-| `0x00` | Space |
-| `0x01`–`0x1F` | Letters A–Z (offset by 1: `0x01` → `A`, `0x02` → `B`, …) |
-| `0x20`–`0x5F` | Direct ASCII (printable range: space through `_`) |
-| `0x8D`, `0x8E`, `0x8F`, `0xA0`–`0xA3` | `0x80` (routed to custom glyph bank) |
-| All others | `·` (placeholder, unknown/unmapped) |
+| Byte range | Rendering ROM index | Text |
+|---|---|---|
+| `0x00` | `0x60` (blank) | Space |
+| `0x01`–`0x5F` | Unchanged | Byte + `0x20` (`0x21` → `A`) |
+| `0x60`–`0x7E` | Unchanged | Direct character value |
+| `0x80`–`0xDF` | Unchanged custom-glyph index | Space |
+| All others | `0x60` (blank) | Space |
 
-**Status: partially confirmed.** The A–Z mapping and the direct ASCII range work on current fixtures. The upper-byte glyph codes (`0x8x`, `0xAx`) are placeholder mappings for LCD-specific symbols — they render something, but whether the rendered glyphs match the real hardware characters has not been verified.
+This describes the implemented decoder, not a cross-model hardware guarantee. Custom glyphs remain available to rendering and raw-grid recognizers even though text extraction replaces them with spaces; do not infer an active value from missing text.
 
 ### Attribute bytes
 
@@ -205,7 +209,7 @@ The 40 bytes after the 320 display cells are decoded as a column-major highlight
 
 Once decoded, the display is an 8-row × 40-column grid of bytes. Each cell holds one character code. Rendering is deterministic: given the same `display.State` and `font.ROM`, the output is always the same.
 
-The model is symmetric: the diff operation (`display.Compare`) checks both character and attribute bytes per cell, producing a list of changed cells. This is the foundation for efficient incremental UI updates once live ingest is wired.
+The model is symmetric: the diff operation (`display.Compare`) checks both character and attribute bytes per cell, producing a list of changed cells. Live ingest and display WebSocket invalidation are already wired.
 
 ---
 
@@ -268,7 +272,7 @@ These are things we do not yet know. Do not paper over them with assumptions.
 
 6. **Frame boundary detection.** The stream decoder now recognizes the 371-byte GetLCD response boundary before falling back to prefix-based splitting, so trailing status-poll bytes should not be swallowed by display frames. Keep regression captures for mixed display/status streams.
 
-7. **Upper-byte character codes.** Byte values above `0x5F` that are not in the known special-glyph set decode to `·`. Some of these likely correspond to real LCD symbols we have not mapped yet.
+7. **Custom glyph semantics.** Rendering retains the `0x80`–`0xDF` ROM range, while text extraction uses spaces. Model-specific glyph meanings require raw-grid evidence, not guesses from text.
 
 ---
 

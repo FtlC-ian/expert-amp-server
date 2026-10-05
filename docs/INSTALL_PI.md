@@ -15,7 +15,7 @@ These notes describe the current known-good shape for running `expert-amp-server
 ```
 
 Use a path appropriate for the target host; do not rely on the development default `config/expert-amp-server.json` for a service install. A starter config lives at [`packaging/config/config.example.json`](../packaging/config/config.example.json).
-The default service examples listen on `:8088` so another shack PC can open the UI at `http://radio-host:8088/`. That is intentional. This is local station-control software, not an internet-facing web application. If you need remote access, put it behind your own VPN/firewall/reverse proxy rather than exposing the process directly.
+The default service examples listen on `:8088` so another shack PC can open the UI at `http://radio-host:8088/`. That is intentional. HTTP and optional raw TCP have no built-in authentication; raw TCP is unencrypted and WebSocket origins are unrestricted. Restrict access to trusted operators. A VPN or reverse proxy is not automatically an authorization boundary.
 
 
 ## Build a Pi binary
@@ -41,6 +41,16 @@ GOOS=linux GOARCH=arm64 go build -o /tmp/expert-amp-server-linux-arm64 ./cmd/ser
 For 32-bit Pi targets, use `GOOS=linux GOARCH=arm GOARM=7`. The production box used during development is 64-bit ARM.
 
 ## Copy to the Pi
+
+Official release assets are raw binaries, not archives: select `expert-amp-server_v0.5.0_linux_arm64` for a 64-bit ARM Pi or `expert-amp-server_v0.5.0_linux_arm_v7` for ARMv7. Download `SHA256SUMS`, `config.example.json`, and `expert-amp-server.service` from the same release. In that directory, check the files you downloaded before installing (a full `sha256sum -c SHA256SUMS` requires all six listed files):
+
+```bash
+grep -E ' (expert-amp-server_v0\.5\.0_linux_arm64|config\.example\.json|expert-amp-server\.service)$' SHA256SUMS | sha256sum -c -
+cp expert-amp-server_v0.5.0_linux_arm64 expert-amp-server
+chmod +x expert-amp-server
+```
+
+Checksums detect corruption, not publisher authenticity; the current release convention does not provide detached signatures.
 
 Example:
 
@@ -151,6 +161,12 @@ Common gotchas from the first radio-host smoke test:
 - Make sure the service user can open the FTDI serial device. If status stays fixture-derived or serial contact is false, check group membership and the `/dev/serial/by-id/...` path first.
 - `RestartSec=5` means a clean restart request is not instant. Give systemd a few seconds before deciding the service failed.
 - `/healthz` only proves the process is up. Use `/api/v1/status` to confirm live serial and protocol-native contact.
+
+## Upgrading an existing service
+
+Verify the selected release binary and its metadata before use. Back up the existing binary and persistent config (including server-owned fan receipts), stop the service through its supervisor, install the replacement binary, and start the service again. **Do not overwrite an existing config with `config.example.json`** or reinstall an unchanged service unit just to upgrade. Check `/api/v1/version`, logs, and `/api/v1/status` after restart; `/healthz` alone is not serial-health evidence. Preserve the previous binary/config for rollback; no hardware validation is implied by a successful process start.
+
+For v0.5.0, raw passthrough stays disabled unless explicitly configured. It requires a configured serial port and polling other than `off`; listener changes require restart. Before connecting a client, explicitly disarm automatic fan control and overtemperature standby. They cannot act during a lease, are not silently suspended/restored, and cannot be re-armed until the client disconnects. Restrict the raw listener (`:7388` by default) separately from HTTP. Contact now includes identical accepted display arrivals; content sequence/timestamps remain unchanged for identical screens. Do not use contact/provenance alone as permission to actuate.
 
 ## Button and wake caveats
 
