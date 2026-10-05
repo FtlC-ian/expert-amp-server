@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,12 +19,14 @@ import (
 	"time"
 
 	"github.com/FtlC-ian/expert-amp-server/internal/api"
+	"github.com/FtlC-ian/expert-amp-server/internal/apidocs"
 	"github.com/FtlC-ian/expert-amp-server/internal/config"
 	"github.com/FtlC-ian/expert-amp-server/internal/display"
 	"github.com/FtlC-ian/expert-amp-server/internal/fanpolicy"
 	"github.com/FtlC-ian/expert-amp-server/internal/font"
 	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
+	"github.com/FtlC-ian/expert-amp-server/internal/rawpassthrough"
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
 	"github.com/FtlC-ian/expert-amp-server/internal/transport"
@@ -2731,6 +2734,16 @@ func TestV1StatusWebsocketUsesSharedProtocolNativeState(t *testing.T) {
 		Provenance:     "status-poll",
 	}, BandCode: "00", BandText: "160m"})
 
+	// The override under test only applies while the display snapshot is
+	// strictly newer than the protocol frame, and both stamps are taken with
+	// time.Now().UTC(), which drops the monotonic reading -- so they are
+	// compared on the wall clock, where two calls this close together can land
+	// on the same value. Let it advance, or the display never outranks the
+	// status frame and this asserts on a path it never took.
+	for start := time.Now().UTC(); !time.Now().UTC().After(start); {
+		time.Sleep(time.Millisecond)
+	}
+
 	store.Apply(runtime.Update{Telemetry: api.Telemetry{
 		Band:           "20m",
 		OperatingState: "operate",
@@ -2741,12 +2754,27 @@ func TestV1StatusWebsocketUsesSharedProtocolNativeState(t *testing.T) {
 		Provenance:     "display-frame",
 	}})
 
-	second := readStatusWSMessage(t, conn)
+	// Those are two independent publications -- a status frame and a display
+	// snapshot -- and each one wakes this socket in its own right, so the
+	// handler may legitimately send a payload for each. Asserting on whichever
+	// frame arrives first made this depend on losing a race: if the handler was
+	// scheduled between the two, it correctly sent the new status against the
+	// display that was current at that instant, and the assertion below read
+	// that intermediate frame as a failure. Converge on the state that carries
+	// both instead.
+	var second api.Status
+	deadline := time.Now().Add(6 * time.Second)
+	for {
+		second = readStatusWSMessage(t, conn)
+		if second.OperatingState == "operate" && second.Mode == "operate" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected websocket payload to favor fresher display-only state, got %+v", second)
+		}
+	}
 	if second.Provenance != "status-poll" || second.ModelName != "EXPERT 2K-FA" || second.BandCode != "00" || second.BandText != "160m" {
 		t.Fatalf("unexpected shared-state websocket payload: %+v", second)
-	}
-	if second.OperatingState != "operate" || second.Mode != "operate" {
-		t.Fatalf("expected websocket payload to favor fresher display-only state, got %+v", second)
 	}
 	if second.OutputLevel != "LOW" {
 		t.Fatalf("outputLevel = %q, want protocol-native LOW", second.OutputLevel)
@@ -2765,6 +2793,230 @@ func TestV1StatusWebsocketIgnoresLegacyPaceQueryParameter(t *testing.T) {
 	first := readStatusWSMessage(t, conn)
 	if first.Band != "20m" || first.Provenance != "display-frame" {
 		t.Fatalf("unexpected websocket payload: %+v", first)
+	}
+}
+
+// A tapped frame stops being canonical once it is older than
+// RecentContactWindow, and that is decided from the clock inside Resolve.
+// Nothing publishes when it happens, so an open status websocket was never
+// told: a direct GET moved to display-derived state at the five second mark
+// while the socket went on serving the expired passthrough-tap payload for the
+// life of the connection.
+//
+// The conditions here are the measured ones. Expert Controller Plus forwards
+// display frames and never polls 0x90, so a lease can produce a single tapped
+// frame and then nothing, and a steady amplifier screen does not move -- which
+// leaves no subscription wake-up of any kind to carry the correction.
+//
+// This crosses the real expiry boundary, so it waits out the real window.
+// runtime keeps lastProtocolAt unexported and there is no clock seam, so from
+// this package the wait is the only honest way to reach the transition.
+func TestV1StatusWebsocketExpiresAStaleTapWithAStaticDisplay(t *testing.T) {
+	store := runtime.NewStore(runtime.Snapshot{
+		Telemetry: api.Telemetry{
+			Band:       "20m",
+			Source:     "serial",
+			Confidence: "display-derived",
+			Provenance: "display-frame",
+		},
+		UpdatedAt: time.Now().UTC(),
+	})
+
+	temperature := 40.0
+	tapped := api.Status{
+		Telemetry: api.Telemetry{
+			OperatingState: "operate",
+			TemperatureC:   &temperature,
+			Source:         "serial",
+			Confidence:     "protocol-native",
+			Provenance:     runtime.ProvenancePassthroughTap,
+		},
+		BandCode: "05",
+		BandText: "20m",
+	}
+
+	statusState := runtime.NewStatusState(api.Status{})
+	handler := NewHandler(Options{
+		IndexHTML:   []byte("ok"),
+		DocsHTML:    []byte("<html>docs</html>"),
+		OpenAPIJSON: []byte(`{"openapi":"3.0.3"}`),
+		ROM:         font.Builtin(),
+		Store:       store,
+		StatusState: statusState,
+		DemoState:   display.DemoState(),
+		AltState:    display.DemoStateAlt(),
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	// The one tapped frame this lease will ever produce.
+	statusState.UpdateProtocolNative(tapped)
+
+	conn := dialWS(t, server.URL, "/api/v1/status/ws")
+	defer conn.Close()
+
+	read := func(phase string, within time.Duration) api.Status {
+		t.Helper()
+		if err := conn.SetReadDeadline(time.Now().Add(within)); err != nil {
+			t.Fatalf("SetReadDeadline before %s: %v", phase, err)
+		}
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("no status websocket frame after %s: %v", phase, err)
+		}
+		var status api.Status
+		if err := json.Unmarshal(payload, &status); err != nil {
+			t.Fatalf("Unmarshal websocket payload after %s: %v payload=%s", phase, err, string(payload))
+		}
+		return status
+	}
+
+	// 1. The socket opens on the tapped reading, which is still fresh.
+	first := read("connecting", 6*time.Second)
+	if first.Provenance != runtime.ProvenancePassthroughTap {
+		t.Fatalf("initial websocket payload provenance = %q, want %q", first.Provenance, runtime.ProvenancePassthroughTap)
+	}
+	if first.TemperatureC == nil || *first.TemperatureC != 40 {
+		t.Fatalf("initial websocket temperature = %v, want 40", first.TemperatureC)
+	}
+
+	// 2. Nothing else is ever published. The tap ages out on its own, and the
+	//    socket has to notice. Intermediate frames are fine -- recentContact
+	//    ages within the same window -- so read until it converges.
+	deadline := time.Now().Add(runtime.RecentContactWindow + 10*time.Second)
+	var last api.Status
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("the tap expired but the websocket never said so: it is still serving provenance %q with temperature %v. Expiry is decided on the clock and publishes nothing, so a socket waiting only on subscriptions has to re-resolve for itself", last.Provenance, last.TemperatureC)
+		}
+		last = read("waiting for the tap to expire", time.Until(deadline))
+		if last.Provenance == runtime.ProvenancePassthroughTap {
+			continue
+		}
+		break
+	}
+
+	if last.Provenance != "display-frame" {
+		t.Fatalf("provenance = %q, want display-frame once the tap expired", last.Provenance)
+	}
+	if last.TemperatureC != nil {
+		t.Fatalf("websocket still serves the expired tapped temperature %v", *last.TemperatureC)
+	}
+	if last.BandText != "" {
+		t.Fatalf("bandText = %q, want the protocol-only field to drop out with the tap", last.BandText)
+	}
+	if last.Band != "20m" {
+		t.Fatalf("band = %q, want display-derived state to keep working", last.Band)
+	}
+}
+
+// End-to-end cover for the seam a direct GET cannot reach. Both transitions below
+// leave the retained protocol-native bytes identical and never touch the store,
+// so the decoded display is completely static -- which is the measured condition
+// of a real lease, because Expert Controller Plus forwards display frames and
+// never polls 0x90, and a steady amplifier screen does not move. Nothing but the
+// authority transition itself can wake the socket here.
+func TestV1StatusWebsocketObservesLeaseAuthorityTransitionsWithAStaticDisplay(t *testing.T) {
+	store := runtime.NewStore(runtime.Snapshot{
+		Telemetry: api.Telemetry{
+			Band:       "20m",
+			Source:     "serial",
+			Confidence: "display-derived",
+			Provenance: "display-frame",
+		},
+		UpdatedAt: time.Now().UTC(),
+	})
+
+	temperature := 42.0
+	polled := api.Status{
+		Telemetry: api.Telemetry{
+			OperatingState: "operate",
+			TemperatureC:   &temperature,
+			Source:         "serial",
+			Confidence:     "protocol-native",
+			Provenance:     "status-poll",
+		},
+		BandCode: "05",
+		BandText: "20m",
+	}
+
+	statusState := runtime.NewStatusState(api.Status{})
+	handler := NewHandler(Options{
+		IndexHTML:   []byte("ok"),
+		DocsHTML:    []byte("<html>docs</html>"),
+		OpenAPIJSON: []byte(`{"openapi":"3.0.3"}`),
+		ROM:         font.Builtin(),
+		Store:       store,
+		StatusState: statusState,
+		DemoState:   display.DemoState(),
+		AltState:    display.DemoStateAlt(),
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	statusState.UpdateProtocolNative(polled)
+
+	conn := dialWS(t, server.URL, "/api/v1/status/ws")
+	defer conn.Close()
+
+	// A missing wake-up shows up as a read that never completes, which is also
+	// what an unrelated websocket timeout looks like. Name the phase so a failure
+	// here can never be read as ambient flakiness.
+	read := func(phase string) api.Status {
+		t.Helper()
+		if err := conn.SetReadDeadline(time.Now().Add(6 * time.Second)); err != nil {
+			t.Fatalf("SetReadDeadline before %s: %v", phase, err)
+		}
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("no status websocket frame after %s: %v", phase, err)
+		}
+		var status api.Status
+		if err := json.Unmarshal(payload, &status); err != nil {
+			t.Fatalf("Unmarshal websocket payload after %s: %v payload=%s", phase, err, string(payload))
+		}
+		return status
+	}
+
+	// 1. The socket opens on the polled reading.
+	first := read("connecting")
+	if first.Provenance != "status-poll" || first.BandText != "20m" {
+		t.Fatalf("initial websocket payload did not carry the polled reading: %+v", first)
+	}
+	if first.TemperatureC == nil || *first.TemperatureC != 42 {
+		t.Fatalf("initial websocket temperature = %v, want 42", first.TemperatureC)
+	}
+
+	// 2. The lease begins. This is the call BeginRawPassthrough makes.
+	statusState.InvalidatePreLeaseStatus()
+
+	invalidated := read("the lease started")
+	if invalidated.Provenance == "status-poll" {
+		t.Fatalf("lease start never reached the websocket: it is still serving provenance %q. Invalidation changes what Resolve answers, so it has to wake subscribers too -- a client that connected before the lease must not keep the pre-lease reading", invalidated.Provenance)
+	}
+	if invalidated.TemperatureC != nil {
+		t.Fatalf("websocket still serves the pre-lease temperature %v while a lease holds the port", *invalidated.TemperatureC)
+	}
+	if invalidated.BandText != "" {
+		t.Fatalf("bandText = %q, want the protocol-only field to drop out during the lease", invalidated.BandText)
+	}
+	if invalidated.Band != "20m" {
+		t.Fatalf("band = %q, want display-derived state to keep working during the lease", invalidated.Band)
+	}
+
+	// 3. The client disconnects and the first poll answers byte-for-byte what the
+	// pre-lease poll answered, as a steady-state amplifier's will.
+	statusState.UpdateProtocolNative(polled)
+
+	restored := read("an unchanged first poll after the lease")
+	if restored.Provenance != "status-poll" {
+		t.Fatalf("an unchanged first poll after the lease never reached the websocket: provenance = %q. The frame lifts the invalidation even though its bytes did not change, so publishing only on changed bytes strands the socket on display-derived state", restored.Provenance)
+	}
+	if restored.TemperatureC == nil || *restored.TemperatureC != 42 {
+		t.Fatalf("websocket temperature = %v, want 42 restored by the repeat frame", restored.TemperatureC)
+	}
+	if restored.BandText != "20m" {
+		t.Fatalf("bandText = %q, want 20m restored by the repeat frame", restored.BandText)
 	}
 }
 
@@ -2890,6 +3142,134 @@ func TestV1AlarmsEndpointUsesCanonicalStatusAndConfiguredMonitoring(t *testing.T
 	}
 	if body.Data.Monitor.State != monitoring.StateWarning || len(body.Data.Monitor.ActionsTaken) != 0 {
 		t.Fatalf("unexpected monitor: %+v", body.Data.Monitor)
+	}
+}
+
+// A raw passthrough lease stops the server's own polling, and
+// BeginRawPassthrough invalidates the status-poll frame it was holding. These
+// are the two endpoints that were serving that frame afterwards: /api/v1/status
+// reported pre-lease protocol-only fields as status-poll, and /api/v1/alarms
+// went further and evaluated the stale temperature against live thresholds.
+// Neither may outlive the lease start.
+func TestV1StatusAndAlarmsStopServingPreLeaseReadingDuringPassthrough(t *testing.T) {
+	// Display frames keep flowing during a lease, so the snapshot stays current.
+	// That makes this the harder case: display contact is genuinely recent, and
+	// only the protocol-only fields have gone stale.
+	store := runtime.NewStore(runtime.Snapshot{
+		Telemetry: api.Telemetry{
+			Band:           "20m",
+			OperatingState: "operate",
+			Source:         "serial",
+			Confidence:     "display-derived",
+			Provenance:     "display-frame",
+		},
+		Source:    "serial",
+		UpdatedAt: time.Now().UTC(),
+	})
+
+	statusState := runtime.NewStatusState(api.Status{})
+	temp := 75.0
+	tx := false
+	statusState.UpdateProtocolNative(api.Status{
+		Telemetry: api.Telemetry{
+			TemperatureC: &temp,
+			TX:           &tx,
+			OutputLevel:  "HIGH",
+			Source:       "serial",
+			Confidence:   "protocol-native",
+			Provenance:   "status-poll",
+		},
+	})
+
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if _, err := mgr.Update(config.Settings{
+		PollingMode:             string(config.PollingModeBoth),
+		SafetyMonitoringEnabled: true,
+		TemperatureWarningC:     70,
+		TemperatureTripC:        80,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	handler := NewHandler(Options{
+		IndexHTML:   []byte("ok"),
+		DocsHTML:    []byte("<html>docs</html>"),
+		OpenAPIJSON: []byte(`{"openapi":"3.0.3"}`),
+		ROM:         font.Builtin(),
+		Store:       store,
+		StatusState: statusState,
+		Config:      mgr,
+		DemoState:   display.DemoState(),
+		AltState:    display.DemoStateAlt(),
+	})
+
+	getStatus := func(t *testing.T) api.Status {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+		}
+		var body struct {
+			Success bool       `json:"success"`
+			Data    api.Status `json:"data"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode status response: %v", err)
+		}
+		return body.Data
+	}
+	getAlarms := func(t *testing.T) alarmsResponse {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/alarms", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("alarms code = %d, want %d", rec.Code, http.StatusOK)
+		}
+		var body struct {
+			Success bool           `json:"success"`
+			Data    alarmsResponse `json:"data"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode alarms response: %v", err)
+		}
+		return body.Data
+	}
+
+	// Before the lease both endpoints are entitled to the polled reading, and the
+	// alarms endpoint really is evaluating it: 75C against a 70C warning.
+	if status := getStatus(t); status.TemperatureC == nil || *status.TemperatureC != 75 || status.Provenance != "status-poll" {
+		t.Fatalf("pre-lease status did not serve the polled reading: %+v", status)
+	}
+	if alarms := getAlarms(t); alarms.Monitor.State != monitoring.StateWarning {
+		t.Fatalf("pre-lease monitor state = %q, want %q -- the stale reading must be shown to matter before the lease", alarms.Monitor.State, monitoring.StateWarning)
+	}
+
+	// The lease begins. This is the call BeginRawPassthrough makes.
+	statusState.InvalidatePreLeaseStatus()
+
+	status := getStatus(t)
+	if status.Provenance == "status-poll" {
+		t.Fatal("/api/v1/status still labels canonical status status-poll while a lease holds the port")
+	}
+	if status.TemperatureC != nil || status.TX != nil || status.OutputLevel != "" {
+		t.Fatalf("/api/v1/status still serves pre-lease protocol-only fields: temp=%v tx=%v outputLevel=%q", status.TemperatureC, status.TX, status.OutputLevel)
+	}
+	if status.Band != "20m" {
+		t.Fatalf("band = %q, want display-derived state to keep working during the lease", status.Band)
+	}
+
+	alarms := getAlarms(t)
+	if alarms.Monitor.State == monitoring.StateWarning || alarms.Monitor.State == monitoring.StateTrip {
+		t.Fatalf("/api/v1/alarms evaluated a pre-lease temperature against live thresholds: %+v", alarms.Monitor)
+	}
+	if alarms.Monitor.Observations.MaximumTemperatureC != nil {
+		t.Fatalf("alarms still observes a pre-lease temperature: %v", *alarms.Monitor.Observations.MaximumTemperatureC)
 	}
 }
 
@@ -3532,6 +3912,116 @@ func TestOpenAPIDocumentEndpointServesJSON(t *testing.T) {
 	}
 }
 
+// The passthrough surface was reachable but undocumented: the served contract
+// described neither the endpoint nor the two settings that turn it on, so an
+// integrator reading the spec could not find it at all. This asserts against
+// the real embedded document, not the stub the other tests serve, and checks
+// the handler's own output against the schema that now documents it.
+func TestRawPassthroughEndpointIsServedAndDocumented(t *testing.T) {
+	store := runtime.NewStore(runtime.Snapshot{})
+	handler := NewHandler(Options{
+		IndexHTML:   []byte("ok"),
+		DocsHTML:    []byte("<html>docs</html>"),
+		OpenAPIJSON: apidocs.MustOpenAPIJSON(),
+		ROM:         font.Builtin(),
+		Store:       store,
+		StatusState: runtime.NewStatusState(api.Status{}),
+		DemoState:   display.DemoState(),
+		AltState:    display.DemoStateAlt(),
+		// RawPassthrough stays nil: the disabled path is the one every install
+		// serves by default, and it is the one that reported the server as
+		// unable to run its own automatic controls.
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("openapi status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var spec struct {
+		Paths      map[string]json.RawMessage `json:"paths"`
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("decode served openapi document: %v", err)
+	}
+
+	if _, ok := spec.Paths["/api/v1/raw-passthrough"]; !ok {
+		t.Fatal("the served OpenAPI document does not describe /api/v1/raw-passthrough")
+	}
+	for _, schema := range []string{"Settings", "SettingsUpdateRequest"} {
+		properties := spec.Components.Schemas[schema].Properties
+		for _, field := range []string{"rawPassthroughEnabled", "rawPassthroughListenAddress"} {
+			if _, ok := properties[field]; !ok {
+				t.Fatalf("%s schema does not document %s", schema, field)
+			}
+		}
+	}
+
+	documented := spec.Components.Schemas["RawPassthrough"].Properties
+	if len(documented) == 0 {
+		t.Fatal("the served OpenAPI document has no RawPassthrough schema")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/raw-passthrough", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("raw-passthrough status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	payload := rec.Body.Bytes()
+	var body struct {
+		Success bool                       `json:"success"`
+		Data    map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode raw-passthrough response: %v", err)
+	}
+	if !body.Success {
+		t.Fatalf("success = false, want true: %v", body)
+	}
+
+	// Every field the handler actually emits has to be in the schema, or the
+	// document is describing something other than what is served.
+	for field := range body.Data {
+		if _, ok := documented[field]; !ok {
+			t.Fatalf("handler returned undocumented field %q", field)
+		}
+	}
+	for _, required := range []string{"enabled", "clientConnected", "tapFresh", "automaticControlsAvailable"} {
+		if _, ok := body.Data[required]; !ok {
+			t.Fatalf("response omits %q, which the schema marks required", required)
+		}
+	}
+
+	var disabled rawpassthrough.Status
+	if err := json.Unmarshal(payload, &struct {
+		Data *rawpassthrough.Status `json:"data"`
+	}{Data: &disabled}); err != nil {
+		t.Fatalf("decode raw-passthrough data: %v", err)
+	}
+	if disabled.Enabled {
+		t.Fatal("enabled = true with no passthrough controller configured")
+	}
+	if !disabled.AutomaticControlsAvailable {
+		t.Fatal("automaticControlsAvailable = false while passthrough is disabled and the server owns the port")
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/raw-passthrough", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want %d for a read-only endpoint", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestDocsEndpointServesHTML(t *testing.T) {
 	store := runtime.NewStore(runtime.Snapshot{})
 	handler := newTestHandler(store, runtime.FixtureCatalog{})
@@ -3700,5 +4190,529 @@ func TestV1WakeActionReturnsUnavailableWhenMissing(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// leaseTestPort blocks in Read until closed, so a leased session sits quietly
+// instead of spinning the read loop.
+type leaseTestPort struct {
+	mu        sync.Mutex
+	closedCh  chan struct{}
+	closeOnce sync.Once
+}
+
+func (p *leaseTestPort) closedChan() chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closedCh == nil {
+		p.closedCh = make(chan struct{})
+	}
+	return p.closedCh
+}
+
+func (p *leaseTestPort) Read([]byte) (int, error) {
+	<-p.closedChan()
+	// A transport error, not io.EOF: readFromPort treats EOF as "keep going",
+	// which would spin the loop on a closed port instead of unwinding it.
+	return 0, errors.New("port has been closed")
+}
+func (p *leaseTestPort) Write(buf []byte) (int, error) { return len(buf), nil }
+func (p *leaseTestPort) Close() error {
+	ch := p.closedChan()
+	p.closeOnce.Do(func() { close(ch) })
+	return nil
+}
+func (p *leaseTestPort) SetReadTimeout(time.Duration) error { return nil }
+func (p *leaseTestPort) SetDTR(bool) error                  { return nil }
+func (p *leaseTestPort) SetRTS(bool) error                  { return nil }
+
+type leaseTestOpener struct{}
+
+func (leaseTestOpener) Open(string, int) (serial.Port, error) { return &leaseTestPort{}, nil }
+
+// newSettingsLeaseHarness builds a settings handler wired to a real passthrough
+// listener over a stub serial port, and returns the address a test can dial to
+// take the lease for real.
+func newSettingsLeaseHarness(t *testing.T) (http.Handler, *config.Manager, *rawpassthrough.Controller, string) {
+	t.Helper()
+
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	src := runtime.NewSerialSource(runtime.SerialSourceConfig{
+		Port:             "/dev/ttyTEST0",
+		BaudRate:         115200,
+		ReadTimeout:      10 * time.Millisecond,
+		ReadSize:         512,
+		MinFrameLen:      64,
+		MaxBuffer:        8192,
+		IOTimeout:        2 * time.Second,
+		ReconnectBackoff: 50 * time.Millisecond,
+	}, leaseTestOpener{}, runtime.Update{})
+
+	srcCtx, stopSrc := context.WithCancel(context.Background())
+	t.Cleanup(stopSrc)
+	src.Start(srcCtx)
+
+	controller := rawpassthrough.New(rawpassthrough.Config{
+		Enabled:                true,
+		ListenAddress:          "127.0.0.1:0",
+		Source:                 src,
+		ArmedAutomaticControls: func() []string { return nil },
+	})
+	if controller == nil {
+		t.Fatal("expected a controller for an enabled config")
+	}
+	listenCtx, stopListener := context.WithCancel(context.Background())
+	t.Cleanup(stopListener)
+	go func() { _ = controller.Start(listenCtx) }()
+
+	var addr string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if addr = controller.Addr(); addr != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if addr == "" {
+		t.Fatal("listener never bound")
+	}
+
+	handler := NewHandler(Options{
+		Config:         mgr,
+		StatusState:    runtime.NewStatusState(api.Status{}),
+		FanPolicy:      fanpolicy.NewController(),
+		RawPassthrough: controller,
+	})
+	return handler, mgr, controller, addr
+}
+
+// waitForPassthroughLease blocks until the controller reports a connected
+// client, from outside the rawpassthrough package.
+func waitForPassthroughLease(t *testing.T, controller *rawpassthrough.Controller) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if controller.Status().ClientConnected {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no passthrough lease was established")
+}
+
+// POST /api/v1/settings must not be able to arm an automatic control while a raw
+// passthrough client holds the serial port. Before this the update was accepted
+// and persisted: the control read back as armed while the active lease refused
+// every serial write it would have made.
+func TestV1SettingsRefusesArmingWhileAPassthroughClientHoldsThePort(t *testing.T) {
+	handler, mgr, controller, addr := newSettingsLeaseHarness(t)
+
+	// Arming is allowed while nothing holds the port.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"automaticFanPolicyEnabled":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("idle arming status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	// Put it back so the lease can be taken at all.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"automaticFanPolicyEnabled":false}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disarm status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	waitForPassthroughLease(t, controller)
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "automatic fan control", body: `{"automaticFanPolicyEnabled":true}`, want: "automatic fan control"},
+		{name: "overtemperature standby", body: `{"safetyMonitoringEnabled":true,"overtemperatureStandbyArmed":true}`, want: "overtemperature standby"},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(tc.body)))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%s: status = %d, want 409; body=%s", tc.name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Fatalf("%s: body %q does not name the control", tc.name, rec.Body.String())
+		}
+	}
+
+	settings := mgr.Get().Settings
+	if settings.AutomaticFanPolicyEnabled {
+		t.Fatal("automatic fan control was persisted as armed during a lease")
+	}
+	if settings.SafetyMonitoringEnabled && settings.OvertemperatureStandbyArmed {
+		t.Fatal("overtemperature standby was persisted as armed during a lease")
+	}
+
+	// Everything that does not arm a control still goes through untouched.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"menuDebugEnabled":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unrelated setting during a lease: status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !mgr.Get().Settings.MenuDebugEnabled {
+		t.Fatal("unrelated setting was not persisted during a lease")
+	}
+}
+
+// Holding the setup boundary across the commit is not enough on its own: what
+// the update is deciding about has to be read inside it too.
+//
+// The handler used to snapshot the settings before reading the request body,
+// which is network I/O of unbounded duration. An update that stalled there
+// could be overtaken -- another update disarms a control, a client takes the
+// port -- and would then merge onto the snapshot it took at the start. Both the
+// stale value and the merged one read armed, so controlsNewlyArmedBy saw no
+// transition, the boundary was skipped entirely, and the armed control was
+// written back underneath a live lease that refuses every write it would make.
+//
+// The body arrives through an io.Pipe so the stall is exact rather than timed:
+// a pipe write does not return until the decoder has read it, which is proof
+// the request is parked mid-body with its snapshot already taken.
+func TestV1SettingsDoesNotDecideArmingFromASnapshotTakenBeforeTheBody(t *testing.T) {
+	handler, mgr, controller, addr := newSettingsLeaseHarness(t)
+
+	// Start armed, so a stale snapshot has something to carry forward.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"automaticFanPolicyEnabled":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("arming status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Request A: an unrelated update that stalls part-way through its body.
+	pr, pw := io.Pipe()
+	stalled := httptest.NewRecorder()
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		handler.ServeHTTP(stalled, httptest.NewRequest(http.MethodPost, "/api/v1/settings", pr))
+	}()
+	if _, err := pw.Write([]byte(`{"menuDebugEnabled":true`)); err != nil {
+		t.Fatalf("write partial body: %v", err)
+	}
+
+	// Request B disarms the control while A is parked.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"automaticFanPolicyEnabled":false}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disarm status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// With it disarmed, a client can now take the port.
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	waitForPassthroughLease(t, controller)
+
+	// A resumes and commits.
+	if _, err := pw.Write([]byte(`}`)); err != nil {
+		t.Fatalf("write rest of body: %v", err)
+	}
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close body: %v", err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stalled settings update never completed")
+	}
+	if stalled.Code != http.StatusOK {
+		t.Fatalf("stalled update status = %d, want 200; body=%s", stalled.Code, stalled.Body.String())
+	}
+
+	settings := mgr.Get().Settings
+	if settings.AutomaticFanPolicyEnabled {
+		t.Fatal("automatic fan control was rearmed during a live lease by an unrelated update that had merged onto a stale snapshot. The arming decision has to be made from settings read inside the boundary, not from a snapshot taken before the request body")
+	}
+	if !settings.MenuDebugEnabled {
+		t.Fatal("the stalled update reported success without persisting its own change")
+	}
+}
+
+// Raw passthrough leases the serial source, and no serial source is built while
+// pollingMode is off. Saving both left a configuration that asked for
+// passthrough and reported it unavailable, with nothing to say the two settings
+// had contradicted each other.
+func TestV1SettingsRejectsPassthroughWithoutPolling(t *testing.T) {
+	mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	handler := NewHandler(Options{
+		Config:      mgr,
+		StatusState: runtime.NewStatusState(api.Status{}),
+		FanPolicy:   fanpolicy.NewController(),
+	})
+
+	post := func(t *testing.T, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(body)))
+		return rec
+	}
+
+	// Turning polling off while passthrough is enabled is refused, in every
+	// spelling that reaches storage as "off". The request is validated before
+	// the manager normalizes it, so a check against the raw value lets
+	// "OFF" and " off " through and then stores exactly the state it refused.
+	for _, mode := range []string{"off", "OFF", "Off", " off ", "\toff\n"} {
+		body, err := json.Marshal(map[string]any{"rawPassthroughEnabled": true, "pollingMode": mode})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		rec := post(t, string(body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("pollingMode %q: status = %d, want 400; body=%s", mode, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "pollingMode") {
+			t.Fatalf("pollingMode %q: body %q does not name the setting that has to change", mode, rec.Body.String())
+		}
+		if settings := mgr.Get().Settings; settings.RawPassthroughEnabled || settings.PollingMode == string(config.PollingModeOff) {
+			t.Fatalf("pollingMode %q: the refused combination was persisted anyway: %+v", mode, settings)
+		}
+	}
+
+	// A value that normalizes to something else is not this conflict at all:
+	// unrecognized modes become "both", so they must still be accepted.
+	if rec := post(t, `{"rawPassthroughEnabled":true,"pollingMode":"not-a-mode"}`); rec.Code != http.StatusOK {
+		t.Fatalf("unrecognized polling mode: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if settings := mgr.Get().Settings; settings.PollingMode != string(config.PollingModeBoth) {
+		t.Fatalf("pollingMode = %q, want it normalized to both", settings.PollingMode)
+	}
+	if rec := post(t, `{"rawPassthroughEnabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("disabling passthrough: status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Either setting alone is fine.
+	if rec := post(t, `{"pollingMode":"off"}`); rec.Code != http.StatusOK {
+		t.Fatalf("polling off without passthrough: status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := post(t, `{"rawPassthroughEnabled":true}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("enabling passthrough onto polling off: status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := post(t, `{"rawPassthroughEnabled":true,"pollingMode":"both"}`); rec.Code != http.StatusOK {
+		t.Fatalf("passthrough with polling: status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !mgr.Get().Settings.RawPassthroughEnabled {
+		t.Fatal("a valid passthrough configuration was not persisted")
+	}
+}
+
+// Only a disarmed-to-armed transition is a conflict. Re-sending a control that
+// is already armed arms nothing, and disarming must never be blocked.
+func TestControlsNewlyArmedByNamesOnlyTransitions(t *testing.T) {
+	armed := config.Settings{AutomaticFanPolicyEnabled: true, SafetyMonitoringEnabled: true, OvertemperatureStandbyArmed: true}
+	disarmed := config.Settings{}
+
+	if got := controlsNewlyArmedBy(disarmed, armed); len(got) != 2 {
+		t.Fatalf("arming both = %v, want two controls", got)
+	}
+	if got := controlsNewlyArmedBy(armed, armed); len(got) != 0 {
+		t.Fatalf("re-sending an armed state = %v, want none", got)
+	}
+	if got := controlsNewlyArmedBy(armed, disarmed); len(got) != 0 {
+		t.Fatalf("disarming = %v, want none", got)
+	}
+	// Safety monitoring off means overtemperature standby is not armed at all.
+	halfArmed := config.Settings{OvertemperatureStandbyArmed: true}
+	if got := controlsNewlyArmedBy(disarmed, halfArmed); len(got) != 0 {
+		t.Fatalf("standby armed without safety monitoring = %v, want none", got)
+	}
+}
+
+// A status websocket must not be able to miss an authority transition that
+// lands while it is connecting.
+//
+// Before the fix the handler resolved and sent its first payload and only then
+// subscribed, so a transition published in that gap -- which spans a JSON
+// marshal and a socket write, not a single instruction -- reached nobody. With
+// a static display nothing else ever wakes the socket, so it served the wrong
+// authority for the life of the connection.
+//
+// The window is timing-dependent, so this drives it repeatedly with jittered
+// offsets rather than claiming to hit it deterministically. Each attempt must
+// converge: either the initial payload already reflects the lease, or a
+// correction follows it.
+func TestV1StatusWebsocketDoesNotLoseATransitionRacingConnectionSetup(t *testing.T) {
+	store := runtime.NewStore(runtime.Snapshot{
+		Telemetry: api.Telemetry{
+			Band:       "20m",
+			Source:     "serial",
+			Confidence: "display-derived",
+			Provenance: "display-frame",
+		},
+		UpdatedAt: time.Now().UTC(),
+	})
+
+	temperature := 42.0
+	polled := api.Status{
+		Telemetry: api.Telemetry{
+			OperatingState: "operate",
+			TemperatureC:   &temperature,
+			Source:         "serial",
+			Confidence:     "protocol-native",
+			Provenance:     "status-poll",
+		},
+		BandCode: "05",
+		BandText: "20m",
+	}
+
+	statusState := runtime.NewStatusState(api.Status{})
+	handler := NewHandler(Options{
+		IndexHTML:   []byte("ok"),
+		ROM:         font.Builtin(),
+		Store:       store,
+		StatusState: statusState,
+		DemoState:   display.DemoState(),
+		AltState:    display.DemoStateAlt(),
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	const attempts = 400
+	for attempt := range attempts {
+		// Start every attempt authoritative again. The display never moves, so
+		// the status subscription is the only thing that can wake the socket.
+		statusState.UpdateProtocolNative(polled)
+
+		fired := make(chan struct{})
+		go func(offset time.Duration) {
+			time.Sleep(offset)
+			statusState.InvalidatePreLeaseStatus()
+			close(fired)
+		}(time.Duration(attempt%200) * 2 * time.Microsecond)
+
+		conn := dialWS(t, server.URL, "/api/v1/status/ws")
+		<-fired
+
+		converged := false
+		deadline := time.Now().Add(3 * time.Second)
+		for !converged && time.Now().Before(deadline) {
+			if err := conn.SetReadDeadline(deadline); err != nil {
+				t.Fatalf("attempt %d: SetReadDeadline: %v", attempt, err)
+			}
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				break
+			}
+			var status api.Status
+			if err := json.Unmarshal(payload, &status); err != nil {
+				t.Fatalf("attempt %d: Unmarshal: %v payload=%s", attempt, err, string(payload))
+			}
+			if status.Provenance != "status-poll" {
+				converged = true
+			}
+		}
+		conn.Close()
+
+		if !converged {
+			t.Fatalf("attempt %d: the websocket never saw the lease. A transition published while the handler was connecting reached nobody, and with a static display nothing else will ever wake it", attempt)
+		}
+	}
+}
+
+// pollingMode off and rawPassthroughEnabled true contradict each other: no
+// serial source is built, so passthrough gets nothing to lease. The endpoint
+// has to say which setting won rather than reporting a bare "disabled" that
+// reads as though the operator had turned passthrough off themselves.
+func TestV1RawPassthroughExplainsWhyItIsUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		mutate   func(config.Settings) config.Settings
+		contains string
+	}{
+		{
+			name: "polling off",
+			mutate: func(s config.Settings) config.Settings {
+				s.PollingMode = "off"
+				s.SerialPort = "/dev/ttyTEST0"
+				s.RawPassthroughEnabled = true
+				return s
+			},
+			contains: "pollingMode is off",
+		},
+		{
+			name:     "no serial port",
+			mutate:   func(s config.Settings) config.Settings { s.SerialPort = ""; s.RawPassthroughEnabled = true; return s },
+			contains: "no serial port is configured",
+		},
+		{
+			name:     "genuinely disabled",
+			mutate:   func(s config.Settings) config.Settings { s.RawPassthroughEnabled = false; return s },
+			contains: "raw serial passthrough is disabled",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+			if err != nil {
+				t.Fatalf("NewManager: %v", err)
+			}
+			if _, err := mgr.Update(tc.mutate(mgr.Get().Settings)); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+
+			handler := NewHandler(Options{
+				Config:      mgr,
+				StatusState: runtime.NewStatusState(api.Status{}),
+				FanPolicy:   fanpolicy.NewController(),
+			})
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/raw-passthrough", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.contains) {
+				t.Fatalf("body %q does not explain the state (want %q)", rec.Body.String(), tc.contains)
+			}
+		})
+	}
+}
+
+// Toggling passthrough or moving its listener changes the persisted settings and
+// nothing about the running controller, which is built from the startup
+// snapshot. The reply has to say a restart is needed.
+func TestV1SettingsReportsRawPassthroughChangesAsRestartRequiring(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "enable", body: `{"rawPassthroughEnabled":true}`},
+		{name: "listen address", body: `{"rawPassthroughListenAddress":":7399"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")
+			if err != nil {
+				t.Fatalf("NewManager: %v", err)
+			}
+			handler := NewHandler(Options{
+				Config:      mgr,
+				StatusState: runtime.NewStatusState(api.Status{}),
+				FanPolicy:   fanpolicy.NewController(),
+			})
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(tc.body)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "restart") {
+				t.Fatalf("reply %q does not mention a restart", rec.Body.String())
+			}
+		})
 	}
 }

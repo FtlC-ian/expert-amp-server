@@ -22,6 +22,7 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/menudebug"
 	"github.com/FtlC-ian/expert-amp-server/internal/monitoring"
 	"github.com/FtlC-ian/expert-amp-server/internal/protocol"
+	"github.com/FtlC-ian/expert-amp-server/internal/rawpassthrough"
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
 	"github.com/FtlC-ian/expert-amp-server/internal/server"
@@ -76,7 +77,7 @@ func run(addr, configPath string, pollInterval time.Duration, lcdFlagDebug bool,
 	baseCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	handler, snapshot, poller, serialSource, requestRestart := newServerWithUploader(cfg, pollInterval, stop, uploader, lcdFlagDebug)
+	handler, snapshot, poller, serialSource, requestRestart, rawPassthroughController := newServerWithUploader(cfg, pollInterval, stop, uploader, lcdFlagDebug)
 
 	srv := &http.Server{
 		Addr:    snapshot.Settings.ListenAddress,
@@ -88,6 +89,14 @@ func run(addr, configPath string, pollInterval time.Duration, lcdFlagDebug bool,
 	if serialSource != nil {
 		serialSource.Start(ctx)
 		log.Printf("live serial ingest started on %s", snapshot.Settings.SerialPort)
+	}
+
+	if rawPassthroughController != nil {
+		go func() {
+			if err := rawPassthroughController.Start(ctx); err != nil {
+				log.Printf("raw serial passthrough stopped: %v", err)
+			}
+		}()
 	}
 
 	go func() {
@@ -162,10 +171,11 @@ func (r *restartSignal) attach(parent context.Context) context.Context {
 }
 
 func newServer(cfg *config.Manager, pollInterval time.Duration, stop context.CancelFunc, lcdFlagDebugOpt ...bool) (http.Handler, config.Snapshot, *runtime.Poller, *runtime.SerialSource, *restartSignal) {
-	return newServerWithUploader(cfg, pollInterval, stop, nil, lcdFlagDebugOpt...)
+	handler, snapshot, poller, serialSource, signal, _ := newServerWithUploader(cfg, pollInterval, stop, nil, lcdFlagDebugOpt...)
+	return handler, snapshot, poller, serialSource, signal
 }
 
-func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop context.CancelFunc, uploader server.MenuDebugUploader, lcdFlagDebugOpt ...bool) (http.Handler, config.Snapshot, *runtime.Poller, *runtime.SerialSource, *restartSignal) {
+func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop context.CancelFunc, uploader server.MenuDebugUploader, lcdFlagDebugOpt ...bool) (http.Handler, config.Snapshot, *runtime.Poller, *runtime.SerialSource, *restartSignal, *rawpassthrough.Controller) {
 	lcdFlagDebug := false
 	if len(lcdFlagDebugOpt) > 0 {
 		lcdFlagDebug = lcdFlagDebugOpt[0]
@@ -275,6 +285,7 @@ func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop
 	var safetyButtonTransport transport.ButtonTransport
 	var fanButtonTransport transport.ButtonTransport
 	var menuDebugButtonTransport transport.LeaseButtonTransport
+	var rawPassthroughLease rawpassthrough.Lease
 	if rawButtonTransport != nil {
 		coordinator := transport.NewActuationCoordinator(rawButtonTransport)
 		buttonTransport = coordinator
@@ -282,7 +293,30 @@ func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop
 		safetyButtonTransport = coordinator.Owner(transport.ActuationOwnerSafety, true)
 		fanButtonTransport = coordinator.Owner(transport.ActuationOwnerFan, false)
 		menuDebugButtonTransport = coordinator.Owner(transport.ActuationOwnerMenuDebug, false)
+		// Passthrough holds the actuator lease for its whole session, so button
+		// callers get the usual 409 instead of racing a port they cannot reach.
+		rawPassthroughLease = coordinator.Owner(transport.ActuationOwnerRawPassthrough, false)
 	}
+	rawPassthroughController := rawpassthrough.New(rawpassthrough.Config{
+		Enabled:       snapshot.Settings.RawPassthroughEnabled,
+		ListenAddress: snapshot.Settings.RawPassthroughListenAddress,
+		Source:        serialSource,
+		Lease:         rawPassthroughLease,
+		// Read live rather than from the startup snapshot: an operator can arm
+		// either control after the server starts, and the refusal has to
+		// reflect what is armed at the moment a client connects.
+		ArmedAutomaticControls: func() []string {
+			settings := cfg.Get().Settings
+			var armed []string
+			if settings.AutomaticFanPolicyEnabled {
+				armed = append(armed, "automatic fan control")
+			}
+			if settings.SafetyMonitoringEnabled && settings.OvertemperatureStandbyArmed {
+				armed = append(armed, "overtemperature standby")
+			}
+			return armed
+		},
+	})
 	safetyController := monitoring.NewController(safetyButtonTransport)
 	fanPolicyController := fanpolicy.NewController(fanButtonTransport)
 	menuDebugController := menudebug.NewController(menuDebugButtonTransport)
@@ -355,11 +389,12 @@ func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop
 		MenuDebugUploader:  uploader,
 		ButtonTransport:    buttonTransport,
 		WakeTransport:      wakeTransport,
+		RawPassthrough:     rawPassthroughController,
 		Version:            server.VersionInfo{Version: Version, Commit: Commit, BuildDate: BuildDate, Channel: Channel},
 		RestartServer:      signal.request,
 	})
 
-	return handler, snapshot, poller, serialSource, signal
+	return handler, snapshot, poller, serialSource, signal, rawPassthroughController
 }
 
 func loadFixtures(fallback display.State) runtime.FixtureCatalog {

@@ -34,6 +34,7 @@ internal/
   render/       — pixel (PNG) and SVG renderers
   api/          — shared JSON types (telemetry, button action, frame info)
   menudebug/    — guarded menu discovery sessions and sanitized report generation
+  rawpassthrough/ — exclusive raw serial-over-TCP lease for a single external client
 
 fixtures/
   real_home_status_frame.bin  — captured home/status screen
@@ -111,6 +112,148 @@ Shared JSON types:
 - `FrameInfo{Source, Length, StartOffset, ScreenText, LCDFlags}` — frame decode metadata returned by `/api/frame`
 
 These types are defined centrally so the server handlers, runtime, and transports share one schema.
+
+### `internal/rawpassthrough`
+
+Optional, disabled by default. Exposes the amplifier's serial link over TCP so a
+single external client — for example SPE Expert Controller, which connects to a
+"network/serial adapter" over TCP/IP — can drive the amplifier directly through
+the machine already running this server, with no second cable and no separate
+LAN adapter.
+
+The amplifier tolerates one serial master at a time, so this is an **exclusive
+lease, not a multiplexer**:
+
+- With no client connected the server behaves exactly as it always has.
+- When a client connects, `SerialSource.BeginRawPassthrough` stops the internal
+  read loop and waits for it to unwind (the same `retireCurrentSession` handshake
+  `SendWake` uses), then hands the caller its own port handle. Bytes are
+  forwarded verbatim in both directions.
+- On disconnect the port is closed, polling resumes automatically, and the
+  next reconnect is signalled immediately.
+- A second concurrent client is rejected and closed, not queued.
+
+While the lease is held the server refuses its own writes rather than blocking
+on them. `rawPassthroughActive` is read and written only under `writeMu`, and
+both `SendWake` and `writeFrameForSerialSession` take `writeMu` before
+`lifecycleMu`, so they fail fast with HTTP 409 instead of waiting on a lock the
+session holds for as long as an external client stays connected. The session
+also holds an `ActuationCoordinator` lease under
+`ActuationOwnerRawPassthrough`, so button and wake callers get the usual busy
+error before they reach the serial layer, and a passthrough session refuses to
+start while an automatic transaction is already driving the amplifier.
+
+**Automatic control is refused up front, not degraded.** A passthrough session
+cannot start while automatic fan control or overtemperature standby is armed.
+The listener asks `Config.ArmedAutomaticControls` before it takes either the
+coordinator lease or the serial port, and refuses the connection by closing it
+without writing a byte. The raw socket carries the amplifier's stream and
+nothing else, so the refusal reason never travels on it: the client sees a
+clean EOF, or `ECONNRESET` if it wrote first. The reason reaches the operator
+through the server log and `GET /api/v1/raw-passthrough`, which reports it in
+`blockedByArmedControls` and `note` from the same `AutomaticControlsArmedError`
+that names every control to disarm. (That error belongs to the raw listener's
+diagnostic path and nothing else: it is built only to write the refusal log line
+and that `note`, and it is never returned from an HTTP handler, so its `HTTPStatus`
+of 409 is never actually served to anyone. The 409 that button and wake callers
+receive comes from their own coordinator and `rawPassthroughActive` errors,
+described above, not from this one.)
+Nothing is silently suspended for the duration of a lease and nothing is
+automatically restored afterwards: tracking what was suspended and restoring it
+across disconnects, crashes and failed port reclamation is a second state
+machine, and refusal keeps the state simple and honest. An operator who chooses
+passthrough does so knowing those controls are unavailable.
+
+**Tapped telemetry is display evidence only.** The amplifier→client direction is
+decoded as it is forwarded, using the same `StatusStreamDecoder` as normal
+operation, so while the external client polls `0x90` the dashboard and API keep
+tracking the amplifier at no extra cost on the wire. Those frames are relabelled
+`provenance: "passthrough-tap"` before publication, because the amplifier
+answered a question the server did not ask.
+
+That label is the whole boundary. `StatusState.Resolve` merges tapped state for
+display and the provenance travels with the merged status, while fan policy
+(`fanpolicy.Evaluate`, `actionBlocks`) and overtemperature standby
+(`monitoring.Controller.Observe`) each test for `"status-poll"` exactly and so
+refuse it as authority. Tapped state goes stale normally when the client stops
+polling, and staleness is never dressed up as freshness. There is no byte
+injection, no response swallowing, and no command/reply correlation — those
+would make this a protocol proxy rather than a byte-stream lease.
+
+**The pre-lease status frame is invalidated as the lease begins.** A lease stops
+the server's own polling, so `BeginRawPassthrough` calls
+`StatusState.InvalidatePreLeaseStatus`: the retained `status-poll` frame stops
+being canonical immediately, rather than aging out of its five-second contact
+window. Without that, a client that forwards display frames but never asks for
+`0x90` — which is what Expert Controller Plus actually does, in receive and
+under transmit alike — would leave
+`/api/v1/status` and `/api/v1/alarms` serving pre-lease temperature, SWR, TX and
+output level labelled `status-poll` with `recentContact: true`, for a reading
+nothing was refreshing. Canonical status falls back to display-derived state
+until a tapped `0x90` or the first poll after the lease supersedes it; the
+invalidation lifts itself on the next published frame, so nothing has to be
+restored on disconnect. The internal gates never depended on this — they test
+provenance and contact themselves — so this is an API-honesty fix, not a safety
+one.
+
+Falling back to display-derived state is not the same as reporting nothing, and
+the distinction is worth being precise about. The amplifier prints temperature,
+output level, SWR and TX on its own LCD, so the display tap keeps decoding them
+and canonical status keeps reporting them — but as `display-frame` with
+display-derived confidence, not as a status poll. What disappears is what only
+the status reply carries, such as the protocol band code and text. `recentContact`
+then follows the display snapshot, which advances when the decoded screen changes
+rather than on every frame, so a static screen ages out of the contact window
+while frames are still arriving. That is honest but pessimistic, and it is
+existing display-path behavior rather than anything the invalidation introduced.
+
+Tapped status is bounded the same way. A tapped `0x90` is canonical only while
+the external client keeps asking for one; once it stops, the retained frame
+expires back to display-derived state instead of outranking newer display
+telemetry and borrowing its timestamp to call itself current. `status-poll` is
+deliberately not expired on that rule — it is refreshed by the server own
+polling, whose age `recentContact` already reports truthfully, and it has no
+second source running ahead of it the way a lease does.
+
+Arming is serialized against session setup. `POST /api/v1/settings` is refused
+with 409 when it would arm automatic fan control or overtemperature standby
+during a lease, and the decision is taken inside the same mutex that claims the
+port, so an update cannot race a session being established. The reverse gate —
+refusing a session while those controls are armed — is the same rule seen from
+the other end, and the two read the armed set through the same definition.
+
+A settings update is one transaction, and the boundary has to contain the read
+as well as the commit. The request body is decoded first, outside every lock,
+because decoding is network I/O of unbounded duration and a stalled client must
+not be able to hold session setup; only then does the handler take its own
+settings mutex, enter the passthrough boundary, and read the current settings,
+merge, validate, decide arming and write. Reading the settings before the body —
+as it once did — meant the arming decision compared a snapshot that a concurrent
+disarm had already superseded, so both sides read armed, no transition was seen,
+and the boundary was skipped entirely. The lock order is settings mutex, then
+the passthrough setup mutex, then the config manager's own lock: session setup
+already takes the setup mutex before reading the armed set from config, so
+holding the config lock across the boundary would invert that pair and deadlock
+against a connecting client.
+
+Raw passthrough also requires polling. With `pollingMode: "off"` no serial
+source is created, so there is nothing to lease; the settings route refuses that
+combination with 400 rather than storing a configuration that asks for
+passthrough and reports it unavailable. Validation lives in the route rather
+than in config's own validators, which `LoadOrCreate` shares: refusing there
+would turn a configuration already on disk into a startup failure, and a server
+that will not start is a server whose overtemperature standby is not running.
+
+`GET /api/v1/raw-passthrough` reports whether a client is connected,
+`blockedByArmedControls` when a session would currently be refused, and
+`tapFresh` for display freshness. `automaticControlsAvailable` reports serial
+port ownership: false for the lifetime of a lease, true whenever no client holds
+the port. It is not a statement that any control is armed —
+`blockedByArmedControls` is what reports that. `enabled` means configured *and* running, so a
+listener that failed to bind reports `enabled: false`; `listenerAvailable` and
+the bind error in `note` are what separate that from a passthrough the operator
+turned off. An operator is never left to infer safety that
+is not present.
 
 ### `cmd/server`
 
