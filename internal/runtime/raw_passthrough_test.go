@@ -646,7 +646,11 @@ func TestPassthroughLeaseStopsServingPreLeaseStatusAsCanonical(t *testing.T) {
 	// A display-only client: display frames flow, no 0x90 is ever sent. The tap
 	// must still be working, or the assertions below would pass for the wrong
 	// reason.
-	handle.ObserveFromAmp(displayStreamChunk(t))
+	displayFrame, err := protocol.ReadFixtureBytes("../../fixtures/real_home_status_frame.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle.ObserveFromAmp(displayFrame)
 	stats := handle.Stats()
 	if stats.DisplayFrames == 0 {
 		t.Fatal("no display frames were tapped, so this is not the display-only case")
@@ -656,6 +660,24 @@ func TestPassthroughLeaseStopsServingPreLeaseStatusAsCanonical(t *testing.T) {
 	}
 	if handle.TapIsFresh() {
 		t.Fatal("tap reports fresh without a single tapped status frame")
+	}
+	update, _ := src.Poll(context.Background())
+	store := NewStore(Snapshot{})
+	firstDisplay, _ := store.Apply(update)
+	if !src.statusState.Resolve(firstDisplay).RecentContact {
+		t.Fatal("valid passthrough display arrival did not report link contact")
+	}
+	handle.ObserveFromAmp(displayFrame)
+	update, _ = src.Poll(context.Background())
+	repeatedDisplay, changed := store.Apply(update)
+	if changed || repeatedDisplay.Sequence != firstDisplay.Sequence || !repeatedDisplay.UpdatedAt.Equal(firstDisplay.UpdatedAt) {
+		t.Fatalf("identical passthrough display arrival changed content: first=%+v repeated=%+v", firstDisplay, repeatedDisplay)
+	}
+	if !repeatedDisplay.DisplayReceivedAt.After(firstDisplay.DisplayReceivedAt) {
+		t.Fatal("identical passthrough display arrival did not advance contact")
+	}
+	if src.statusState.CurrentProtocolNativeWithContact().Provenance != "status-poll" || handle.TapIsFresh() {
+		t.Fatal("passthrough display arrival altered protocol provenance or tapped status freshness")
 	}
 
 	// Display state changes during the lease and canonical status follows it --

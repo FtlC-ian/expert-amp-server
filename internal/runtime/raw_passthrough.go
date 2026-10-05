@@ -300,11 +300,12 @@ func (h *RawPassthroughHandle) ObserveFromAmp(chunk []byte) {
 		telemetry := protocol.TelemetryFromDisplayState(state, "serial")
 		s.mu.Lock()
 		s.latest = Update{
-			State:     state,
-			Telemetry: telemetry,
-			Frame:     api.FrameInfo{Source: "serial", Length: len(frame), StartOffset: protocol.LCDDataOffset(frame)},
-			FrameKind: "serial",
-			Source:    "serial",
+			State:             state,
+			Telemetry:         telemetry,
+			Frame:             api.FrameInfo{Source: "serial", Length: len(frame), StartOffset: protocol.LCDDataOffset(frame)},
+			FrameKind:         "serial",
+			Source:            "serial",
+			DisplayReceivedAt: time.Now().UTC(),
 		}
 		s.mu.Unlock()
 		s.framesSeen.Add(1)

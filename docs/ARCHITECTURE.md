@@ -202,10 +202,9 @@ output level, SWR and TX on its own LCD, so the display tap keeps decoding them
 and canonical status keeps reporting them — but as `display-frame` with
 display-derived confidence, not as a status poll. What disappears is what only
 the status reply carries, such as the protocol band code and text. `recentContact`
-then follows the display snapshot, which advances when the decoded screen changes
-rather than on every frame, so a static screen ages out of the contact window
-while frames are still arriving. That is honest but pessimistic, and it is
-existing display-path behavior rather than anything the invalidation introduced.
+then follows the accepted display-arrival clock, including identical frames.
+The display content clock remains separate, so a static screen stays in contact
+while valid frames arrive without publishing content-change events.
 
 Tapped status is bounded the same way. A tapped `0x90` is canonical only while
 the external client keeps asking for one; once it stops, the retained frame
@@ -337,6 +336,10 @@ fixtures/*.bin ──► protocol.LoadFixtureState ──► display.State/runti
 ```
 
 `display.State` remains the pivot for screen mirroring and rendered LCD output. `StatusState` is the pivot for machine-readable amp status: it prefers protocol-native status-poll data and fills only the remaining gaps from the current runtime/display snapshot.
+
+Display content and link contact have separate clocks. Runtime `sequence` and `updatedAt` advance only when decoded content changes; identical arrivals do not publish display-change events. Runtime `displayReceivedAt` records the latest successfully decoded display arrival, including identical frames. Cached source polls, fixture content, malformed frames, and frames rejected from retired serial sessions do not advance that clock. A zero arrival timestamp means no display contact has been observed.
+
+Canonical status `lastContactAt` uses the later of display arrival and eligible protocol-native status contact; `recentContact` expires after five seconds without either. Display-vs-status field ordering still uses the content-change clock, not repeated display arrivals. Link contact is not actuation authority: direct status-poll freshness, provenance, and serial-session authorization remain separately required by control paths.
 
 ---
 

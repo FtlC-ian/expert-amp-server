@@ -196,7 +196,7 @@ func (s *StatusState) protocolSnapshot() (api.Status, time.Time, bool) {
 func (s *StatusState) Resolve(snapshot Snapshot) api.Status {
 	fallback := StatusFromSnapshot(snapshot)
 	if s == nil {
-		return applyContactMetadata(fallback, snapshot.UpdatedAt, time.Time{})
+		return applyContactMetadata(fallback, snapshot.DisplayReceivedAt, time.Time{})
 	}
 	status, protocolAt, authoritative := s.protocolSnapshot()
 	// Report display-derived state alone while the retained frame is
@@ -204,7 +204,7 @@ func (s *StatusState) Resolve(snapshot Snapshot) api.Status {
 	// begin within the contact window of the last poll, so passing it here
 	// would answer recentContact true for a reading nothing is refreshing.
 	if !authoritative {
-		return applyContactMetadata(fallback, snapshot.UpdatedAt, time.Time{})
+		return applyContactMetadata(fallback, snapshot.DisplayReceivedAt, time.Time{})
 	}
 	// A tapped frame speaks for the amplifier only while the external client
 	// keeps asking for one, and nothing obliges it to. Expert Controller Plus
@@ -225,18 +225,18 @@ func (s *StatusState) Resolve(snapshot Snapshot) api.Status {
 	// truthfully; it has no second source racing ahead of it the way a lease
 	// puts fresh display frames alongside a frozen tap.
 	if status.Provenance == ProvenancePassthroughTap && !tapStillSpeaks(protocolAt) {
-		return applyContactMetadata(fallback, snapshot.UpdatedAt, time.Time{})
+		return applyContactMetadata(fallback, snapshot.DisplayReceivedAt, time.Time{})
 	}
 	// Resolve is the display path, so it merges tapped state too. The
 	// provenance travels with the merged status, so callers that need
 	// authority -- fan policy, overtemperature standby, menu debug -- still
 	// see "passthrough-tap" and refuse it. Only the display is widened here.
 	if status.Provenance != "status-poll" && status.Provenance != ProvenancePassthroughTap {
-		return applyContactMetadata(fallback, snapshot.UpdatedAt, protocolAt)
+		return applyContactMetadata(fallback, snapshot.DisplayReceivedAt, protocolAt)
 	}
 	resolved := mergeProtocolNativeStatus(status, fallback)
 	resolved = applyFreshDisplayOverrides(resolved, fallback, status, snapshot.UpdatedAt, protocolAt)
-	return applyContactMetadata(resolved, snapshot.UpdatedAt, protocolAt)
+	return applyContactMetadata(resolved, snapshot.DisplayReceivedAt, protocolAt)
 }
 
 // tapStillSpeaks reports whether a passthrough-tapped status frame is recent
