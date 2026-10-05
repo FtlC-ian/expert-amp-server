@@ -1986,7 +1986,7 @@
               "normal",
               "high-cooling"
             ],
-            "description": "The last policy verified after the controller's SET-on-SAVE write and a newer captured home screen. First/Second Series accept STORING DATA! when observed but it can be shorter than one display-poll interval. Third Series requires its exact same-session STORING and newer home receipts. A persisted value can be stale after restart until reverified."
+            "description": "The last verified policy. Active navigation on all promoted profiles may complete at a newer verified STANDBY home after the controller's SET-on-SAVE write if the brief STORING DATA! screen is missed. Any observed STORING screen must match the selected profile; Third Series requires its exact layout. Passive Third Series front-panel reconciliation is stricter: it requires the complete same-session fan, SAVE, exact STORING, and newer STANDBY home sequence. A persisted value can be stale after restart until reverified."
           },
           "currentPolicyVerifiedAt": {
             "type": "string",

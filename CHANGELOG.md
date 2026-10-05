@@ -41,7 +41,7 @@ Raw passthrough and display-contact/concurrency corrective release. No new hardw
 ### Added
 
 - Promote guarded production fan control for the exact `EXPERT 2K-FA` Third Series topology and operator-declared actual firmware `Rel.26_03_24_A` or `Rel.08_06_26_A` (#34). Hardware QUIET maps to logical Normal; hardware NORMAL maps to high cooling (`contest`).
-- Require fresh protocol-native STANDBY/RX, checksum-valid same-session LCD waypoints, the raw active-value marker, exact SAVE/STORING receipts, and a newer matching home receipt. Never send DISPLAY or an OPERATE/STANDBY command on this profile.
+- Require fresh protocol-native STANDBY/RX, checksum-valid same-session LCD waypoints, the raw active-value marker, exact SAVE evidence, and a newer verified STANDBY home after the controller's SET-on-SAVE write. Active navigation may complete directly at home if the brief STORING screen is missed; any observed STORING screen must match the exact Third Series layout. Passive front-panel receipt reconciliation requires the complete same-session fan → SAVE → exact STORING → newer STANDBY home sequence. Never send DISPLAY or an OPERATE/STANDBY command on this profile.
 
 ### Evidence and limitations
 
