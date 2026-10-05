@@ -2819,7 +2819,8 @@ func TestV1StatusWebsocketExpiresAStaleTapWithAStaticDisplay(t *testing.T) {
 			Confidence: "display-derived",
 			Provenance: "display-frame",
 		},
-		UpdatedAt: time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+		DisplayReceivedAt: time.Now().UTC(),
 	})
 
 	temperature := 40.0

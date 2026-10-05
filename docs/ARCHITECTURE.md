@@ -202,10 +202,9 @@ output level, SWR and TX on its own LCD, so the display tap keeps decoding them
 and canonical status keeps reporting them — but as `display-frame` with
 display-derived confidence, not as a status poll. What disappears is what only
 the status reply carries, such as the protocol band code and text. `recentContact`
-then follows the display snapshot, which advances when the decoded screen changes
-rather than on every frame, so a static screen ages out of the contact window
-while frames are still arriving. That is honest but pessimistic, and it is
-existing display-path behavior rather than anything the invalidation introduced.
+then follows the accepted display-arrival clock, including identical frames.
+The display content clock remains separate, so a static screen stays in contact
+while valid frames arrive without publishing content-change events.
 
 Tapped status is bounded the same way. A tapped `0x90` is canonical only while
 the external client keeps asking for one; once it stops, the retained frame

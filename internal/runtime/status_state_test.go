@@ -714,7 +714,8 @@ func TestStatusStateExpiresStaleTappedStatusBackToDisplayDerived(t *testing.T) {
 	}})
 
 	freshDisplay := Snapshot{
-		UpdatedAt: time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+		DisplayReceivedAt: time.Now().UTC(),
 		Telemetry: api.Telemetry{
 			Provenance:         "display-frame",
 			Source:             "serial",
