@@ -10,7 +10,7 @@ Read this before adding a new package, endpoint, or layer.
 
 Expert Amp Server is a small local service that runs near an SPE Expert amplifier — ideally on a Raspberry Pi on the same LAN as the amp. It does not require an internet connection.
 
-The server has two jobs:
+The server has three jobs:
 
 1. **Ingest binary display frames** from the amp's serial/USB connection and decode them into a structured screen model.
 2. **Expose that state** through a local web UI and a REST API for use by Node-RED, station dashboards, and scripts.
@@ -25,6 +25,7 @@ The current service can run from fixture/demo state for development, but the pro
 ```
 cmd/
   server/       — HTTP server binary (main.go + embedded index.html)
+  display-capture/ — passive GET-only unique LCD state recorder
   render-preview/ — standalone PNG render tool for dev/debug
 
 internal/
@@ -58,7 +59,7 @@ docs/
 Handles raw display frames and documented status-poll responses from the amp.
 
 - `IsRadioDisplayFrame` — checks whether a frame starts with the known 8-byte display header (`AA AA AA 6A 01 95 FE 01`)
-- `DecodeDisplayChar` — maps a single byte to a printable character or a placeholder glyph
+- `DecodeDisplayChar` — preserves a rendering ROM index or normalizes an unsupported byte to the blank slot
 - `DisplayBodyOffset` — fixed protocol body offset used for display decoding
 - `GuessDisplayStart` — diagnostic heuristic retained for fixture/frame inspection
 - `StateFromFrame` — ties those together: validates header → decodes 8×40 chars into a `display.State`
@@ -74,7 +75,7 @@ The vendor status response does not identify whether temperature numbers are Cel
 
 Defines the display model and operations on it.
 
-- `State` — an 8×40 grid of character bytes (`Chars[row][col]`) plus 40 attribute bytes (`Attrs[col]`), one per column
+- `State` — an 8×40 grid of character bytes (`Chars[row][col]`) plus per-cell attributes (`Attrs[row][col]`) decoded from the 40-byte wire bitplane
 - `NewState` — creates an empty state (fills chars with `0x60`, which renders as a space)
 - `DemoState` / `DemoStateAlt` — hard-coded demo screens for development use
 - `Compare` — cell-level diff between two states, used by `/diff` and diagnostics
@@ -268,10 +269,11 @@ The HTTP server wires everything together. It:
 
 | Endpoint | Method | Description | Status |
 |---|---|---|---|
-| `/` | GET | Embedded web UI | Live (demo) |
+| `/` | GET | Embedded web UI | Live serial or fixture/setup mode |
 | `/healthz` | GET | Plain process liveness check with version header | Live |
 | `/api/v1/version` | GET | Canonical build/version metadata JSON | Live |
 | `/api/v1/display/state` | GET | Canonical display state JSON | Live |
+| `/api/v1/display/text` | GET | Fixed-width LCD text and highlighted spans | Live, read-only |
 | `/api/v1/display/frame` | GET | Canonical frame metadata JSON | Live |
 | `/api/v1/display/render.png` | GET | Canonical rendered PNG | Live |
 | `/api/v1/display/render.svg` | GET | Canonical rendered SVG | Live |
@@ -294,6 +296,7 @@ The HTTP server wires everything together. It:
 | `/api/v1/runtime` | GET | Canonical runtime settings/status view | Live |
 | `/api/v1/runtime/snapshot` | GET | Canonical runtime snapshot route | Live |
 | `/api/v1/runtime/ingest` | GET | Canonical ingest diagnostics route | Live |
+| `/api/v1/raw-passthrough` | GET | Exclusive raw TCP lease diagnostics | Live, read-only; listener disabled by default |
 | `/api/v1/runtime/restart` | POST | Canonical restart request route | Live when restart support is configured |
 | `/api/v1/serial-ports` | GET | Canonical serial-port discovery route | Live |
 | `/api/v1/settings` | GET/POST | Canonical persisted local settings route | Live when config support is configured |
@@ -355,19 +358,21 @@ Canonical status `lastContactAt` uses the later of display arrival and eligible 
 | Live serial ingest | Working when a serial port is configured; fixture mode remains available for development |
 | Display-derived telemetry extraction | Working in a conservative phase-1 form |
 | Button transport to hardware | Working when a live serial/button transport is configured; otherwise returns unavailable cleanly |
-| WebSocket status feed (`/api/v1/status/ws`) | Working, event-driven fanout from the authoritative shared status state used by `GET /api/v1/status` |
+| WebSocket status feed (`/api/v1/status/ws`) | Working, event-driven fanout plus one-second contact/expiry re-resolution; subscribes before the initial canonical snapshot |
 | Display refresh websocket (`/api/v1/display/ws`) | Working, pushes lightweight snapshot-sequence events from the shared runtime store so image clients can refresh only on real display changes |
 | General WebSocket / SSE for other live updates | Status and display websocket paths are working; no broad event bus beyond those |
 | OpenAPI spec (`/api/v1/openapi.json`) | Working, served by the app as a conservative phase 1 artifact |
 | Local docs UI (`/api/v1/docs`) | Working, renders the served OpenAPI document into a built-in local reference page |
 | Temperature/SWR monitoring | Working; observational unless overtemperature standby is separately armed |
-| Display-verified fan policy | Production support is hardware-confirmed on the First Series 1.3K-FA and CONFIG-first Second Series 1.5K-FA; unsupported models remain blocked before SET |
+| Display-verified fan policy | Promoted First Series 1.3K-FA, CONFIG-first Second Series 1.5K-FA, and exact firmware/topology-bound Third Series 2K-FA profiles; unsupported combinations remain blocked before SET |
 
 ---
 
 ## Design constraints
 
 - **Trusted-LAN station appliance.** This service is meant to run near the amp and be reached from operator machines on the same station LAN. It is not an internet-facing web app and should sit behind the user's LAN, VPN, firewall, or reverse proxy for any remote use.
+- **No implicit access security.** HTTP and raw TCP have no built-in authentication; raw TCP is unencrypted and WebSocket origins are unrestricted. Network placement is not application authorization. Operators must restrict access themselves.
+- **Store subscriber lifetime and ordering share one lock.** Runtime display publication, subscriber removal, and channel closure are serialized. Delivery is nonblocking and bounded to the latest available snapshots; concurrent updates preserve sequence order without sending on closed channels.
 - **Captured data beats theory.** If real frames disagree with assumptions, update the code and document the difference.
 - **No vendor binaries.** The repo must not include vendor executables. Protocol/font provenance needs to be documented honestly before public release.
 - **API must be boring and stable.** Prefer explicit JSON over cleverness. The canonical REST surface is the current `/api/v1/...` API; older non-v1 routes are compatibility holdovers, not the preferred contract.

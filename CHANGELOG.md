@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 - 2026-10-05
+
+Raw passthrough and display-contact/concurrency corrective release. No new hardware qualification is claimed.
 
 ### Added
 
@@ -11,6 +13,9 @@
 
 ### Fixed
 
+- Keep display contact fresh on every successfully decoded live display arrival, including identical frames (#48). Runtime `displayReceivedAt` tracks arrival separately from content `sequence`/`updatedAt`; cached polls, fixture changes, malformed frames, and retired-session frames do not renew contact. Canonical status uses the later eligible contact and expires `recentContact` after five seconds. This does not promote display or tapped provenance into safety authority.
+- Keep open status WebSockets aligned with that contact clock and clock-driven expiry using bounded one-second re-resolution, without emitting display-change events for identical frames (#48).
+- Serialize runtime Store publication with subscriber removal and channel closure (#50), preventing send-on-closed-channel panics and preserving sequence order under concurrent updates; slow subscribers retain bounded latest-value delivery.
 - Refuse server button and wake writes with HTTP 409 while a raw passthrough client holds the serial port, instead of blocking on a lock held for the client's entire connection. `SendWake` takes `writeMu` before `lifecycleMu` and runs under the actuation coordinator's mutex, so waiting there would have wedged every actuation path — including overtemperature safety — until the external client disconnected.
 - Stop serving the pre-lease status-poll reading as canonical status once a passthrough lease begins. A lease stops the server's own polling, so a client that forwards display frames but never asks for `0x90` — measured behavior of Expert Controller Plus, in receive and under transmit alike — left `/api/v1/status` and `/api/v1/alarms` reporting pre-lease temperature, SWR, TX and output level labelled `provenance: "status-poll"` with `recentContact: true`, for a reading nothing was refreshing. The retained frame is now invalidated as the lease starts and canonical status falls back to display-derived state until a tapped `0x90` or the first poll after the lease supersedes it. Internal fan, monitoring, menu-debug and write gates were never affected — they test provenance and contact themselves — so this corrects what the API reports, not what the server acts on.
 - Publish status authority transitions to `/api/v1/status/ws`. `StatusState` decided what to broadcast from whether the retained status bytes changed, but a passthrough lease changes which source is authoritative without changing a byte: invalidating the retained frame published nothing at all, and the first poll after a lease -- byte-for-byte identical when the amplifier is sitting still -- lifted that invalidation without publishing either. A client connected before the lease therefore kept the pre-lease `status-poll` payload for the life of a display-only lease, and could stay on display-derived state after it ended, whenever the decoded display was static enough to produce no events of its own. Both transitions now wake subscribers whether or not the bytes moved. `GET /api/v1/status` and `GET /api/v1/alarms` answered correctly throughout, and no internal gate was affected: fan policy, overtemperature standby, menu debug and the serial write gates test provenance and contact themselves.
@@ -24,6 +29,24 @@
 - Reject `rawPassthroughEnabled` together with `pollingMode: "off"` at `POST /api/v1/settings` with HTTP 400, in every spelling that is stored as `off` — the candidate is judged in its normalized form, so `"OFF"` and `" off "` are refused rather than accepted and then saved as the state they were refused for. No serial source is created with polling off, so passthrough had nothing to lease: the combination saved cleanly and then reported itself unavailable. It is refused at the point it would be created, and documented as a prerequisite in the README and the served OpenAPI. A configuration already on disk still starts, deliberately — a conflict that one request can fix should not become a boot failure that takes overtemperature standby with it — and is explained by `note` as before.
 - Serialize the whole `POST /api/v1/settings` transaction. The handler read the current settings before reading the request body, which is network I/O of unbounded duration, so a slow or stalled request merged its change onto a snapshot other writers had moved past. Three things followed: an automatic control could be re-armed underneath a live passthrough lease, because both the stale value and the merged one read armed and the armed-controls check compares the two; concurrent updates silently overwrote each other's fields; and the "restart required" reply was computed against settings that were already out of date. The body is now decoded outside every lock, and the read, merge, validation, arming decision and commit all happen inside one boundary held against both other settings updates and passthrough session setup.
 - Re-resolve `/api/v1/status/ws` on a bounded timer so status that expires on the clock reaches an open socket. Tapped status stops being authoritative once it is older than the contact window, and `recentContact` ages out the same way, but both are decided inside `Resolve` and neither publishes anything when it happens. A client whose lease produced one tapped `0x90` and then nothing, against a static amplifier screen, kept the expired `passthrough-tap` payload indefinitely while `GET /api/v1/status` had already fallen back to display-derived state. The socket now rechecks once a second and sends only when the payload actually changes.
+
+### Upgrade and security notes
+
+- Raw passthrough (#46) remains off by default. Before using it, explicitly disarm automatic fan control and overtemperature standby; they cannot act while an external client owns the serial port and are not automatically restored. Re-arming during a lease is refused. Listener settings require restart.
+- HTTP and raw TCP are unauthenticated; raw TCP is unencrypted and WebSocket origins are unrestricted. Restrict access to trusted operators; neither LAN placement nor a VPN/reverse proxy implies application authorization.
+- `recentContact`, `lastContactAt`, and source/provenance describe observations, not command acknowledgement or permission to actuate. Integrations must distinguish display content changes from link contact and retain their own freshness and safety gates.
+
+## v0.4.9 - 2026-09-09
+
+### Added
+
+- Promote guarded production fan control for the exact `EXPERT 2K-FA` Third Series topology and operator-declared actual firmware `Rel.26_03_24_A` or `Rel.08_06_26_A` (#34). Hardware QUIET maps to logical Normal; hardware NORMAL maps to high cooling (`contest`).
+- Require fresh protocol-native STANDBY/RX, checksum-valid same-session LCD waypoints, the raw active-value marker, exact SAVE/STORING receipts, and a newer matching home receipt. Never send DISPLAY or an OPERATE/STANDBY command on this profile.
+
+### Evidence and limitations
+
+- Original firmware has the complete reversible D1 report; newer firmware has separate read-only confirmation of unchanged setup/FAN NOISE topology, not a second complete apply/restore report.
+- The tested SPE-LAN1.0.3 socket path does not provide the native status required by these gates. Use a transport that demonstrably supplies fresh native status; model or firmware labels alone do not authorize writes.
 
 ## v0.4.8 - 2026-08-31
 

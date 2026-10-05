@@ -9,7 +9,7 @@ Expert Amp Server exposes the current LCD as text without requiring a screenshot
 - `rows`: exactly eight strings of exactly 40 characters, preserving the physical LCD geometry
 - `highlightedSpans`: contiguous reverse-video ranges with zero-based row and column coordinates
 - `selectedText`: non-blank highlighted text in row-major order
-- `sequence` and `updatedAt`: the authoritative runtime display identity and timestamp
+- `sequence` and `updatedAt`: runtime display content-change sequence and timestamp, not link-contact freshness
 - `source` and `modelName`: capture context when available
 - `screenText`: the existing trimmed decoder output as a compatibility fallback
 
@@ -17,7 +17,7 @@ Unknown or custom glyphs decode as spaces. Their byte values are not lost: clien
 
 Menu recognizers also retain the raw grid. For example, the field-reported Third Series 2K-FA fan page uses custom glyph `0xAE` as the only indication of the active NORMAL/QUIET value. The reporting wizard reads that marker from `chars`; it does not guess the active value from text or cursor position.
 
-The endpoint describes the current display. It does not recognize a menu page, assign meaning to custom symbols, or send amplifier controls.
+The endpoint describes the current display. It does not recognize a menu page, assign meaning to custom symbols, or send amplifier controls. For link contact use runtime `displayReceivedAt` or canonical status `recentContact`/`lastContactAt`: identical valid live frames renew contact without changing content sequence or timestamp. Contact is not authority to actuate.
 
 ## Passive display recorder
 

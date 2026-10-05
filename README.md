@@ -46,7 +46,7 @@ One practical setup is an Apache Labs ANAN G2 / G2 Ultra with its internal Raspb
 
 Expert Amp Server is a trusted-LAN station appliance. The default listen address `:8088` intentionally accepts connections from other machines on the local network because the normal setup is a radio-side Pi serving a browser, logger, Node-RED instance, or radio-control PC elsewhere on the same LAN.
 
-Do not expose it directly to the public internet. The HTTP API includes state-changing routes for amp controls, settings, wake, and restart, and it does not currently implement authentication. Use a trusted station LAN, VPN, firewall, or reverse proxy for remote access.
+Do not expose it directly to the public internet. The HTTP API includes state-changing routes for amp controls, settings, wake, and restart, and it does not currently implement authentication. The raw TCP listener also has no authentication or encryption, and WebSocket origins are not restricted. A LAN, VPN, or reverse proxy does not itself add application authorization: restrict access to trusted operators with your own network/access controls.
 
 This software controls RF hardware. It is believed to match the documented and observed transport behavior, but you are responsible for deciding whether it is appropriate for your station and amplifier.
 
@@ -98,7 +98,7 @@ stream and nothing else. Read it from the server log or
 `GET /api/v1/raw-passthrough`, which names each control to disarm. Nothing is
 silently suspended and nothing is automatically restored afterwards — choosing
 passthrough means knowingly running without those controls for as long as the
-client is connected. The amplifier's own firmware stepdown is unaffected.
+client is connected. This does not replace or establish the behavior of the amplifier's own protection firmware.
 
 The dashboard and API keep working meanwhile: the server passively decodes the
 amplifier→client direction as it forwards it, so while the external client polls
@@ -118,10 +118,13 @@ prints on its LCD — temperature, output level, SWR, TX — keep being reported
 because the display tap is still decoding them, but they arrive as
 `provenance: "display-frame"` with display-derived confidence rather than as a
 status poll. Values only the status reply carries, such as the protocol band
-code and text, drop out until polling resumes. `recentContact` follows the
-display snapshot, which advances when the decoded screen changes rather than on
-every frame, so a static screen ages out of the contact window while frames are
-still arriving.
+code and text, drop out until polling resumes. `recentContact` follows accepted
+display arrivals, including identical frames, and expires after five seconds
+without contact. Runtime `displayReceivedAt` is the arrival clock; `sequence`
+and `updatedAt` remain content-change clocks. A static screen can stay in contact
+without publishing display-change events. Neither contact nor provenance alone
+authorizes an amplifier write; controls require their own fresh native-status,
+model/session, and action-specific evidence.
 
 A client that does ask for `0x90` gets its reply reported as
 `provenance: "passthrough-tap"`, but only while it keeps asking. Nothing obliges
@@ -215,10 +218,10 @@ Start here:
 ## Build release artifacts
 
 ```bash
-TARGETS="linux/arm64" VERSION="$(git describe --tags --always --dirty)" packaging/scripts/build-release.sh
+VERSION=v0.5.0 CHANNEL=release packaging/scripts/build-release.sh
 ```
 
-The release helper injects build metadata into the server binary and copies the sample config plus systemd unit into `dist/`.
+The release helper builds Linux ARM64, ARMv7, AMD64, and macOS ARM64 by default, injects build metadata, and copies the sample config plus systemd unit into `dist/` with `SHA256SUMS`. Build from a clean, reviewed commit into an empty output directory; see the [release checklist](docs/release/READINESS.md) for verification and publication boundaries. Set `TARGETS="linux/arm64"` for a Pi-only development build.
 
 ## License
 

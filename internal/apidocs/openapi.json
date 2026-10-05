@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Expert Amp Server API",
-    "version": "0.3.0",
-    "description": "Trusted-LAN HTTP API for Expert Amp Server. The service is intended for local station networks and should not be exposed directly to the public internet. The canonical phase 1 surface lives under /api/v1. This spec intentionally documents current implementation reality, including conservative or fallback-derived fields. It does not treat legacy compatibility routes as canonical, and it does not list older non-v1 aliases except where needed for explanatory context.\n\nStatus honesty rules:\n- GET /api/v1/status is the preferred machine-readable amp status surface.\n- Status fields may be protocol-native, display-derived fallback, compatibility aliases, or current conservative placeholders depending on what the runtime actually knows.\n- GET /api/v1/telemetry remains useful for UI and fallback inspection, but it is not the authoritative automation contract when protocol-native status poll data is available.\n- GET /api/v1/alarms returns protocol-native warnings/alarms, configurable monitoring, and read-only state for the separately armed one-shot overtemperature standby controller.\n- Active standby requires fresh OPERATE and RX evidence before one documented OPERATE command; the write remains sent/unconfirmed because the protocol cannot correlate a later response.\n- The websocket status feed shares the same canonical status model but is described separately because OpenAPI does not model websocket message flow well."
+    "version": "0.5.0",
+    "description": "Trusted-LAN HTTP API for Expert Amp Server. HTTP and raw TCP have no built-in authentication; raw TCP is unencrypted and WebSocket origins are unrestricted. Restrict access to trusted operators; LAN, VPN, or reverse-proxy placement does not imply application authorization. Do not expose the service directly to the public internet. The canonical phase 1 surface lives under /api/v1. This spec intentionally documents current implementation reality, including conservative or fallback-derived fields. It does not treat legacy compatibility routes as canonical, and it does not list older non-v1 aliases except where needed for explanatory context.\n\nStatus honesty rules:\n- GET /api/v1/status is the preferred machine-readable amp status surface.\n- Status fields may be protocol-native, display-derived fallback, compatibility aliases, or current conservative placeholders depending on what the runtime actually knows.\n- GET /api/v1/telemetry remains useful for UI and fallback inspection, but it is not the authoritative automation contract when protocol-native status poll data is available.\n- GET /api/v1/alarms returns protocol-native warnings/alarms, configurable monitoring, and read-only state for the separately armed one-shot overtemperature standby controller.\n- Active standby requires fresh OPERATE and RX evidence before one documented OPERATE command; the write remains sent/unconfirmed because the protocol cannot correlate a later response.\n- The websocket status feed shares the same canonical status model but is described separately because OpenAPI does not model websocket message flow well."
   },
   "servers": [
     {
@@ -429,7 +429,7 @@
           "Status"
         ],
         "summary": "Get fan-policy and manual override state",
-        "description": "Returns automatic thresholds, manual override state, hottest protocol-native temperature observation, desired policy and source, last display-verified current policy with confidence/source, persistence status, safety gates, cooldown, and navigation receipt. GET is read-only. Active control requires polling mode both. Users are encouraged to test manual Fan Boost before enabling automatic control. Navigation starts only after protocol status and checksum-valid LCD flags report RX at a recognized home screen, then stops on any menu mismatch. If initially OPERATE, the controller obtains exclusive actuation ownership, requests STANDBY once, and requires newer protocol and LCD STANDBY evidence before SET. It restores OPERATE only after verified SAVE and return home, and only if it owned the original transition. TX pauses all writes and timeouts. Overtemperature safety preempts fan control and suppresses restoration.",
+        "description": "Returns automatic thresholds, manual override state, hottest protocol-native temperature observation, desired policy and source, last display-verified current policy with confidence/source, persistence status, safety gates, cooldown, and navigation receipt. GET is read-only. Active control requires polling mode both. Users are encouraged to test manual Fan Boost before enabling automatic control. Navigation starts only after protocol status and checksum-valid LCD flags report RX at a recognized home screen, then stops on any menu mismatch. For First/Second Series only, if initially OPERATE, the controller obtains exclusive actuation ownership, requests STANDBY once, and requires newer protocol and LCD STANDBY evidence before SET. It restores OPERATE only after verified SAVE and return home, and only if it owned the original transition. TX pauses all writes and timeouts. Overtemperature safety preempts fan control and suppresses restoration. Third Series 2K-FA instead requires verified STANDBY/RX at entry, exact topology and an allowed operator-declared actual firmware value, maps hardware QUIET to Normal and NORMAL to high cooling, and never sends DISPLAY or OPERATE/STANDBY. Provenance/contact alone is not actuation authority.",
         "responses": {
           "200": {
             "$ref": "#/components/responses/FanPolicyResponse"
@@ -446,7 +446,7 @@
           "Actions"
         ],
         "summary": "Set a verified fan-mode override",
-        "description": "Requests automatic temperature control, forced Normal, or forced CONTEST through the same fail-closed temporary-STANDBY display-verification transaction. Omitting durationMinutes keeps a Normal or CONTEST override active until another request changes it. Optional durationMinutes expires back to automatic control. The request is accepted before navigation completes; poll GET /api/v1/fan-policy for the verified result.",
+        "description": "Requests automatic temperature control, forced Normal, or forced CONTEST through the promoted model-specific fail-closed display-verification transaction; Third Series requires STANDBY/RX at entry and does not change operating state. Omitting durationMinutes keeps a Normal or CONTEST override active until another request changes it. Optional durationMinutes expires back to automatic control. The request is accepted before navigation completes; poll GET /api/v1/fan-policy for the verified result.",
         "requestBody": {
           "required": true,
           "content": {
@@ -482,7 +482,7 @@
           "Actions"
         ],
         "summary": "Verify the persisted amplifier fan mode",
-        "description": "Queues a safe menu transaction that reads the captured FAN MANAGEMENT value, follows the known SAVE path, and refreshes the server-owned verified receipt. Use after startup or a disconnected/manual change. A persisted receipt is stale until this transaction or a complete observed front-panel SAVE sequence refreshes it.",
+        "description": "Queues a safe menu transaction that reads the promoted profile's fan value (FAN MANAGEMENT or Third Series FAN NOISE), follows its verified SAVE path, and refreshes the server-owned verified receipt. Use after startup or a disconnected/manual change. A persisted receipt is stale until this transaction or a complete observed front-panel SAVE sequence refreshes it.",
         "responses": {
           "202": {
             "$ref": "#/components/responses/FanPolicyResponse"
@@ -1986,7 +1986,7 @@
               "normal",
               "high-cooling"
             ],
-            "description": "The last policy verified after the controller's SET-on-SAVE write and a newer captured home screen. STORING DATA! is accepted when observed but can be shorter than one display-poll interval. A persisted value can be stale after restart until reverified."
+            "description": "The last policy verified after the controller's SET-on-SAVE write and a newer captured home screen. First/Second Series accept STORING DATA! when observed but it can be shorter than one display-poll interval. Third Series requires its exact same-session STORING and newer home receipts. A persisted value can be stale after restart until reverified."
           },
           "currentPolicyVerifiedAt": {
             "type": "string",
@@ -2626,7 +2626,7 @@
           },
           "automaticFanPolicyEnabled": {
             "type": "boolean",
-            "description": "Enables the disabled-by-default display-verified automatic fan-policy controller. Manual Fan Boost testing is recommended first. Requires pollingMode both. If initially OPERATE, the controller temporarily enters and verifies STANDBY for the menu transaction, then restores OPERATE only after a verified save. Every write is RX-only and TX pauses navigation."
+            "description": "Enables the disabled-by-default display-verified automatic fan-policy controller. Manual Fan Boost testing is recommended first. Requires pollingMode both. For First/Second Series only, if initially OPERATE, the controller temporarily enters and verifies STANDBY for the menu transaction, then restores OPERATE only after a verified save. Every write is RX-only and TX pauses navigation."
           },
           "fanHighTemperatureC": {
             "type": "number",
@@ -2800,7 +2800,7 @@
           },
           "automaticFanPolicyEnabled": {
             "type": "boolean",
-            "description": "Explicitly enables fan-policy evaluation. Defaults false and requires pollingMode both. Production navigation requires a promoted hardware profile and supports the verified First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA; unsupported models are blocked before SET. The reported model and first verified setup topology must agree before selector movement. Navigation temporarily enters verified STANDBY when initially OPERATE, pauses all writes during TX, and restores OPERATE only after verified save completion."
+            "description": "Explicitly enables fan-policy evaluation. Defaults false and requires pollingMode both. Production navigation requires a promoted hardware profile and supports the promoted First Series Expert 1.3K-FA, CONFIG-first Second Series Expert 1.5K-FA, and exact firmware/topology-bound Third Series Expert 2K-FA; unsupported combinations are blocked before SET. Third Series starts only from verified STANDBY/RX and never sends DISPLAY or OPERATE/STANDBY. The reported model and first verified setup topology must agree before selector movement. First/Second Series navigation temporarily enters verified STANDBY when initially OPERATE, pauses all writes during TX, and restores OPERATE only after verified save completion."
           },
           "fanHighTemperatureC": {
             "type": "number",

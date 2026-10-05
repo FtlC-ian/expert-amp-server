@@ -8,11 +8,11 @@ This is a curated reference, not a raw transcription. It keeps the vendor-docume
 
 The vendor documents the status poll and status fields as part of the protocol.
 
-For this repository, treat the protocol status poll response as the machine-readable source of truth for automation.
+For this repository, prefer direct protocol status poll responses for machine-readable status. Actuation still requires fresh native evidence, model/session binding, and action-specific gates; passively tapped `passthrough-tap` status is display evidence only.
 
 Treat the front-panel display as a user-facing view that can differ in formatting or timing.
 
-Complex operations, including settings, antenna presets, and firmware updates, are not documented as available through this protocol and must use SPE’s KTerm software.
+The vendor guide directs complex operations, including settings, antenna presets, and firmware updates, to SPE's KTerm software rather than documenting dedicated protocol commands. Separately, this project implements narrowly reviewed, display-verified menu-button traversal for promoted fan profiles and guarded Menu Debug tests; that is project-observed behavior, not a vendor-documented high-level settings protocol.
 
 ## Transport and framing
 

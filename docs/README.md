@@ -7,6 +7,8 @@ This directory holds the detailed project documentation. Keep the root `README.m
 - [`INSTALL_PI.md`](INSTALL_PI.md) — Raspberry Pi / radio-host install path, service unit, config, sanity checks, and caveats.
 - [`PROTOCOL.md`](PROTOCOL.md) — SPE protocol notes, display-frame assumptions, protocol-native status authority, and action transport caveats.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — package layout, server data flow, endpoint map, and current implementation notes.
+- [`DISPLAY_ACCESSIBILITY.md`](DISPLAY_ACCESSIBILITY.md) — fixed-width LCD text, contact/content clocks, and passive capture.
+- [`SPE_APPLICATION_PROGRAMMERS_GUIDE.md`](SPE_APPLICATION_PROGRAMMERS_GUIDE.md) — curated vendor protocol reference, distinct from implemented guarded menu traversal.
 - [`integrations/node-red.md`](integrations/node-red.md) — Node-RED dashboard integration guide and flow notes.
 - [`release/READINESS.md`](release/READINESS.md) — release checklist for future tagged builds.
 - [`reference/screens/`](reference/screens/) — screenshots used by docs and issues.

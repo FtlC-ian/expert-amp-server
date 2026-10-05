@@ -39,7 +39,7 @@ npm install node-red-dashboard node-red-contrib-ui-level
 
 | Path | Mode | Interval / behavior | Endpoint |
 |---|---|---|---|
-| Primary live status | WebSocket | Connect once, receive initial snapshot + change-driven updates | `GET /api/v1/status/ws` |
+| Primary live status | WebSocket | Initial snapshot + changed payloads; one-second contact/expiry recheck | `GET /api/v1/status/ws` |
 | Fallback status | HTTP poll | Every 5 s only while websocket is down | `GET /api/v1/status` |
 | Alarms | HTTP poll | Every 10 s | `GET /api/v1/alarms` |
 
@@ -126,9 +126,9 @@ Use `wss://...` if your deployment is TLS-terminated.
 
 ## Button actions
 
-All buttons POST to `POST /api/v1/actions/button` with `{"name": "<action>"}`.
+Normal front-panel buttons POST to `POST /api/v1/actions/button` with `{"name": "<action>"}`.
 
-**Currently supported actions** (safe per transport/buttons.go):
+**Currently supported transport actions** (not a hardware-safety guarantee):
 
 ```
 set, left, right, up, down, display
@@ -144,15 +144,15 @@ backlight-on, backlight-off
 back, on, standby
 ```
 
-Fan mode is not a raw front-panel action. The checked-in dashboard's **Fan Boost** and **Fan Normal** buttons POST `{"mode":"contest"}` or `{"mode":"normal"}` to `/api/v1/fan-policy/override`. Check `supportedModes` first: promoted First Series 1.3K-FA and Second Series 1.5K-FA profiles advertise `normal` and `contest`; unsupported models advertise no modes and fail closed before SET. These overrides remain active until explicitly changed unless an API client supplies `durationMinutes`; that countdown begins only after the requested mode is display-verified. Send `{"mode":"automatic"}` to return desired-policy selection to the temperature controller.
+Fan mode is not a raw front-panel action. The checked-in dashboard's **Fan Boost** and **Fan Normal** buttons POST `{"mode":"contest"}` or `{"mode":"normal"}` to `/api/v1/fan-policy/override`. Check `supportedModes` first: promoted First Series 1.3K-FA, Second Series 1.5K-FA, and exact firmware/topology-bound Third Series 2K-FA profiles advertise `normal` and `contest`; unsupported models advertise no modes and fail closed before SET. These overrides remain active until explicitly changed unless an API client supplies `durationMinutes`; that countdown begins only after the requested mode is display-verified. Send `{"mode":"automatic"}` to return desired-policy selection to the temperature controller.
 
-Production fan control supports the promoted First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA model-bound topologies after physical apply/restore verification on both models. Unsupported models are blocked before SET; F-KFA NORMAL/QUIET layouts remain topology-only.
+Production fan control supports the promoted First Series Expert 1.3K-FA, CONFIG-first Second Series Expert 1.5K-FA, and exact firmware/topology-bound Third Series Expert 2K-FA profiles. Third Series maps hardware QUIET to Normal and hardware NORMAL to high cooling (`contest`); it requires the actual firmware setting to match `Rel.26_03_24_A` or `Rel.08_06_26_A` exactly and starts only from verified STANDBY/RX, without DISPLAY or OPERATE/STANDBY writes. Newer firmware has read-only topology confirmation, not a second complete reversible report. Unsupported models are blocked before SET; F-KFA NORMAL/QUIET layouts remain topology-only.
 
 The original WB2WGH macro is not safe to reproduce through generic button calls. It was fan-tested only on a 2K-FA, sends a fixed eleven-RIGHT menu sequence without reading the LCD, and can alter the wrong setting if the starting screen or one command differs. The server replaces it with the captured display-verified transaction.
 
 Do not replace that macro with another blind sequence, including a 13-command Expert 1.5K-FA flow. Use the built-in Menu Debug wizard or its guarded API: one start runs discovery and apply automatically, but each command remains separately authorized and blocked until a newer matching LCD receipt arrives. The wizard then waits for physical candidate confirmation before automatic restore and waits again for confirmation that the original value returned. Incomplete diagnostics are visible and downloadable in the token-bearing built-in UI; they are never uploadable promotion evidence.
 
-Use `GET /api/v1/fan-policy` for the disabled-by-default temperature/hysteresis decision and navigation receipt. Production control requires a promoted model profile and supports the verified First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA paths; unsupported models are blocked before SET. Active control requires polling mode `both` and starts only after fresh protocol and checksum-valid LCD RX evidence. The server verifies the model plus first SET-menu topology and then every waypoint. If initially OPERATE, it temporarily requests and verifies STANDBY because tested hardware ignores SET on the OPERATE home screen. After verified SAVE and return home it restores and verifies OPERATE only when this transaction originally disabled it.
+Use `GET /api/v1/fan-policy` for the disabled-by-default temperature/hysteresis decision and navigation receipt. Production control requires a promoted model/topology profile and, for Third Series, an exact allowed firmware value; unsupported models are blocked before SET. Active control requires polling mode `both` and starts only after fresh protocol and checksum-valid LCD RX evidence. The server verifies the model plus first SET-menu topology and then every waypoint. For First/Second Series only, if initially OPERATE, it temporarily requests and verifies STANDBY because tested hardware ignores SET on the OPERATE home screen. After verified SAVE and return home it restores and verifies OPERATE only when this transaction originally disabled it.
 
 If TX begins, the controller sends no writes, pauses its ordinary waypoint timeout, and resumes only after ordered protocol and LCD RX evidence reverifies the exact expected state. Fan-value toggles and SAVE are RX-only. The temporary STANDBY may skip an unattended transmit cycle. Overtemperature safety preempts fan control and suppresses OPERATE restoration. After stale or unknown status, unsupported state, timeout, ambiguous toggle, write failure, or screen mismatch, the controller never blindly restores OPERATE and requires the operator to verify STANDBY.
 
@@ -207,7 +207,7 @@ Before declaring the flow healthy:
 3. **Fallback recovery works** — interrupt websocket/server access; USB Status should turn red on API errors, then return to `WS Live` or `HTTP Fallback` after connectivity is restored.
 4. **Tiles update** — open Node-RED Dashboard (`/ui`), confirm SPE tiles show values
 5. **Display render loads** — Display group shows amp display image (may be blank in fixture mode)
-6. **Safe button action works** — click Set or Display button; check debug tab for `OK: set` / `OK: display`
+6. **Supervised transport check** — only on known hardware in a verified safe state, check an intentionally chosen action and its physical effect; an `OK` transport reply is not a safety or completion guarantee
 7. **Alarm tile updates** — `/api/v1/alarms` returns protocol-native warning/alarm lists plus safety-monitor state. Monitoring is observational unless the server's separate overtemperature standby arm flag is explicitly enabled; with no active vendor alarm, Warnings + Alarms should show blue `No Alarms / No Warnings`
 8. **Error handling** — stop the Expert Amp Server completely; USB Status tile should turn red after fallback requests fail
 
@@ -236,3 +236,9 @@ The websocket nodes used here are part of core Node-RED; no extra websocket pack
 - The checked-in example intentionally matches the cleaned-up working dashboard: no History group, no extra chart panels, and a tighter display block.
 - All node IDs are stable across re-imports (MD5 of seed name). Existing nodes will update on re-import.
 - The flow is project-clean: no Ian-specific hostnames, entity IDs, or HA-specific details.
+
+## Contact, passthrough, and trust
+
+`recentContact` includes identical accepted live display arrivals and expires after five seconds without eligible contact. Runtime `displayReceivedAt` is the arrival clock; `sequence` and `updatedAt` describe content changes. WebSocket/API connectivity (the USB Status tile) does not prove amplifier contact or fresh native-status evidence. Do not use provenance or contact alone to authorize automation.
+
+During raw passthrough, server controls return busy and tapped `passthrough-tap` data is display evidence only. Disarm automatic fan control and overtemperature standby before connecting an external client; they are unavailable during the lease and are not automatically restored. HTTP and raw TCP have no built-in authentication, raw TCP is unencrypted, and WebSocket origins are unrestricted. Restrict access to trusted operators; TLS/VPN placement alone is not application authorization.
