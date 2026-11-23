@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -3958,7 +3959,7 @@ func TestRawPassthroughEndpointIsServedAndDocumented(t *testing.T) {
 	}
 	for _, schema := range []string{"Settings", "SettingsUpdateRequest"} {
 		properties := spec.Components.Schemas[schema].Properties
-		for _, field := range []string{"rawPassthroughEnabled", "rawPassthroughListenAddress"} {
+		for _, field := range []string{"rawPassthroughEnabled", "rawPassthroughListenAddress", "rawPassthroughAllowWhileArmed"} {
 			if _, ok := properties[field]; !ok {
 				t.Fatalf("%s schema does not document %s", schema, field)
 			}
@@ -4258,10 +4259,21 @@ func newSettingsLeaseHarness(t *testing.T) (http.Handler, *config.Manager, *rawp
 	src.Start(srcCtx)
 
 	controller := rawpassthrough.New(rawpassthrough.Config{
-		Enabled:                true,
-		ListenAddress:          "127.0.0.1:0",
-		Source:                 src,
-		ArmedAutomaticControls: func() []string { return nil },
+		Enabled:         true,
+		ListenAddress:   "127.0.0.1:0",
+		Source:          src,
+		AllowWhileArmed: func() bool { return mgr.Get().Settings.RawPassthroughAllowWhileArmed },
+		ArmedAutomaticControls: func() []string {
+			s := mgr.Get().Settings
+			var armed []string
+			if s.AutomaticFanPolicyEnabled {
+				armed = append(armed, "automatic fan control")
+			}
+			if s.SafetyMonitoringEnabled && s.OvertemperatureStandbyArmed {
+				armed = append(armed, "overtemperature standby")
+			}
+			return armed
+		},
 	})
 	if controller == nil {
 		t.Fatal("expected a controller for an enabled config")
@@ -4305,10 +4317,118 @@ func waitForPassthroughLease(t *testing.T, controller *rawpassthrough.Controller
 	t.Fatal("no passthrough lease was established")
 }
 
-// POST /api/v1/settings must not be able to arm an automatic control while a raw
-// passthrough client holds the serial port. Before this the update was accepted
-// and persisted: the control read back as armed while the active lease refused
-// every serial write it would have made.
+func TestV1SettingsAllowsArmedPassthroughOnlyWithLiveOptIn(t *testing.T) {
+	handler, mgr, controller, addr := newSettingsLeaseHarness(t)
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("settings: status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(strings.ToLower(rec.Body.String()), "restart") {
+			t.Fatalf("live setting incorrectly requires restart: %s", rec.Body.String())
+		}
+		return rec
+	}
+	post(`{"rawPassthroughAllowWhileArmed":true,"automaticFanPolicyEnabled":true,"safetyMonitoringEnabled":true,"overtemperatureStandbyArmed":true,"temperatureWarningC":55,"temperatureTripC":65}`)
+	before := mgr.Get().Settings
+	reloaded, err := config.NewManager(mgr.Get().Path, ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Get().Settings.RawPassthroughAllowWhileArmed {
+		t.Fatal("opt-in was not persisted")
+	}
+	if s := controller.Status(); len(s.ArmedControls) != 2 || len(s.BlockedByArmedControls) != 0 || len(s.PausedForLease) != 0 {
+		t.Fatalf("idle opted-in diagnostics: %+v", s)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+"/api/v1/status/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if s := readStatusWSMessage(t, ws); len(s.PausedForLease) != 0 {
+		t.Fatalf("idle websocket: %+v", s)
+	}
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	waitForPassthroughLease(t, controller)
+	for _, path := range []string{"/api/v1/raw-passthrough", "/api/v1/status"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		var reply struct {
+			Data struct {
+				PausedForLease []string `json:"pausedForLease"`
+				Blocked        []string `json:"blockedByArmedControls"`
+				Note           string   `json:"note"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &reply); err != nil {
+			t.Fatal(err)
+		}
+		if len(reply.Data.PausedForLease) != 2 || len(reply.Data.Blocked) != 0 {
+			t.Fatalf("%s: %s", path, rec.Body.String())
+		}
+		if path == "/api/v1/raw-passthrough" && (!strings.Contains(reply.Data.Note, "Armed controls paused for this lease:") || strings.Contains(reply.Data.Note, "unavailable while these automatic controls are armed")) {
+			t.Fatalf("lease note claims refusal instead of pause: %s", reply.Data.Note)
+		}
+	}
+	if s := readStatusWSMessage(t, ws); len(s.PausedForLease) != 2 {
+		t.Fatalf("leased websocket: %+v", s)
+	}
+	if got := mgr.Get().Settings; !reflect.DeepEqual(got, before) {
+		t.Fatalf("lease changed settings: %+v", got)
+	}
+	post(`{"rawPassthroughAllowWhileArmed":false,"automaticFanPolicyEnabled":false,"overtemperatureStandbyArmed":false}`)
+	if s := controller.Status(); !s.ClientConnected || len(s.ArmedControls) != 0 || len(s.PausedForLease) != 0 {
+		t.Fatalf("disarmed controls still reported paused: %+v", s)
+	}
+	post(`{"rawPassthroughAllowWhileArmed":true,"automaticFanPolicyEnabled":true,"overtemperatureStandbyArmed":true}`)
+	post(`{"rawPassthroughAllowWhileArmed":false}`)
+	if s := controller.Status(); !s.ClientConnected || len(s.PausedForLease) != 2 || len(s.BlockedByArmedControls) != 0 {
+		t.Fatalf("opt-out killed or misreported existing lease: %+v", s)
+	}
+	conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for controller.Status().ClientConnected && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s := controller.Status(); s.ClientConnected || len(s.PausedForLease) != 0 || len(s.BlockedByArmedControls) != 2 {
+		t.Fatalf("released diagnostics: %+v", s)
+	}
+	for {
+		if s := readStatusWSMessage(t, ws); len(s.PausedForLease) == 0 {
+			break
+		}
+	}
+	loaded, err := config.NewManager(mgr.Get().Path, ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := loaded.Get().Settings; !s.AutomaticFanPolicyEnabled || !s.OvertemperatureStandbyArmed || !s.SafetyMonitoringEnabled || s.RawPassthroughAllowWhileArmed {
+		t.Fatalf("saved controls did not stay armed: %+v", s)
+	}
+	refused, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer refused.Close()
+	refused.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if n, err := refused.Read(make([]byte, 1)); n != 0 || err == nil {
+		t.Fatalf("next lease was not refused: n=%d err=%v", n, err)
+	} else if e, ok := err.(net.Error); ok && e.Timeout() {
+		t.Fatal("refusal timed out")
+	}
+}
+
+// Without the opt-in, arming during a lease must still return 409 without
+// persisting controls that cannot act.
 func TestV1SettingsRefusesArmingWhileAPassthroughClientHoldsThePort(t *testing.T) {
 	handler, mgr, controller, addr := newSettingsLeaseHarness(t)
 

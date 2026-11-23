@@ -253,10 +253,8 @@ func (h *RawPassthroughHandle) Close() {
 // RecentContact false, and fan policy refuses it on provenance as well. The
 // direction is fail-safe; nothing is authorized by it.
 //
-// Server-side automatic control is not degraded during a lease, it is refused up
-// front: a session cannot start while automatic fan control or overtemperature
-// standby is armed (see ArmedAutomaticControls), so there is no protection here
-// to preserve.
+// Armed settings may remain enabled with the explicit allow-while-armed opt-in;
+// they never authorize actuation from this tapped evidence.
 func (h *RawPassthroughHandle) ObserveFromAmp(chunk []byte) {
 	if h == nil || len(chunk) == 0 || h.source == nil {
 		return

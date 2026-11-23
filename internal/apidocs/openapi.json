@@ -614,7 +614,7 @@
           "Settings"
         ],
         "summary": "Update settings",
-        "description": "Writes local config. Preferred polling fields are pollingMode (off, both, status, display) and pollIntervalMs. both alternates status and display writes on one cadence; status is for automation/API, display is for front-panel/template work, and off is diagnostic. Legacy polling booleans and statusPollIntervalMs remain accepted/readable for compatibility and are normalized on save. Raw passthrough requires polling: rawPassthroughEnabled true together with pollingMode off is rejected with 400, because no serial source is created with polling off and passthrough has nothing to lease. Returns 409 when the update would arm automatic fan control or overtemperature standby while a raw passthrough client holds the serial port; those controls cannot act during a lease, so the change is refused rather than stored as armed, and it succeeds unchanged once the client disconnects. Disarming is never refused.",
+        "description": "Writes local config. Preferred polling fields are pollingMode (off, both, status, display) and pollIntervalMs. both alternates status and display writes on one cadence; status is for automation/API, display is for front-panel/template work, and off is diagnostic. Legacy polling booleans and statusPollIntervalMs remain accepted/readable for compatibility and are normalized on save. Raw passthrough requires polling: rawPassthroughEnabled true together with pollingMode off is rejected with 400, because no serial source is created with polling off and passthrough has nothing to lease. Unless rawPassthroughAllowWhileArmed is true in the merged settings, returns 409 when the update would arm automatic fan control or overtemperature standby while a raw passthrough client holds the serial port; those controls cannot act during a lease, so the change is refused rather than stored as armed, and it succeeds unchanged once the client disconnects. Disarming is never refused.",
         "requestBody": {
           "required": true,
           "content": {
@@ -697,7 +697,7 @@
           "Runtime"
         ],
         "summary": "Get raw serial-over-TCP passthrough state",
-        "description": "Reports the optional raw passthrough listener, which leases the amplifier's serial link to one external TCP client at a time. Read-only; the listener is configured by rawPassthroughEnabled and rawPassthroughListenAddress. Returns enabled false when passthrough is not configured. It requires polling: with pollingMode off no serial source is created, so there is nothing to lease and the endpoint reports which setting won in note. While a client holds the lease the server sends no serial bytes of its own, so no server-side automatic control is available and automaticControlsAvailable is false. A session is refused outright while automatic fan control or overtemperature standby is armed: blockedByArmedControls names each control to disarm, and note carries the same refusal text. The raw socket itself carries only the amplifier's byte stream, so a refused client is closed without any explanatory bytes and never receives an HTTP status; this endpoint and the server log are where the reason is reported. Telemetry observed by tapping a lease is labelled provenance passthrough-tap, is display evidence only, and is never authority to actuate.",
+        "description": "Reports the optional raw passthrough listener, which leases the amplifier's serial link to one external TCP client at a time. Read-only; the listener is configured by rawPassthroughEnabled and rawPassthroughListenAddress. Returns enabled false when passthrough is not configured. It requires polling: with pollingMode off no serial source is created, so there is nothing to lease and the endpoint reports which setting won in note. While a client holds the lease the server sends no serial bytes of its own, so no server-side automatic control is available and automaticControlsAvailable is false. With rawPassthroughAllowWhileArmed true, saved settings stay armed and pausedForLease reports armed but inert controls here and in status and its WebSocket. Otherwise a session is refused while automatic fan control or overtemperature standby is armed: blockedByArmedControls names each control to disarm, and note carries the same refusal text. The raw socket itself carries only the amplifier's byte stream, so a refused client is closed without any explanatory bytes and never receives an HTTP status; this endpoint and the server log are where the reason is reported. Telemetry observed by tapping a lease is labelled provenance passthrough-tap, is display evidence only, and is never authority to actuate.",
         "responses": {
           "200": {
             "$ref": "#/components/responses/RawPassthroughResponse"
@@ -1311,7 +1311,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Server-side automatic controls that are armed and must be disarmed before a session can start. Non-empty means a connecting client will be refused.",
+            "description": "Armed controls that block admission with rawPassthroughAllowWhileArmed false. Empty or omitted when opted in or while a lease is active.",
             "example": [
               "overtemperature standby",
               "automatic fan control"
@@ -1319,7 +1319,7 @@
           },
           "automaticControlsAvailable": {
             "type": "boolean",
-            "description": "Whether the server owns the serial port and could therefore act on it: false for the lifetime of a lease, true whenever no client is connected. This reports port ownership, not arming -- true does not mean any control is enabled or armed, which is what blockedByArmedControls reports."
+            "description": "Whether the server owns the serial port and could therefore act on it: false for the lifetime of a lease, true whenever no client is connected. This reports port ownership, not arming; armedControls reports arming. Fresh direct status-poll evidence and all normal gates are still required after reclaim."
           },
           "listenerAvailable": {
             "type": "boolean",
@@ -1328,6 +1328,16 @@
           "note": {
             "type": "string",
             "description": "Human-readable summary of the current state, including the full refusal text when armed controls are blocking a session."
+          },
+          "armedControls": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Currently armed automatic controls, independent of admission policy. Omitted when empty."
+          },
+          "pausedForLease": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Armed automatic controls that are inert while a raw client holds the lease. Saved settings remain armed. Omitted when empty, including after disconnect; actuation still requires fresh direct status-poll evidence and all normal gates after reclaim."
           }
         }
       },
@@ -1729,6 +1739,11 @@
               "recentContact": {
                 "type": "boolean",
                 "description": "True for five seconds after a successfully decoded display or protocol-native status arrival, including identical display frames. Cached polls and fixture changes do not count. Link liveness does not grant actuation authority or fresh status-poll evidence."
+              },
+              "pausedForLease": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Armed automatic controls that are inert while a raw client holds the serial lease. Same list as raw-passthrough pausedForLease. Saved settings remain armed. Omitted when empty, including after disconnect. Fresh direct status-poll evidence and all normal gates are still required after reclaim. WebSocket changes appear within one second even without telemetry events."
               },
               "lastContactAt": {
                 "type": "string",
@@ -2672,13 +2687,18 @@
           "rawPassthroughEnabled": {
             "type": "boolean",
             "default": false,
-            "description": "Advanced opt-in that exposes the amplifier's serial link over TCP, leasing it exclusively to one external client at a time. While a client is connected the server sends no serial bytes of its own, so no server-side automatic control is available for the session, and a session is refused outright while automatic fan control or overtemperature standby is armed. See GET /api/v1/raw-passthrough."
+            "description": "Advanced opt-in that exposes the amplifier's serial link over TCP, leasing it exclusively to one external client at a time. While a client is connected the server sends no serial bytes of its own, so no server-side automatic control is available for the session, and by default a session is refused while automatic fan control or overtemperature standby is armed, unless rawPassthroughAllowWhileArmed is true. See GET /api/v1/raw-passthrough."
           },
           "rawPassthroughListenAddress": {
             "type": "string",
             "default": ":7388",
             "description": "TCP listen address for raw passthrough. The default matches the port the SPE-LAN-UNIT exposes its own virtual COM port on, so clients already configured for that unit need no change to point at this server instead.",
             "example": ":7388"
+          },
+          "rawPassthroughAllowWhileArmed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow leases while automatic controls are armed and allow arming during a lease. Live without restart; disabling affects the next admission and never ends an active lease. Saved arming settings never change for a lease. Armed controls are reported as pausedForLease and resume only on fresh direct status-poll evidence after reclaim, subject to existing gates. While leased the only overtemperature protection is the amplifier's own firmware stepdown. An unattended lease can run indefinitely. Raw TCP is unauthenticated and unencrypted."
           }
         }
       },
@@ -2849,13 +2869,18 @@
           "rawPassthroughEnabled": {
             "type": "boolean",
             "default": false,
-            "description": "Advanced opt-in that exposes the amplifier's serial link over TCP, leasing it exclusively to one external client at a time. While a client is connected the server sends no serial bytes of its own, so no server-side automatic control is available for the session, and a session is refused outright while automatic fan control or overtemperature standby is armed. See GET /api/v1/raw-passthrough."
+            "description": "Advanced opt-in that exposes the amplifier's serial link over TCP, leasing it exclusively to one external client at a time. While a client is connected the server sends no serial bytes of its own, so no server-side automatic control is available for the session, and by default a session is refused while automatic fan control or overtemperature standby is armed, unless rawPassthroughAllowWhileArmed is true. See GET /api/v1/raw-passthrough."
           },
           "rawPassthroughListenAddress": {
             "type": "string",
             "default": ":7388",
             "description": "TCP listen address for raw passthrough. An empty or whitespace-only value is ignored and leaves the current address unchanged.",
             "example": ":7388"
+          },
+          "rawPassthroughAllowWhileArmed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow leases while automatic controls are armed and allow arming during a lease, including in this same update. Live without restart; disabling never ends an active lease. Saved arming settings never change for a lease. Controls are reported as pausedForLease. While leased the only overtemperature protection is the amplifier's own firmware stepdown. An unattended lease can run indefinitely. Raw TCP is unauthenticated and unencrypted."
           }
         }
       },

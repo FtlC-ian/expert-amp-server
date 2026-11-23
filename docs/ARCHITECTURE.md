@@ -144,7 +144,8 @@ also holds an `ActuationCoordinator` lease under
 error before they reach the serial layer, and a passthrough session refuses to
 start while an automatic transaction is already driving the amplifier.
 
-**Automatic control is refused up front, not degraded.** A passthrough session
+**Automatic controls refuse admission by default.** Unless the live
+`rawPassthroughAllowWhileArmed` opt-in is true (default false), a session
 cannot start while automatic fan control or overtemperature standby is armed.
 The listener asks `Config.ArmedAutomaticControls` before it takes either the
 coordinator lease or the serial port, and refuses the connection by closing it
@@ -162,8 +163,15 @@ described above, not from this one.)
 Nothing is silently suspended for the duration of a lease and nothing is
 automatically restored afterwards: tracking what was suspended and restoring it
 across disconnects, crashes and failed port reclamation is a second state
-machine, and refusal keeps the state simple and honest. An operator who chooses
-passthrough does so knowing those controls are unavailable.
+machine. With the opt-in on, the saved settings stay armed and the existing
+provenance gates keep controls inert during the lease. The existing reclaim
+path resets serial-session evidence and requires a fresh direct `status-poll`
+before actuation can resume, subject to all other safety gates. The
+overtemperature no-retry latch is not spent by tapped frames. A crash, kill or
+reboot needs no restoration because the saved arming settings never changed.
+The only overtemperature protection while leased is the amplifier's own firmware
+stepdown; an unattended lease can run indefinitely. Raw TCP is unauthenticated
+and unencrypted, so restrict access to trusted operators.
 
 **Tapped telemetry is display evidence only.** The amplifier→client direction is
 decoded as it is forwarded, using the same `StatusStreamDecoder` as normal
@@ -217,7 +225,8 @@ second source running ahead of it the way a lease does.
 
 Arming is serialized against session setup. `POST /api/v1/settings` is refused
 with 409 when it would arm automatic fan control or overtemperature standby
-during a lease, and the decision is taken inside the same mutex that claims the
+during a lease without the opt-in in the merged settings. With the opt-in on,
+arming is allowed and reported as paused. The decision is inside the same mutex that claims the
 port, so an update cannot race a session being established. The reverse gate —
 refusing a session while those controls are armed — is the same rule seen from
 the other end, and the two read the armed set through the same definition.
@@ -236,6 +245,12 @@ already takes the setup mutex before reading the armed set from config, so
 holding the config lock across the boundary would invert that pair and deadlock
 against a connecting client.
 
+`Config.AllowWhileArmed` reads the current setting at admission, just as
+`Config.ArmedAutomaticControls` reads arming. No new locks are added. Both reads
+run under the existing setup boundary, excluding settings commits. The opt-in
+is live rather than restart-requiring because no listener reconstruction is
+needed. Turning it off never kills an active lease; it gates the next admission.
+
 Raw passthrough also requires polling. With `pollingMode: "off"` no serial
 source is created, so there is nothing to lease; the settings route refuses that
 combination with 400 rather than storing a configuration that asks for
@@ -249,7 +264,15 @@ that will not start is a server whose overtemperature standby is not running.
 `tapFresh` for display freshness. `automaticControlsAvailable` reports serial
 port ownership: false for the lifetime of a lease, true whenever no client holds
 the port. It is not a statement that any control is armed —
-`blockedByArmedControls` is what reports that. `enabled` means configured *and* running, so a
+`armedControls` reports that independently of admission policy.
+`blockedByArmedControls` is empty with the opt-in on and during an active lease.
+`pausedForLease` lists armed controls that cannot act during the lease, regardless
+of later opt-out. The same optional list is added at the server response boundary
+to `/api/v1/status` and its WebSocket, not to internal actuation evidence.
+The existing one-second WebSocket re-resolution picks up lease/settings changes
+even with no telemetry events. Empty lists are omitted; disconnect clears the
+paused list but does not claim that a fresh direct status poll has arrived.
+`enabled` means configured *and* running, so a
 listener that failed to bind reports `enabled: false`; `listenerAvailable` and
 the bind error in `note` are what separate that from a passthrough the operator
 turned off. An operator is never left to infer safety that

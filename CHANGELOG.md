@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add `rawPassthroughAllowWhileArmed`, disabled by default, to admit raw leases and allow arming during a lease without changing saved automatic fan control or overtemperature standby settings (#52). It takes effect live at admission; disabling it leaves an active lease alone. Report armed controls in `armedControls` and armed but inert controls in `pausedForLease` at `GET /api/v1/raw-passthrough`, with the same paused list in status and its WebSocket. After disconnect, existing fresh direct-poll gates resume control without any suspend/restore state.
+
+### Upgrade and security notes
+
+- With the opt-in on, the only overtemperature protection while a client holds the lease is the amplifier's own firmware stepdown. An unattended lease can run indefinitely. Raw TCP is unauthenticated and unencrypted; restrict access to trusted operators. The default refusal while armed and HTTP 409 on arming during a lease are unchanged unless explicitly opted in.
+
 ## v0.5.0 - 2026-10-05
 
 Raw passthrough and display-contact/concurrency corrective release. No new hardware qualification is claimed.

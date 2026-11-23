@@ -10,6 +10,7 @@
   "overtemperatureStandbyArmed": false,
   "menuDebugEnabled": false,
   "rawPassthroughEnabled": false,
+  "rawPassthroughAllowWhileArmed": false,
   "rawPassthroughListenAddress": ":7388",
   "fanHighTemperatureC": 50,
   "fanNormalTemperatureC": 42,

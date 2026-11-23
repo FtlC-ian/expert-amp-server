@@ -8,9 +8,8 @@
 // (without altering it) so the API and UI keep showing telemetry, labelled
 // passthrough-tap and treated as display evidence only.
 //
-// Server-side automatic control is not weakened during a lease, it is refused
-// before one starts: a session cannot begin while automatic fan control or
-// overtemperature standby is armed.
+// By default armed automatic controls refuse a lease. The explicit opt-in leaves
+// settings armed and reports those controls as paused while a client holds it.
 package rawpassthrough
 
 import (
@@ -115,8 +114,7 @@ func ErrArmingDuringLease(controls []string) error {
 // blocks every write they would make. Holding the boundary across the whole
 // commit is what removes the window: either serve claims the port first and
 // commit sees leased true, or commit holds the boundary and serve blocks until
-// the update is written, whereupon its existing armed-controls check refuses the
-// client for the stated reason.
+// the update is written, whereupon admission reads the new armed set and opt-in.
 //
 // Everything the update decides has to be read inside commit -- what the
 // settings currently are, what merging the request produces, and whether that
@@ -155,6 +153,13 @@ func (c *Controller) armedControls() []string {
 	return c.cfg.ArmedAutomaticControls()
 }
 
+func (c *Controller) blockedControls() []string {
+	if c.cfg.AllowWhileArmed != nil && c.cfg.AllowWhileArmed() {
+		return nil
+	}
+	return c.armedControls()
+}
+
 // Lease is the subset of the actuation coordinator this package needs.
 // Acquire returns nil when another owner holds actuation; a non-nil result is
 // the identity of this session's acquisition and only it can release the
@@ -171,11 +176,11 @@ type Config struct {
 	Lease         Lease
 
 	// ArmedAutomaticControls names the server-side automatic controls that are
-	// currently armed, or nil when none are. A passthrough session is refused
-	// while it returns anything: the server sends no bytes of its own during a
-	// lease, so those controls could not act, and an operator must disarm them
-	// knowingly rather than have them silently suspended and restored.
+	// currently armed, or nil when none are.
 	ArmedAutomaticControls func() []string
+	// AllowWhileArmed reads the live opt-in at admission. It never changes an
+	// existing lease or the armed settings; nil preserves the default refusal.
+	AllowWhileArmed func() bool
 }
 
 // Controller accepts raw TCP clients and leases them the serial port.
@@ -282,11 +287,8 @@ func (c *Controller) serve(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// Refuse before taking anything while a server-side automatic control is
-	// armed. Suspending them for the session would mean tracking what was
-	// suspended and restoring it across disconnects, crashes, and failed port
-	// reclamation; refusing keeps the state simple and honest.
-	if blocked := c.armedControls(); len(blocked) > 0 {
+	// Read the live policy inside the existing settings transaction boundary.
+	if blocked := c.blockedControls(); len(blocked) > 0 {
 		c.setupMu.Unlock()
 		log.Printf("raw passthrough refused %s: %s", remote, ErrAutomaticControlsArmed(blocked).Error())
 		_ = conn.Close()
@@ -451,6 +453,8 @@ type Status struct {
 	// BlockedByArmedControls lists controls that must be disarmed before a
 	// session can start. Non-empty means a new client will be refused.
 	BlockedByArmedControls []string `json:"blockedByArmedControls,omitempty"`
+	ArmedControls          []string `json:"armedControls,omitempty"`
+	PausedForLease         []string `json:"pausedForLease,omitempty"`
 
 	// AutomaticControlsAvailable reports whether the server owns the serial port
 	// and could therefore act on it. It is false for the lifetime of a lease,
@@ -459,8 +463,7 @@ type Status struct {
 	//
 	// It describes port ownership, not arming: true does not say that
 	// overtemperature standby or automatic fan control is enabled or armed, only
-	// that nothing is stopping them from acting. BlockedByArmedControls is what
-	// reports which controls are armed right now.
+	// that nothing is stopping them from acting. ArmedControls reports arming.
 	AutomaticControlsAvailable bool `json:"automaticControlsAvailable"`
 
 	// ListenerAvailable reports whether the TCP listener is actually accepting.
@@ -491,6 +494,7 @@ func (c *Controller) Status() Status {
 	c.mu.Unlock()
 
 	out := Status{Enabled: true, ListenAddress: c.cfg.ListenAddress, ListenerAvailable: listener != nil}
+	out.ArmedControls = c.armedControls()
 	if listenErr != nil {
 		// Enabled is documented as "configured and running", so a listener that
 		// never bound is not enabled however the configuration reads. Reporting
@@ -499,18 +503,16 @@ func (c *Controller) Status() Status {
 		// passthrough the operator simply turned off.
 		out.Enabled = false
 		out.AutomaticControlsAvailable = true
-		out.BlockedByArmedControls = c.armedControls()
+		out.BlockedByArmedControls = c.blockedControls()
 		out.Note = fmt.Sprintf(
 			"raw serial passthrough is enabled but its listener is unavailable: %v. "+
 				"No client can connect, and the server owns the serial port.", listenErr)
 		return out
 	}
 	if conn == nil || handle == nil {
-		// Idle, armed or not: the server still owns the port, so its automatic
-		// controls can act. Armed controls block the next client from taking the
-		// port; they do not stop the server from using it.
+		// Idle, armed or not: the server still owns the port.
 		out.AutomaticControlsAvailable = true
-		out.BlockedByArmedControls = c.armedControls()
+		out.BlockedByArmedControls = c.blockedControls()
 		if len(out.BlockedByArmedControls) > 0 {
 			out.Note = ErrAutomaticControlsArmed(out.BlockedByArmedControls).Error()
 			return out
@@ -520,6 +522,7 @@ func (c *Controller) Status() Status {
 	}
 	stats := handle.Stats()
 	out.ClientConnected = true
+	out.PausedForLease = out.ArmedControls
 	out.ClientAddress = conn.RemoteAddr().String()
 	out.ConnectedSince = since.UTC().Format(time.RFC3339)
 	out.StatusFramesObserved = stats.StatusFramesSeen
@@ -527,5 +530,8 @@ func (c *Controller) Status() Status {
 	out.TapFresh = handle.TapIsFresh()
 	out.Note = "a raw client holds the serial port; server writes are refused and no server-side automatic control is available for this session. " +
 		"Status shown from tapped traffic is labelled passthrough-tap and is display evidence only."
+	if len(out.PausedForLease) > 0 {
+		out.Note += " Armed controls paused for this lease: " + strings.Join(out.PausedForLease, ", ") + ". Saved settings are unchanged."
+	}
 	return out
 }

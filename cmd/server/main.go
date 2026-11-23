@@ -298,10 +298,11 @@ func newServerWithUploader(cfg *config.Manager, pollInterval time.Duration, stop
 		rawPassthroughLease = coordinator.Owner(transport.ActuationOwnerRawPassthrough, false)
 	}
 	rawPassthroughController := rawpassthrough.New(rawpassthrough.Config{
-		Enabled:       snapshot.Settings.RawPassthroughEnabled,
-		ListenAddress: snapshot.Settings.RawPassthroughListenAddress,
-		Source:        serialSource,
-		Lease:         rawPassthroughLease,
+		Enabled:         snapshot.Settings.RawPassthroughEnabled,
+		ListenAddress:   snapshot.Settings.RawPassthroughListenAddress,
+		Source:          serialSource,
+		Lease:           rawPassthroughLease,
+		AllowWhileArmed: func() bool { return cfg.Get().Settings.RawPassthroughAllowWhileArmed },
 		// Read live rather than from the startup snapshot: an operator can arm
 		// either control after the server starts, and the refusal has to
 		// reflect what is armed at the moment a client connects.

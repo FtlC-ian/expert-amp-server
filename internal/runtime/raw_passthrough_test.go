@@ -178,8 +178,7 @@ func TestBeginRawPassthroughRejectsSecondClient(t *testing.T) {
 
 // A tapped frame is display evidence only. It must be labelled passthrough-tap,
 // must never reach the safety controller, and must never end the session -- the
-// operator keeps their live control link, and server-side automatic control was
-// already refused before the lease started.
+// operator keeps their live control link even when controls remain armed.
 func TestRawPassthroughTapIsDisplayOnlyAndNeverActuates(t *testing.T) {
 	opener := &sequenceSerialOpener{
 		ports:  []serial.Port{&mockSerialPort{blockRead: true}, &mockSerialPort{blockRead: true}, &mockSerialPort{blockRead: true}},
@@ -187,7 +186,13 @@ func TestRawPassthroughTapIsDisplayOnlyAndNeverActuates(t *testing.T) {
 	}
 	src := newPassthroughTestSource(t, opener)
 
-	safety := monitoring.NewController(nil)
+	buttons := &passthroughRecordingButtons{}
+	safety := monitoring.NewController(buttons)
+	fanButtons := &passthroughRecordingButtons{}
+	fan := fanpolicy.NewController(fanButtons)
+	src.ConfigureFanPolicyController(fan, func() fanpolicy.Settings {
+		return fanpolicy.Settings{Enabled: true, FirmwareVersion: fanpolicy.ThirdSeriesEvidenceFirmware, HighTemperatureC: 60, NormalTemperatureC: 40}
+	})
 	src.ConfigureSafetyController(safety, func() monitoring.ControlSettings {
 		return monitoring.ControlSettings{
 			Enabled:    true,
@@ -195,6 +200,7 @@ func TestRawPassthroughTapIsDisplayOnlyAndNeverActuates(t *testing.T) {
 			Thresholds: monitoring.Thresholds{TemperatureTripC: 50, TemperatureWarningC: 40, TemperatureResetC: 40},
 		}
 	})
+	src.applyStatusFrame(statusFrameAtTemperature(t, 40))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	src.Start(ctx)
@@ -211,8 +217,11 @@ func TestRawPassthroughTapIsDisplayOnlyAndNeverActuates(t *testing.T) {
 	// this ended the session.
 	handle.ObserveFromAmp(statusFrameAtTemperature(t, 80))
 
-	if safety.Apply(monitoring.Result{}, true).Latched {
+	if safety.Apply(monitoring.Result{}, true).Latched || buttons.calls != 0 {
 		t.Fatal("tapped frames must not reach the safety controller")
+	}
+	if fanButtons.calls != 0 || fan.Current().DesiredPolicy == fanpolicy.PolicyHigh {
+		t.Fatalf("hot tapped frame reached fan actuation: calls=%d result=%+v", fanButtons.calls, fan.Current())
 	}
 
 	tapped := src.statusState.CurrentProtocolNative()
@@ -227,6 +236,35 @@ func TestRawPassthroughTapIsDisplayOnlyAndNeverActuates(t *testing.T) {
 	if _, err := src.BeginRawPassthrough(context.Background()); !errors.Is(err, ErrRawPassthroughBusy) {
 		t.Fatalf("session should still be held after a hot tapped frame, got %v", err)
 	}
+	handle.Close()
+	waitForCondition(t, 2*time.Second, func() bool { return opener.openCount() >= 3 })
+	if safety.Apply(monitoring.Result{}, true).Latched || buttons.calls != 0 {
+		t.Fatal("reclaim spent the latch before a direct poll")
+	}
+	if fanButtons.calls != 0 || fan.Current().DesiredPolicy == fanpolicy.PolicyHigh {
+		t.Fatal("reclaim promoted tapped fan evidence before a direct poll")
+	}
+	if status := src.statusState.CurrentProtocolNativeWithContact(); status.RecentContact && status.Provenance == "status-poll" {
+		t.Fatalf("reclaim reused pre-lease or tapped authority: %+v", status)
+	}
+	src.applyStatusFrame(statusFrameAtTemperature(t, 80))
+	if !safety.Apply(monitoring.Result{}, true).Latched || buttons.calls != 1 {
+		t.Fatalf("first direct hot poll did not act: calls=%d", buttons.calls)
+	}
+	if fan.Current().DesiredPolicy != fanpolicy.PolicyHigh {
+		t.Fatalf("first direct hot poll did not re-enable fan policy: %+v", fan.Current())
+	}
+	src.applyStatusFrame(statusFrameAtTemperature(t, 80))
+	if buttons.calls != 1 {
+		t.Fatal("no-retry latch did not survive the next hot poll")
+	}
+}
+
+type passthroughRecordingButtons struct{ calls int }
+
+func (b *passthroughRecordingButtons) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
+	b.calls++
+	return api.ActionResult{Name: action.Name, Sent: true}, nil
 }
 
 // The boundary this feature turns on: tapped status is visible to the display

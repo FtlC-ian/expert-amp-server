@@ -94,10 +94,10 @@ type Settings struct {
 	// one TCP connection. Disabled by default: while a client is connected the
 	// server cannot issue button writes, and no server-side automatic control is
 	// available for the session. Overtemperature protection never runs on tapped
-	// telemetry -- a session is refused outright while that protection or
-	// automatic fan control is armed.
-	RawPassthroughEnabled       bool   `json:"rawPassthroughEnabled"`
-	RawPassthroughListenAddress string `json:"rawPassthroughListenAddress,omitempty"`
+	// telemetry. Unless explicitly allowed, armed controls refuse a lease.
+	RawPassthroughEnabled         bool   `json:"rawPassthroughEnabled"`
+	RawPassthroughAllowWhileArmed bool   `json:"rawPassthroughAllowWhileArmed"`
+	RawPassthroughListenAddress   string `json:"rawPassthroughListenAddress,omitempty"`
 }
 
 type Snapshot struct {
@@ -164,8 +164,9 @@ type rawSettings struct {
 	SerialAssertDTR          *bool `json:"serialAssertDTR,omitempty"`
 	SerialAssertRTS          *bool `json:"serialAssertRTS,omitempty"`
 
-	RawPassthroughEnabled       *bool   `json:"rawPassthroughEnabled,omitempty"`
-	RawPassthroughListenAddress *string `json:"rawPassthroughListenAddress,omitempty"`
+	RawPassthroughEnabled         *bool   `json:"rawPassthroughEnabled,omitempty"`
+	RawPassthroughAllowWhileArmed *bool   `json:"rawPassthroughAllowWhileArmed,omitempty"`
+	RawPassthroughListenAddress   *string `json:"rawPassthroughListenAddress,omitempty"`
 }
 
 func DefaultSettings(listenAddress string) Settings {
@@ -194,8 +195,9 @@ func DefaultSettings(listenAddress string) Settings {
 
 		// Off by default. The default address mirrors the SPE-LAN-UNIT's own
 		// virtual-COM port so existing client configurations line up.
-		RawPassthroughEnabled:       false,
-		RawPassthroughListenAddress: DefaultRawPassthroughListenAddress,
+		RawPassthroughEnabled:         false,
+		RawPassthroughAllowWhileArmed: false,
+		RawPassthroughListenAddress:   DefaultRawPassthroughListenAddress,
 	}
 }
 
@@ -438,6 +440,9 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.RawPassthroughEnabled != nil {
 		out.RawPassthroughEnabled = *r.RawPassthroughEnabled
 	}
+	if r.RawPassthroughAllowWhileArmed != nil {
+		out.RawPassthroughAllowWhileArmed = *r.RawPassthroughAllowWhileArmed
+	}
 	if r.RawPassthroughListenAddress != nil && strings.TrimSpace(*r.RawPassthroughListenAddress) != "" {
 		out.RawPassthroughListenAddress = strings.TrimSpace(*r.RawPassthroughListenAddress)
 	}
@@ -496,6 +501,7 @@ func normalizeSettings(in, defaults Settings) Settings {
 	out.SerialAssertDTR = in.SerialAssertDTR
 	out.SerialAssertRTS = in.SerialAssertRTS
 	out.RawPassthroughEnabled = in.RawPassthroughEnabled
+	out.RawPassthroughAllowWhileArmed = in.RawPassthroughAllowWhileArmed
 	if strings.TrimSpace(in.RawPassthroughListenAddress) != "" {
 		out.RawPassthroughListenAddress = strings.TrimSpace(in.RawPassthroughListenAddress)
 	}

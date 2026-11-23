@@ -47,6 +47,9 @@ func TestNewManagerCreatesDefaultConfig(t *testing.T) {
 	if snap.Settings.MenuDebugEnabled {
 		t.Fatal("MenuDebugEnabled = true, want disabled by default")
 	}
+	if snap.Settings.RawPassthroughAllowWhileArmed {
+		t.Fatal("RawPassthroughAllowWhileArmed = true, want disabled by default")
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
