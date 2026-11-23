@@ -169,6 +169,20 @@ are reported as paused until disconnect. Disarming is always allowed.
 `rawPassthroughListenAddress` take effect on restart, because the listener is
 built from the startup configuration.
 
+### Optional raw client idle timeout
+
+`rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
+from `3` through `86400` to close a lease after that many seconds without bytes
+from the client. Three seconds permits several missed SmartSDR half-second polls;
+a quiet client such as SPE Expert Controller Plus may still be disconnected, so
+leave this disabled unless the client has a known polling cadence. Amplifier-only
+traffic never renews it. Changes are persisted and require restart, like the
+listener settings. Normal release reclaims the port and fresh direct polling
+restores control authority. `GET /api/v1/raw-passthrough` reports the configured
+`clientIdleTimeoutSeconds` (the running value when a controller exists) and
+`lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
+retained until the next release, and resets on restart.
+
 ## API highlights
 
 Canonical API routes live under `/api/v1/...`.
@@ -209,6 +223,20 @@ Important upgrade note: the amplifier status protocol sends temperature numbers 
 
 SPE documents a maximum rate of `115200` with automatic adaptation to lower speeds, so that remains the server default. One field-tested 2K-FA installation only communicated reliably at `57600`; use that as a troubleshooting fallback, not as a model-wide requirement.
 
+### Display-only temperature judgement
+
+For spoken or visual watchers, `/api/v1/status` and `/api/v1/status/ws` include
+`displayTemperatureWarning`. Its `state` is `normal`, `warning`, or `trip`, using
+the hottest displayed sensor and the existing `temperatureWarningC` and
+`temperatureTripC` settings, even when safety monitoring is disabled. The object
+includes `provenance`, `temperatureC`, `sensor`, and the thresholds used. Without
+thresholds it says `disabled`; without a recent reading it says `unavailable`,
+with a `reason` and no current temperature. Tapped evidence retains provenance
+`passthrough-tap`. This is display-only, not an amplifier alarm or protection
+action, and it never latches or uses the safety reset threshold. Settings changes
+apply live. Watch `pausedForLease` alongside it to announce which saved armed
+controls are currently paused; an absent or empty list means none are paused.
+
 ## Menu Debug & Reporting
 
 The advanced Menu Debug wizard is disabled by default and intended for supervised compatibility testing. Arming requires the exact acknowledgement, fresh protocol STANDBY/RX, a checksum-valid STANDBY home display, inactive fan control, disarmed overtemperature standby, and an exclusive actuation lease. The built-in wizard requests only the fan capability, so successful fan verification finalizes its report without silently continuing into separate bank discovery; API clients may still request bank topology explicitly. One guarded start runs discovery and the frozen apply plan automatically, but every command still receives one authorization and waits for newer matching display evidence before the next command. The wizard pauses for physical candidate confirmation, restores automatically only after a positive answer, then pauses again for physical restored confirmation. A serial reconnect or an observed change to a different identified model invalidates the entire active session and discards all report evidence, so different hardware cannot continue or relabel it.
@@ -241,34 +269,6 @@ VERSION=v0.5.0 CHANNEL=release packaging/scripts/build-release.sh
 ```
 
 The release helper builds Linux ARM64, ARMv7, AMD64, and macOS ARM64 by default, injects build metadata, and copies the sample config plus systemd unit into `dist/` with `SHA256SUMS`. Build from a clean, reviewed commit into an empty output directory; see the [release checklist](docs/release/READINESS.md) for verification and publication boundaries. Set `TARGETS="linux/arm64"` for a Pi-only development build.
-
-### Display-only temperature judgement
-
-For spoken or visual watchers, `/api/v1/status` and `/api/v1/status/ws` include
-`displayTemperatureWarning`. Its `state` is `normal`, `warning`, or `trip`, using
-the hottest displayed sensor and the existing `temperatureWarningC` and
-`temperatureTripC` settings, even when safety monitoring is disabled. The object
-includes `provenance`, `temperatureC`, `sensor`, and the thresholds used. Without
-thresholds it says `disabled`; without a recent reading it says `unavailable`,
-with a `reason` and no current temperature. Tapped evidence retains provenance
-`passthrough-tap`. This is display-only, not an amplifier alarm or protection
-action, and it never latches or uses the safety reset threshold. Settings changes
-apply live. Watch `pausedForLease` alongside it to announce which saved armed
-controls are currently paused; an absent or empty list means none are paused.
-
-### Optional raw client idle timeout
-
-`rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
-from `3` through `86400` to close a lease after that many seconds without bytes
-from the client. Three seconds permits several missed SmartSDR half-second polls;
-a quiet client such as SPE Expert Controller Plus may still be disconnected, so
-leave this disabled unless the client has a known polling cadence. Amplifier-only
-traffic never renews it. Changes are persisted and require restart, like the
-listener settings. Normal release reclaims the port and fresh direct polling
-restores control authority. `GET /api/v1/raw-passthrough` reports the configured
-`clientIdleTimeoutSeconds` (the running value when a controller exists) and
-`lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
-retained until the next release, and resets on restart.
 
 ## License
 

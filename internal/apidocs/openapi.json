@@ -1732,7 +1732,7 @@
       },
       "DisplayTemperatureWarning": {
         "type": "object",
-        "description": "Display-only judgement of the hottest currently displayed temperature, including passthrough-tap evidence. Independent of monitoring enable/arming and amplifier alarm codes; never actuates or latches. Existing warning/trip thresholds apply live. Reset threshold does not apply. Status and its WebSocket share this object; consume pausedForLease alongside it for armed but inert controls.",
+        "description": "Display-only judgement of the hottest currently displayed temperature, including passthrough-tap evidence. Independent of monitoring enable/arming and amplifier alarm codes; never actuates or latches. A trip state here is not a protection action: only direct status-poll evidence outside a raw lease can drive overtemperature standby, so trip from passthrough-tap or display provenance is informational. Existing warning/trip thresholds apply live. Reset threshold does not apply. Status and its WebSocket share this object; consume pausedForLease alongside it for armed but inert controls.",
         "required": ["state"],
         "properties": {
           "state": {"type": "string", "enum": ["normal", "warning", "trip", "disabled", "unavailable"], "description": "disabled means thresholds are unconfigured; unavailable means missing or stale temperature, with no current temperatureC."},
