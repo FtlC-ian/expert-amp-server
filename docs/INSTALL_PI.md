@@ -198,6 +198,16 @@ Before handing this to another user, verify:
 - normal button actions return success only when the serial transport is actually available
 - wake behavior is documented honestly as experimental and hardware-dependent
 
+### Display-only temperature judgement
+
+VoiceOver and other watchers can read `displayTemperatureWarning.state` and
+`pausedForLease` from status or its WebSocket. The warning uses existing
+`temperatureWarningC` and `temperatureTripC`, updated live, even if safety
+monitoring is disabled. `disabled` means no thresholds; `unavailable` means no
+recent temperature. Check its `provenance`: `passthrough-tap` is display-only,
+not server-side overtemperature protection. `pausedForLease` names armed but
+inert controls and disappears when none are paused.
+
 ### Optional raw client idle timeout
 
 `rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer

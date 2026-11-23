@@ -135,7 +135,42 @@ type fanPolicyOverrideRequest struct {
 func selectedStatus(opts Options) api.Status {
 	status := opts.StatusState.Resolve(currentSnapshot(opts.Store))
 	status.PausedForLease = opts.RawPassthrough.Status().PausedForLease
+	settings := config.Settings{}
+	if opts.Config != nil {
+		settings = opts.Config.Get().Settings
+	}
+	warningStatus := status
+	// Display contact must not make an old protocol temperature look current.
+	if status.Provenance == "status-poll" || status.Provenance == runtime.ProvenancePassthroughTap {
+		warningStatus.RecentContact = status.RecentContact && opts.StatusState.CurrentProtocolNativeWithContact().RecentContact
+	}
+	status.DisplayTemperatureWarning = displayTemperatureWarning(warningStatus, settings)
 	return status
+}
+
+// This pure display evaluation never calls a controller, acquires a lease, or latches.
+func displayTemperatureWarning(status api.Status, settings config.Settings) *api.DisplayTemperatureWarning {
+	out := &api.DisplayTemperatureWarning{
+		State:             monitoring.StateDisabled,
+		Provenance:        status.Provenance,
+		WarningThresholdC: settings.TemperatureWarningC,
+		TripThresholdC:    settings.TemperatureTripC,
+	}
+	if settings.TemperatureWarningC <= 0 || settings.TemperatureTripC <= settings.TemperatureWarningC {
+		out.Reason = "temperature thresholds are not configured"
+		return out
+	}
+	result := monitoring.Evaluate(status, true, monitoring.Thresholds{
+		TemperatureWarningC: settings.TemperatureWarningC,
+		TemperatureTripC:    settings.TemperatureTripC,
+	})
+	out.State = result.State
+	out.Reason = result.Reason
+	if status.RecentContact {
+		out.TemperatureC = result.Observations.MaximumTemperatureC
+		out.Sensor = result.Observations.TemperatureSensor
+	}
+	return out
 }
 
 func selectedVersion(opts Options) VersionInfo {

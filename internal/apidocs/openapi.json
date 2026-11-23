@@ -1730,6 +1730,20 @@
           }
         }
       },
+      "DisplayTemperatureWarning": {
+        "type": "object",
+        "description": "Display-only judgement of the hottest currently displayed temperature, including passthrough-tap evidence. Independent of monitoring enable/arming and amplifier alarm codes; never actuates or latches. Existing warning/trip thresholds apply live. Reset threshold does not apply. Status and its WebSocket share this object; consume pausedForLease alongside it for armed but inert controls.",
+        "required": ["state"],
+        "properties": {
+          "state": {"type": "string", "enum": ["normal", "warning", "trip", "disabled", "unavailable"], "description": "disabled means thresholds are unconfigured; unavailable means missing or stale temperature, with no current temperatureC."},
+          "provenance": {"type": "string", "description": "Provenance of the displayed evidence, including passthrough-tap; never actuation authority."},
+          "temperatureC": {"type": "number", "description": "Hottest displayed sensor in Celsius. Omitted when stale, unavailable, or disabled."},
+          "sensor": {"type": "string", "enum": ["upper", "lower", "combiner"]},
+          "warningThresholdC": {"type": "number", "description": "Configured temperatureWarningC; omitted when zero."},
+          "tripThresholdC": {"type": "number", "description": "Configured temperatureTripC; omitted when zero."},
+          "reason": {"type": "string"}
+        }
+      },
       "Status": {
         "allOf": [
           {
@@ -1741,6 +1755,9 @@
               "recentContact": {
                 "type": "boolean",
                 "description": "True for five seconds after a successfully decoded display or protocol-native status arrival, including identical display frames. Cached polls and fixture changes do not count. Link liveness does not grant actuation authority or fresh status-poll evidence."
+              },
+              "displayTemperatureWarning": {
+                "$ref": "#/components/schemas/DisplayTemperatureWarning"
               },
               "pausedForLease": {
                 "type": "array",

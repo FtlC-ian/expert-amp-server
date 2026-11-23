@@ -242,9 +242,19 @@ VERSION=v0.5.0 CHANNEL=release packaging/scripts/build-release.sh
 
 The release helper builds Linux ARM64, ARMv7, AMD64, and macOS ARM64 by default, injects build metadata, and copies the sample config plus systemd unit into `dist/` with `SHA256SUMS`. Build from a clean, reviewed commit into an empty output directory; see the [release checklist](docs/release/READINESS.md) for verification and publication boundaries. Set `TARGETS="linux/arm64"` for a Pi-only development build.
 
-## License
+### Display-only temperature judgement
 
-MIT. See [LICENSE](LICENSE).
+For spoken or visual watchers, `/api/v1/status` and `/api/v1/status/ws` include
+`displayTemperatureWarning`. Its `state` is `normal`, `warning`, or `trip`, using
+the hottest displayed sensor and the existing `temperatureWarningC` and
+`temperatureTripC` settings, even when safety monitoring is disabled. The object
+includes `provenance`, `temperatureC`, `sensor`, and the thresholds used. Without
+thresholds it says `disabled`; without a recent reading it says `unavailable`,
+with a `reason` and no current temperature. Tapped evidence retains provenance
+`passthrough-tap`. This is display-only, not an amplifier alarm or protection
+action, and it never latches or uses the safety reset threshold. Settings changes
+apply live. Watch `pausedForLease` alongside it to announce which saved armed
+controls are currently paused; an absent or empty list means none are paused.
 
 ### Optional raw client idle timeout
 
@@ -259,3 +269,7 @@ restores control authority. `GET /api/v1/raw-passthrough` reports the configured
 `clientIdleTimeoutSeconds` (the running value when a controller exists) and
 `lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
 retained until the next release, and resets on restart.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

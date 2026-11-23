@@ -410,6 +410,27 @@ Canonical status `lastContactAt` uses the later of display arrival and eligible 
 - **Fan navigation is one verified transaction.** Production writes require a promoted profile and support the model- and topology-bound First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA paths. Automatic, manual, and verification requests share the same temporary-STANDBY path, pause every write during TX, stop on unexpected screens, and restore OPERATE only after verified SAVE/home completion when the controller owned the transition.
 - **Third Series 2K-FA production control is narrower than First/Second Series.** It is bound to `EXPERT 2K-FA`, the exact Third Series topology, and an explicit exact allowlist of operator-declared actual firmware values (`Rel.26_03_24_A` and `Rel.08_06_26_A`) because status polling does not expose firmware. Empty, mistyped, case-variant, or other firmware values fail closed. It maps hardware QUIET to logical Normal cooling and hardware NORMAL to logical high cooling, starts only from verified STANDBY/RX, and never sends DISPLAY or an OPERATE/STANDBY command. The original firmware's exact 23-state reversible D1 report is retained as regression evidence; the newer firmware has a separate read-only re-capture of the unchanged top setup grid and FAN NOISE page/cursor topology, not a claimed second reversible report. Menu Debug remains the guarded evidence path for other firmware or topology combinations.
 
+### Display-only temperature judgement
+
+Status presentation adds `displayTemperatureWarning` only in the HTTP/WebSocket
+`selectedStatus` adapter, after canonical runtime resolution. It calls the pure
+monitoring evaluator with only the existing temperature warning/trip pair and
+uses its hottest-sensor selection and state vocabulary. It never calls a safety
+or fan controller, and no monitoring, fan policy, or actuation path reads this
+field. Configured thresholds apply even if monitoring is disabled. Reset
+thresholds and hysteresis remain exclusive to safety control: this presentation
+does not latch. Missing thresholds yield `disabled`; stale contact or absent
+temperature yields `unavailable` with no current temperature. Canonical tap
+expiry and display fallback still decide which evidence is shown. Protocol
+temperatures also require recent protocol contact, so a fresh display arrival
+cannot renew an old protocol temperature for this judgement. Provenance
+travels with the judgement, including `passthrough-tap` during leases.
+
+The adapter reads config only after status and passthrough snapshots have
+released their locks. The idle timeout uses socket read deadlines and the
+existing once-only finish/reclaim path. Neither feature introduces a lock or
+changes settings mutex -> setup mutex -> config manager lock ordering.
+
 ### Optional raw client idle timeout
 
 `rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer

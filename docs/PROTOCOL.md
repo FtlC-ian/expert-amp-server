@@ -290,6 +290,20 @@ When real captured frames produce wrong output:
 
 **Do not guess.** If you cannot determine the correct behavior from available captures, document the uncertainty here and flag it for the next capture session.
 
+### Display-only temperature judgement
+
+Status JSON and its WebSocket expose `displayTemperatureWarning` with `state`,
+`provenance`, the hottest `temperatureC`, `sensor` (`upper`, `lower`, or
+`combiner`), `warningThresholdC`, and `tripThresholdC`. It reuses configured
+temperature thresholds and alarm vocabulary: `normal`, `warning`, `trip`,
+`disabled` when unconfigured, or `unavailable` when stale or missing. Unavailable
+judgements include a reason but no current temperature. It is display evidence
+only, including on `passthrough-tap` frames, and has no reset latch or actuation
+effect. It is independent of amplifier-supplied warning/alarm codes. The existing
+`pausedForLease` list names armed controls that cannot act during a lease and is
+omitted when empty. Watchers can announce both fields without inventing their
+own temperature thresholds.
+
 ### Optional raw client idle timeout
 
 `rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
