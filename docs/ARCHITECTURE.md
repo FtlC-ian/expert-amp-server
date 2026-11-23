@@ -167,7 +167,12 @@ machine. With the opt-in on, the saved settings stay armed and the existing
 provenance gates keep controls inert during the lease. The existing reclaim
 path resets serial-session evidence and requires a fresh direct `status-poll`
 before actuation can resume, subject to all other safety gates. The
-overtemperature no-retry latch is not spent by tapped frames. A crash, kill or
+overtemperature no-retry latch is not spent by tapped frames or an in-flight
+direct poll that reaches safety after admission reserves the coordinator.
+Raw passthrough ownership is non-preemptible, including by safety; a hot poll
+defers without latching until a fresh direct poll after reclaim. Conversely,
+an existing safety hold refuses passthrough admission without retiring the
+live port, allowing the safety action to complete. A crash, kill or
 reboot needs no restoration because the saved arming settings never changed.
 The only overtemperature protection while leased is the amplifier's own firmware
 stepdown; an unattended lease can run indefinitely. Raw TCP is unauthenticated
@@ -400,7 +405,7 @@ Canonical status `lastContactAt` uses the later of display arrival and eligible 
 - **No vendor binaries.** The repo must not include vendor executables. Protocol/font provenance needs to be documented honestly before public release.
 - **API must be boring and stable.** Prefer explicit JSON over cleverness. The canonical REST surface is the current `/api/v1/...` API; older non-v1 routes are compatibility holdovers, not the preferred contract.
 - **Every feature needs tests.** Decoder changes need regression tests against fixture files.
-- **Wake reserves actuation without holding the coordinator lock across serial I/O.** Manual writes, menu/fan leases, overtemperature acquisition, and a second wake fail busy while the reservation is active. Safety retries only on a newer authoritative status poll after wake completes, keeping the serial read callback nonblocking, and then preempts any lower-priority lease. Owner names are diagnostics only: every successful acquisition returns an opaque lease identity, and only that exact lease can release the current reservation.
+- **Wake reserves actuation without holding the coordinator lock across serial I/O.** Manual writes, menu/fan leases, overtemperature acquisition, and a second wake fail busy while the reservation is active. Safety retries only on a newer authoritative status poll after wake completes, keeping the serial read callback nonblocking, and can preempt fan/menu leases but never raw passthrough. Every successful acquisition returns an opaque lease identity, and only that exact lease can release the current reservation. Owner names identify the raw passthrough preemption boundary as well as providing diagnostics.
 - **Automatic standby is narrow and one-way.** It may send the documented OPERATE toggle once per latched overtemperature episode only with fresh protocol-native OPERATE and RX evidence. It never acts during TX, retries, powers off, or auto-wakes.
 - **Fan navigation is one verified transaction.** Production writes require a promoted profile and support the model- and topology-bound First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA paths. Automatic, manual, and verification requests share the same temporary-STANDBY path, pause every write during TX, stop on unexpected screens, and restore OPERATE only after verified SAVE/home completion when the controller owned the transition.
 - **Third Series 2K-FA production control is narrower than First/Second Series.** It is bound to `EXPERT 2K-FA`, the exact Third Series topology, and an explicit exact allowlist of operator-declared actual firmware values (`Rel.26_03_24_A` and `Rel.08_06_26_A`) because status polling does not expose firmware. Empty, mistyped, case-variant, or other firmware values fail closed. It maps hardware QUIET to logical Normal cooling and hardware NORMAL to logical high cooling, starts only from verified STANDBY/RX, and never sends DISPLAY or an OPERATE/STANDBY command. The original firmware's exact 23-state reversible D1 report is retained as regression evidence; the newer firmware has a separate read-only re-capture of the unchanged top setup grid and FAN NOISE page/cursor topology, not a claimed second reversible report. Menu Debug remains the guarded evidence path for other firmware or topology combinations.

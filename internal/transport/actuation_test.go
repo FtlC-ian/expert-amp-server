@@ -106,6 +106,32 @@ func TestActuationCoordinatorSafetyPreemptsFanAndHoldsActuator(t *testing.T) {
 	}
 }
 
+func TestActuationCoordinatorSafetyCannotPreemptRawPassthrough(t *testing.T) {
+	raw := &recordingActuator{}
+	coordinator := NewActuationCoordinator(raw)
+	lease := coordinator.Owner(ActuationOwnerRawPassthrough, false).Acquire()
+	if lease == nil {
+		t.Fatal("raw passthrough lease was not acquired")
+	}
+	defer lease.Release()
+	if safetyLease := coordinator.Owner(ActuationOwnerSafety, true).Acquire(); safetyLease != nil {
+		safetyLease.Release()
+		t.Error("safety preempted raw passthrough")
+	}
+	if coordinator.lease != lease {
+		t.Error("raw passthrough lease is no longer current")
+	}
+	if _, err := coordinator.SendButton(context.Background(), api.ButtonAction{Name: "set"}); ButtonStatusCode(err) != 409 {
+		t.Errorf("manual write during raw lease = %v, want busy", err)
+	}
+	if _, err := coordinator.GateWake(raw).SendWake(context.Background()); ButtonStatusCode(err) != 409 {
+		t.Errorf("wake during raw lease = %v, want busy", err)
+	}
+	if len(raw.actions) != 0 || raw.wakes != 0 {
+		t.Fatalf("rejected writes reached actuator: buttons=%v wakes=%d", raw.actions, raw.wakes)
+	}
+}
+
 func TestActuationCoordinatorRejectsWakeDuringAutomaticLease(t *testing.T) {
 	raw := &recordingActuator{}
 	coordinator := NewActuationCoordinator(raw)

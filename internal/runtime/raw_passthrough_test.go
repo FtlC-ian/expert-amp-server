@@ -260,6 +260,46 @@ func TestRawPassthroughTapIsDisplayOnlyAndNeverActuates(t *testing.T) {
 	}
 }
 
+func TestRawPassthroughAfterHotDirectPollDoesNotActuateArmedFan(t *testing.T) {
+	opener := &sequenceSerialOpener{
+		ports:  []serial.Port{&mockSerialPort{blockRead: true}, &mockSerialPort{blockRead: true}, &mockSerialPort{blockRead: true}},
+		opened: make(chan int, 3),
+	}
+	src := newPassthroughTestSource(t, opener)
+	buttons := &passthroughRecordingButtons{}
+	coordinator := transport.NewActuationCoordinator(buttons)
+	fan := fanpolicy.NewController(coordinator.Owner(transport.ActuationOwnerFan, false))
+	src.ConfigureFanPolicyController(fan, func() fanpolicy.Settings {
+		return fanpolicy.Settings{Enabled: true, FirmwareVersion: fanpolicy.ThirdSeriesEvidenceFirmware, HighTemperatureC: 60, NormalTemperatureC: 40}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	src.Start(ctx)
+	defer cancel()
+	waitForCondition(t, time.Second, func() bool { return opener.openCount() == 1 })
+	src.applyStatusFrame(statusFrameAtTemperature(t, 80))
+	if fan.Current().DesiredPolicy != fanpolicy.PolicyHigh {
+		t.Fatalf("hot direct poll did not establish high cooling demand: %+v", fan.Current())
+	}
+	lease := coordinator.Owner(transport.ActuationOwnerRawPassthrough, false).Acquire()
+	if lease == nil {
+		t.Fatal("raw lease could not acquire immediately after hot direct poll")
+	}
+	defer lease.Release()
+	handle, err := src.BeginRawPassthrough(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	displayFrame, err := protocol.ReadFixtureBytes("../../fixtures/real_home_status_frame.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle.ObserveFromAmp(displayFrame)
+	if buttons.calls != 0 {
+		t.Fatalf("lease admission or tapped display actuated armed fan %d times", buttons.calls)
+	}
+}
+
 type passthroughRecordingButtons struct{ calls int }
 
 func (b *passthroughRecordingButtons) SendButton(_ context.Context, action api.ButtonAction) (api.ActionResult, error) {
