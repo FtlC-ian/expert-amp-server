@@ -4815,6 +4815,7 @@ func TestV1SettingsReportsRawPassthroughChangesAsRestartRequiring(t *testing.T) 
 	}{
 		{name: "enable", body: `{"rawPassthroughEnabled":true}`},
 		{name: "listen address", body: `{"rawPassthroughListenAddress":":7399"}`},
+		{name: "idle timeout", body: `{"rawPassthroughClientIdleTimeoutSeconds":3}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mgr, err := config.NewManager(filepath.Join(t.TempDir(), "expert-amp-server.json"), ":8088")

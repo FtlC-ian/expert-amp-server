@@ -121,9 +121,10 @@ type settingsRequest struct {
 	SerialAssertDTR          *bool `json:"serialAssertDTR,omitempty"`
 	SerialAssertRTS          *bool `json:"serialAssertRTS,omitempty"`
 
-	RawPassthroughEnabled         *bool   `json:"rawPassthroughEnabled,omitempty"`
-	RawPassthroughAllowWhileArmed *bool   `json:"rawPassthroughAllowWhileArmed,omitempty"`
-	RawPassthroughListenAddress   *string `json:"rawPassthroughListenAddress,omitempty"`
+	RawPassthroughClientIdleTimeoutSeconds *int    `json:"rawPassthroughClientIdleTimeoutSeconds,omitempty"`
+	RawPassthroughEnabled                  *bool   `json:"rawPassthroughEnabled,omitempty"`
+	RawPassthroughAllowWhileArmed          *bool   `json:"rawPassthroughAllowWhileArmed,omitempty"`
+	RawPassthroughListenAddress            *string `json:"rawPassthroughListenAddress,omitempty"`
 }
 
 type fanPolicyOverrideRequest struct {
@@ -468,6 +469,7 @@ func NewHandler(opts Options) http.Handler {
 		if opts.RawPassthrough == nil {
 			writeAPI(w, http.StatusOK, api.Response{Success: true, Data: rawpassthrough.Status{
 				Enabled:                    false,
+				ClientIdleTimeoutSeconds:   configuredClientIdleTimeout(opts.Config),
 				AutomaticControlsAvailable: true,
 				Note:                       rawPassthroughUnavailableNote(opts.Config),
 			}})
@@ -962,40 +964,41 @@ func mergeSettingsRequest(current config.Settings, req settingsRequest) config.S
 	statusPollingEnabled := pickBool(current.StatusPollingEnabled, req.StatusPollingEnabled)
 	statusPollCommandEnabled := pickBool(current.StatusPollCommandEnabled, firstBool(req.StatusPollCommandEnabled, req.SerialPollEnabled))
 	return config.Settings{
-		SerialPort:                    pickOptionalString(current.SerialPort, req.SerialPort),
-		ListenAddress:                 pickOptionalString(current.ListenAddress, req.ListenAddress),
-		PollingMode:                   mergedPollingMode(current.PollingMode, req, displayPollingEnabled, statusPollingEnabled, statusPollCommandEnabled),
-		PollIntervalMs:                pickPositiveInt(current.PollIntervalMs, req.PollIntervalMs),
-		DisplayPollingEnabled:         displayPollingEnabled,
-		StatusPollingEnabled:          statusPollingEnabled,
-		AmplifierTemperatureUnit:      pickOptionalString(current.AmplifierTemperatureUnit, req.AmplifierTemperatureUnit),
-		PanelModelLabel:               pickOptionalString(current.PanelModelLabel, req.PanelModelLabel),
-		InputLabels:                   pickOptionalMap(current.InputLabels, req.InputLabels),
-		AntennaLabels:                 pickOptionalMap(current.AntennaLabels, req.AntennaLabels),
-		SafetyMonitoringEnabled:       pickBool(current.SafetyMonitoringEnabled, req.SafetyMonitoringEnabled),
-		OvertemperatureStandbyArmed:   pickBool(current.OvertemperatureStandbyArmed, req.OvertemperatureStandbyArmed),
-		TemperatureWarningC:           pickFloat(current.TemperatureWarningC, req.TemperatureWarningC),
-		TemperatureTripC:              pickFloat(current.TemperatureTripC, req.TemperatureTripC),
-		TemperatureResetC:             pickFloat(current.TemperatureResetC, req.TemperatureResetC),
-		SWRWarning:                    pickFloat(current.SWRWarning, req.SWRWarning),
-		SWRTrip:                       pickFloat(current.SWRTrip, req.SWRTrip),
-		AutomaticFanPolicyEnabled:     pickBool(current.AutomaticFanPolicyEnabled, req.AutomaticFanPolicyEnabled),
-		FanHighTemperatureC:           pickFloat(current.FanHighTemperatureC, req.FanHighTemperatureC),
-		FanNormalTemperatureC:         pickFloat(current.FanNormalTemperatureC, req.FanNormalTemperatureC),
-		FanDisplayProfile:             pickOptionalString(current.FanDisplayProfile, req.FanDisplayProfile),
-		FanPolicyFirmwareVersion:      pickOptionalString(current.FanPolicyFirmwareVersion, req.FanPolicyFirmwareVersion),
-		VerifyFanModeOnStartup:        pickBool(current.VerifyFanModeOnStartup, req.VerifyFanModeOnStartup),
-		FanBoostDurationMinutes:       pickInt(current.FanBoostDurationMinutes, req.FanBoostDurationMinutes),
-		MenuDebugEnabled:              pickBool(current.MenuDebugEnabled, req.MenuDebugEnabled),
-		SerialBaudRate:                pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
-		SerialReadTimeoutMs:           pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
-		StatusPollCommandEnabled:      statusPollCommandEnabled,
-		StatusPollIntervalMs:          pickPositiveInt(current.StatusPollIntervalMs, firstInt(req.StatusPollIntervalMs, req.SerialPollIntervalMs)),
-		SerialAssertDTR:               pickBool(current.SerialAssertDTR, req.SerialAssertDTR),
-		SerialAssertRTS:               pickBool(current.SerialAssertRTS, req.SerialAssertRTS),
-		RawPassthroughEnabled:         pickBool(current.RawPassthroughEnabled, req.RawPassthroughEnabled),
-		RawPassthroughAllowWhileArmed: pickBool(current.RawPassthroughAllowWhileArmed, req.RawPassthroughAllowWhileArmed),
-		RawPassthroughListenAddress:   pickOptionalString(current.RawPassthroughListenAddress, req.RawPassthroughListenAddress),
+		SerialPort:                             pickOptionalString(current.SerialPort, req.SerialPort),
+		ListenAddress:                          pickOptionalString(current.ListenAddress, req.ListenAddress),
+		PollingMode:                            mergedPollingMode(current.PollingMode, req, displayPollingEnabled, statusPollingEnabled, statusPollCommandEnabled),
+		PollIntervalMs:                         pickPositiveInt(current.PollIntervalMs, req.PollIntervalMs),
+		DisplayPollingEnabled:                  displayPollingEnabled,
+		StatusPollingEnabled:                   statusPollingEnabled,
+		AmplifierTemperatureUnit:               pickOptionalString(current.AmplifierTemperatureUnit, req.AmplifierTemperatureUnit),
+		PanelModelLabel:                        pickOptionalString(current.PanelModelLabel, req.PanelModelLabel),
+		InputLabels:                            pickOptionalMap(current.InputLabels, req.InputLabels),
+		AntennaLabels:                          pickOptionalMap(current.AntennaLabels, req.AntennaLabels),
+		SafetyMonitoringEnabled:                pickBool(current.SafetyMonitoringEnabled, req.SafetyMonitoringEnabled),
+		OvertemperatureStandbyArmed:            pickBool(current.OvertemperatureStandbyArmed, req.OvertemperatureStandbyArmed),
+		TemperatureWarningC:                    pickFloat(current.TemperatureWarningC, req.TemperatureWarningC),
+		TemperatureTripC:                       pickFloat(current.TemperatureTripC, req.TemperatureTripC),
+		TemperatureResetC:                      pickFloat(current.TemperatureResetC, req.TemperatureResetC),
+		SWRWarning:                             pickFloat(current.SWRWarning, req.SWRWarning),
+		SWRTrip:                                pickFloat(current.SWRTrip, req.SWRTrip),
+		AutomaticFanPolicyEnabled:              pickBool(current.AutomaticFanPolicyEnabled, req.AutomaticFanPolicyEnabled),
+		FanHighTemperatureC:                    pickFloat(current.FanHighTemperatureC, req.FanHighTemperatureC),
+		FanNormalTemperatureC:                  pickFloat(current.FanNormalTemperatureC, req.FanNormalTemperatureC),
+		FanDisplayProfile:                      pickOptionalString(current.FanDisplayProfile, req.FanDisplayProfile),
+		FanPolicyFirmwareVersion:               pickOptionalString(current.FanPolicyFirmwareVersion, req.FanPolicyFirmwareVersion),
+		VerifyFanModeOnStartup:                 pickBool(current.VerifyFanModeOnStartup, req.VerifyFanModeOnStartup),
+		FanBoostDurationMinutes:                pickInt(current.FanBoostDurationMinutes, req.FanBoostDurationMinutes),
+		MenuDebugEnabled:                       pickBool(current.MenuDebugEnabled, req.MenuDebugEnabled),
+		SerialBaudRate:                         pickPositiveInt(current.SerialBaudRate, req.SerialBaudRate),
+		SerialReadTimeoutMs:                    pickPositiveInt(current.SerialReadTimeoutMs, req.SerialReadTimeoutMs),
+		StatusPollCommandEnabled:               statusPollCommandEnabled,
+		StatusPollIntervalMs:                   pickPositiveInt(current.StatusPollIntervalMs, firstInt(req.StatusPollIntervalMs, req.SerialPollIntervalMs)),
+		SerialAssertDTR:                        pickBool(current.SerialAssertDTR, req.SerialAssertDTR),
+		SerialAssertRTS:                        pickBool(current.SerialAssertRTS, req.SerialAssertRTS),
+		RawPassthroughClientIdleTimeoutSeconds: pickInt(current.RawPassthroughClientIdleTimeoutSeconds, req.RawPassthroughClientIdleTimeoutSeconds),
+		RawPassthroughEnabled:                  pickBool(current.RawPassthroughEnabled, req.RawPassthroughEnabled),
+		RawPassthroughAllowWhileArmed:          pickBool(current.RawPassthroughAllowWhileArmed, req.RawPassthroughAllowWhileArmed),
+		RawPassthroughListenAddress:            pickOptionalString(current.RawPassthroughListenAddress, req.RawPassthroughListenAddress),
 	}
 }
 
@@ -1171,6 +1174,7 @@ func settingsMessage(current, next config.Settings) string {
 	restartNeeded := current.ListenAddress != next.ListenAddress ||
 		current.PollIntervalMs != next.PollIntervalMs ||
 		current.PollingMode != next.PollingMode ||
+		current.RawPassthroughClientIdleTimeoutSeconds != next.RawPassthroughClientIdleTimeoutSeconds ||
 		current.RawPassthroughEnabled != next.RawPassthroughEnabled ||
 		current.RawPassthroughListenAddress != next.RawPassthroughListenAddress
 	if current.ListenAddress != next.ListenAddress {
@@ -1233,4 +1237,11 @@ type invalidFixtureKindError string
 
 func (e invalidFixtureKindError) Error() string {
 	return "unknown fixture kind: " + string(e)
+}
+
+func configuredClientIdleTimeout(mgr *config.Manager) int {
+	if mgr == nil {
+		return 0
+	}
+	return mgr.Get().Settings.RawPassthroughClientIdleTimeoutSeconds
 }

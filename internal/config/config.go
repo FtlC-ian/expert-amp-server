@@ -95,9 +95,10 @@ type Settings struct {
 	// server cannot issue button writes, and no server-side automatic control is
 	// available for the session. Overtemperature protection never runs on tapped
 	// telemetry. Unless explicitly allowed, armed controls refuse a lease.
-	RawPassthroughEnabled         bool   `json:"rawPassthroughEnabled"`
-	RawPassthroughAllowWhileArmed bool   `json:"rawPassthroughAllowWhileArmed"`
-	RawPassthroughListenAddress   string `json:"rawPassthroughListenAddress,omitempty"`
+	RawPassthroughClientIdleTimeoutSeconds int    `json:"rawPassthroughClientIdleTimeoutSeconds"`
+	RawPassthroughEnabled                  bool   `json:"rawPassthroughEnabled"`
+	RawPassthroughAllowWhileArmed          bool   `json:"rawPassthroughAllowWhileArmed"`
+	RawPassthroughListenAddress            string `json:"rawPassthroughListenAddress,omitempty"`
 }
 
 type Snapshot struct {
@@ -164,9 +165,10 @@ type rawSettings struct {
 	SerialAssertDTR          *bool `json:"serialAssertDTR,omitempty"`
 	SerialAssertRTS          *bool `json:"serialAssertRTS,omitempty"`
 
-	RawPassthroughEnabled         *bool   `json:"rawPassthroughEnabled,omitempty"`
-	RawPassthroughAllowWhileArmed *bool   `json:"rawPassthroughAllowWhileArmed,omitempty"`
-	RawPassthroughListenAddress   *string `json:"rawPassthroughListenAddress,omitempty"`
+	RawPassthroughClientIdleTimeoutSeconds *int    `json:"rawPassthroughClientIdleTimeoutSeconds,omitempty"`
+	RawPassthroughEnabled                  *bool   `json:"rawPassthroughEnabled,omitempty"`
+	RawPassthroughAllowWhileArmed          *bool   `json:"rawPassthroughAllowWhileArmed,omitempty"`
+	RawPassthroughListenAddress            *string `json:"rawPassthroughListenAddress,omitempty"`
 }
 
 func DefaultSettings(listenAddress string) Settings {
@@ -437,6 +439,9 @@ func (r rawSettings) normalize(defaults Settings) Settings {
 	if r.SerialAssertRTS != nil {
 		out.SerialAssertRTS = *r.SerialAssertRTS
 	}
+	if r.RawPassthroughClientIdleTimeoutSeconds != nil {
+		out.RawPassthroughClientIdleTimeoutSeconds = *r.RawPassthroughClientIdleTimeoutSeconds
+	}
 	if r.RawPassthroughEnabled != nil {
 		out.RawPassthroughEnabled = *r.RawPassthroughEnabled
 	}
@@ -500,6 +505,7 @@ func normalizeSettings(in, defaults Settings) Settings {
 	}
 	out.SerialAssertDTR = in.SerialAssertDTR
 	out.SerialAssertRTS = in.SerialAssertRTS
+	out.RawPassthroughClientIdleTimeoutSeconds = in.RawPassthroughClientIdleTimeoutSeconds
 	out.RawPassthroughEnabled = in.RawPassthroughEnabled
 	out.RawPassthroughAllowWhileArmed = in.RawPassthroughAllowWhileArmed
 	if strings.TrimSpace(in.RawPassthroughListenAddress) != "" {
@@ -582,6 +588,9 @@ func validatedSettings(in, defaults Settings) (Settings, error) {
 	}
 	if err := validateLabelMap("antennaLabels", out.AntennaLabels, 6); err != nil {
 		return Settings{}, err
+	}
+	if n := out.RawPassthroughClientIdleTimeoutSeconds; n < 0 || (n > 0 && n < 3) || n > 86400 {
+		return Settings{}, errors.New("raw passthrough client idle timeout must be 0 (disabled) or 3..86400 seconds")
 	}
 	if err := validateSafetySettings(out); err != nil {
 		return Settings{}, err

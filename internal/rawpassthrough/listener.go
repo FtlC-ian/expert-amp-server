@@ -30,8 +30,7 @@ import (
 
 const (
 	// keepAlivePeriod reaps a client that has gone away without closing its
-	// socket. There is deliberately no data-idle timeout: a legitimate client
-	// may sit connected without polling.
+	// socket, independently of the optional client data-idle timeout.
 	keepAlivePeriod = 30 * time.Second
 
 	// copyBufferSize is a single serial read's worth of bytes. The display
@@ -170,10 +169,11 @@ type Lease interface {
 
 // Config configures a Controller.
 type Config struct {
-	Enabled       bool
-	ListenAddress string
-	Source        *runtime.SerialSource
-	Lease         Lease
+	Enabled           bool
+	ListenAddress     string
+	Source            *runtime.SerialSource
+	Lease             Lease
+	ClientIdleTimeout time.Duration
 
 	// ArmedAutomaticControls names the server-side automatic controls that are
 	// currently armed, or nil when none are.
@@ -195,12 +195,13 @@ type Controller struct {
 	// between the coordinator reservation and the serial port claim.
 	setupMu sync.Mutex
 
-	mu        sync.Mutex
-	listener  net.Listener
-	listenErr error
-	conn      net.Conn
-	handle    *runtime.RawPassthroughHandle
-	since     time.Time
+	mu                sync.Mutex
+	listener          net.Listener
+	listenErr         error
+	conn              net.Conn
+	handle            *runtime.RawPassthroughHandle
+	since             time.Time
+	lastReleaseReason string
 }
 
 // New builds a Controller. It returns nil when passthrough is not usable, so
@@ -329,7 +330,7 @@ func (c *Controller) serve(ctx context.Context, conn net.Conn) {
 
 	var once sync.Once
 	done := make(chan struct{})
-	finish := func() {
+	finish := func(reason string) {
 		once.Do(func() {
 			close(done)
 			_ = conn.Close()
@@ -348,11 +349,12 @@ func (c *Controller) serve(ctx context.Context, conn net.Conn) {
 			if c.handle == handle {
 				c.conn = nil
 				c.handle = nil
+				c.lastReleaseReason = reason
 			}
 			c.mu.Unlock()
 		})
 	}
-	defer finish()
+	defer finish("disconnected")
 
 	// serve must watch ctx itself. The listener's shutdown watcher takes a
 	// one-shot snapshot of the active connection, so a session that is still
@@ -362,7 +364,7 @@ func (c *Controller) serve(ctx context.Context, conn net.Conn) {
 		select {
 		case <-ctx.Done():
 			log.Printf("raw passthrough disconnecting %s: server is shutting down", remote)
-			finish()
+			finish("shutdown")
 		case <-done:
 		}
 	}()
@@ -373,14 +375,18 @@ func (c *Controller) serve(ctx context.Context, conn net.Conn) {
 	// client -> amplifier, forwarded verbatim.
 	go func() {
 		defer wg.Done()
-		defer finish()
-		_, _ = io.Copy(handle.Port(), conn)
+		defer finish("disconnected")
+		_, err := io.Copy(handle.Port(), clientReader{conn: conn, timeout: c.cfg.ClientIdleTimeout})
+		var timeout net.Error
+		if c.cfg.ClientIdleTimeout > 0 && errors.As(err, &timeout) && timeout.Timeout() {
+			finish("client-idle-timeout")
+		}
 	}()
 
 	// amplifier -> client, forwarded verbatim and tapped.
 	go func() {
 		defer wg.Done()
-		defer finish()
+		defer finish("disconnected")
 		buf := make([]byte, copyBufferSize)
 		port := handle.Port()
 		for {
@@ -413,6 +419,21 @@ func (c *Controller) serve(ctx context.Context, conn net.Conn) {
 	log.Printf("raw passthrough client %s disconnected; server polling resumed", remote)
 }
 
+// Only client reads renew this deadline. Amplifier traffic and client writes do not.
+type clientReader struct {
+	conn    net.Conn
+	timeout time.Duration
+}
+
+func (r clientReader) Read(p []byte) (int, error) {
+	if r.timeout > 0 {
+		if err := r.conn.SetReadDeadline(time.Now().Add(r.timeout)); err != nil {
+			return 0, err
+		}
+	}
+	return r.conn.Read(p)
+}
+
 // Addr is the address the listener actually bound to, or "" before Start binds.
 func (c *Controller) Addr() string {
 	if c == nil {
@@ -437,13 +458,15 @@ func (c *Controller) closeActiveConn() {
 
 // Status describes the passthrough listener for the diagnostics API.
 type Status struct {
-	Enabled               bool   `json:"enabled"`
-	ListenAddress         string `json:"listenAddress,omitempty"`
-	ClientConnected       bool   `json:"clientConnected"`
-	ClientAddress         string `json:"clientAddress,omitempty"`
-	ConnectedSince        string `json:"connectedSince,omitempty"`
-	StatusFramesObserved  int64  `json:"statusFramesObserved,omitempty"`
-	DisplayFramesObserved int64  `json:"displayFramesObserved,omitempty"`
+	ClientIdleTimeoutSeconds int    `json:"clientIdleTimeoutSeconds"`
+	LastReleaseReason        string `json:"lastReleaseReason,omitempty"`
+	Enabled                  bool   `json:"enabled"`
+	ListenAddress            string `json:"listenAddress,omitempty"`
+	ClientConnected          bool   `json:"clientConnected"`
+	ClientAddress            string `json:"clientAddress,omitempty"`
+	ConnectedSince           string `json:"connectedSince,omitempty"`
+	StatusFramesObserved     int64  `json:"statusFramesObserved,omitempty"`
+	DisplayFramesObserved    int64  `json:"displayFramesObserved,omitempty"`
 
 	// TapFresh reports whether tapped telemetry is currently being refreshed by
 	// the connected client. It is display freshness only and never implies that
@@ -491,9 +514,12 @@ func (c *Controller) Status() Status {
 	since := c.since
 	listener := c.listener
 	listenErr := c.listenErr
+	lastReleaseReason := c.lastReleaseReason
 	c.mu.Unlock()
 
 	out := Status{Enabled: true, ListenAddress: c.cfg.ListenAddress, ListenerAvailable: listener != nil}
+	out.ClientIdleTimeoutSeconds = int(c.cfg.ClientIdleTimeout / time.Second)
+	out.LastReleaseReason = lastReleaseReason
 	out.ArmedControls = c.armedControls()
 	if listenErr != nil {
 		// Enabled is documented as "configured and running", so a listener that

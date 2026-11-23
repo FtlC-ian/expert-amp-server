@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add optional `rawPassthroughClientIdleTimeoutSeconds` (default 0, disabled; 3..86400 seconds otherwise). Only client bytes renew it. Changes require restart; timeout uses normal port reclaim and reports `lastReleaseReason: "client-idle-timeout"`. Low values can disconnect quiet clients.
+
 - Add `rawPassthroughAllowWhileArmed`, disabled by default, to admit raw leases and allow arming during a lease without changing saved automatic fan control or overtemperature standby settings (#52). It takes effect live at admission; disabling it leaves an active lease alone. Report armed controls in `armedControls` and armed but inert controls in `pausedForLease` at `GET /api/v1/raw-passthrough`, with the same paused list in status and its WebSocket. After disconnect, existing fresh direct-poll gates resume control without any suspend/restore state.
 
 ### Upgrade and security notes

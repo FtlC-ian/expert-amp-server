@@ -197,3 +197,17 @@ Before handing this to another user, verify:
 - Operator layout shows sane power/SWR/band/antenna/input state
 - normal button actions return success only when the serial transport is actually available
 - wake behavior is documented honestly as experimental and hardware-dependent
+
+### Optional raw client idle timeout
+
+`rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
+from `3` through `86400` to close a lease after that many seconds without bytes
+from the client. Three seconds permits several missed SmartSDR half-second polls;
+a quiet client such as SPE Expert Controller Plus may still be disconnected, so
+leave this disabled unless the client has a known polling cadence. Amplifier-only
+traffic never renews it. Changes are persisted and require restart, like the
+listener settings. Normal release reclaims the port and fresh direct polling
+restores control authority. `GET /api/v1/raw-passthrough` reports the configured
+`clientIdleTimeoutSeconds` (the running value when a controller exists) and
+`lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
+retained until the next release, and resets on restart.

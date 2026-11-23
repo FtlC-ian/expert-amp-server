@@ -9,6 +9,7 @@
   "automaticFanPolicyEnabled": false,
   "overtemperatureStandbyArmed": false,
   "menuDebugEnabled": false,
+  "rawPassthroughClientIdleTimeoutSeconds": 0,
   "rawPassthroughEnabled": false,
   "rawPassthroughAllowWhileArmed": false,
   "rawPassthroughListenAddress": ":7388",

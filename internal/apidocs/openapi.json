@@ -1270,6 +1270,8 @@
           "listenerAvailable"
         ],
         "properties": {
+          "clientIdleTimeoutSeconds": {"type": "integer", "description": "Configured client-only idle timeout in seconds; 0 disabled. Running value when controller exists, persisted value otherwise."},
+          "lastReleaseReason": {"type": "string", "enum": ["disconnected", "shutdown", "client-idle-timeout"], "description": "Last completed release reason, retained in memory until next release or restart."},
           "enabled": {
             "type": "boolean",
             "description": "Whether the raw passthrough listener is configured and running. False when rawPassthroughEnabled is off, when no serial port is configured, when no listen address is set, or when the listener failed to bind -- see listenerAvailable and note to tell a disabled passthrough from one that could not start."
@@ -2684,6 +2686,13 @@
             "default": false,
             "description": "Advanced opt-in for the local menu discovery and reporting wizard. Enabling this setting does not arm a session or authorize amplifier writes. Session tokens and discovery state are never persisted."
           },
+          "rawPassthroughClientIdleTimeoutSeconds": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 86400,
+            "description": "0 disables client idle timeout; otherwise must be 3..86400 seconds. Only bytes received from the client renew it, never amplifier traffic. Low values disconnect quiet clients. Persisted, requires restart."
+          },
           "rawPassthroughEnabled": {
             "type": "boolean",
             "default": false,
@@ -2865,6 +2874,13 @@
             "type": "boolean",
             "default": false,
             "description": "Advanced opt-in for the local menu discovery and reporting wizard. Enabling this setting does not arm a session or authorize amplifier writes. Session tokens and discovery state are never persisted."
+          },
+          "rawPassthroughClientIdleTimeoutSeconds": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 86400,
+            "description": "0 disables client idle timeout; otherwise must be 3..86400 seconds. Only bytes received from the client renew it, never amplifier traffic. Low values disconnect quiet clients. Persisted, requires restart."
           },
           "rawPassthroughEnabled": {
             "type": "boolean",
