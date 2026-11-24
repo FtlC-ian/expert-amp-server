@@ -166,7 +166,9 @@ Common gotchas from the first radio-host smoke test:
 
 Verify the selected release binary and its metadata before use. Back up the existing binary and persistent config (including server-owned fan receipts), stop the service through its supervisor, install the replacement binary, and start the service again. **Do not overwrite an existing config with `config.example.json`** or reinstall an unchanged service unit just to upgrade. Check `/api/v1/version`, logs, and `/api/v1/status` after restart; `/healthz` alone is not serial-health evidence. Preserve the previous binary/config for rollback; no hardware validation is implied by a successful process start.
 
-For v0.5.0, raw passthrough stays disabled unless explicitly configured. It requires a configured serial port and polling other than `off`; listener changes require restart. Before connecting a client, explicitly disarm automatic fan control and overtemperature standby. They cannot act during a lease, are not silently suspended/restored, and cannot be re-armed until the client disconnects. Restrict the raw listener (`:7388` by default) separately from HTTP. Contact now includes identical accepted display arrivals; content sequence/timestamps remain unchanged for identical screens. Do not use contact/provenance alone as permission to actuate.
+Raw passthrough stays disabled unless explicitly configured. It requires a configured serial port and polling other than `off`; listener changes require restart. By default, explicitly disarm automatic fan control and overtemperature standby before connecting, and re-arming during a lease returns 409. Alternatively, set `rawPassthroughAllowWhileArmed: true` (default false, live without restart). Saved settings remain armed across the lease and any crash or reboot; nothing is suspended or restored. Both controls are inert while leased, and `pausedForLease` names them in raw-passthrough diagnostics, status and its WebSocket. Arming during the lease is allowed with this opt-in. Turning it off affects the next admission, not the active lease. After disconnect, only the first fresh direct status poll can re-enable control, subject to all existing safety gates.
+
+With the opt-in on, the only overtemperature protection while leased is the amplifier's own firmware stepdown. An unattended lease can run indefinitely. Raw TCP is unauthenticated and unencrypted. Restrict the raw listener (`:7388` by default) separately from HTTP to trusted operators. Contact includes identical accepted display arrivals; content sequence/timestamps remain unchanged for identical screens. Do not use contact/provenance alone as permission to actuate.
 
 ## Button and wake caveats
 
@@ -195,3 +197,27 @@ Before handing this to another user, verify:
 - Operator layout shows sane power/SWR/band/antenna/input state
 - normal button actions return success only when the serial transport is actually available
 - wake behavior is documented honestly as experimental and hardware-dependent
+
+### Display-only temperature judgement
+
+VoiceOver and other watchers can read `displayTemperatureWarning.state` and
+`pausedForLease` from status or its WebSocket. The warning uses existing
+`temperatureWarningC` and `temperatureTripC`, updated live, even if safety
+monitoring is disabled. `disabled` means no thresholds; `unavailable` means no
+recent temperature. Check its `provenance`: `passthrough-tap` is display-only,
+not server-side overtemperature protection. `pausedForLease` names armed but
+inert controls and disappears when none are paused.
+
+### Optional raw client idle timeout
+
+`rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
+from `3` through `86400` to close a lease after that many seconds without bytes
+from the client. Three seconds permits several missed SmartSDR half-second polls;
+a quiet client such as SPE Expert Controller Plus may still be disconnected, so
+leave this disabled unless the client has a known polling cadence. Amplifier-only
+traffic never renews it. Changes are persisted and require restart, like the
+listener settings. Normal release reclaims the port and fresh direct polling
+restores control authority. `GET /api/v1/raw-passthrough` reports the configured
+`clientIdleTimeoutSeconds` (the running value when a controller exists) and
+`lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
+retained until the next release, and resets on restart.

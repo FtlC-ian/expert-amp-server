@@ -54,20 +54,33 @@ type Telemetry struct {
 	Notes                      []string `json:"notes,omitempty"`
 }
 
+// DisplayTemperatureWarning is presentation evidence, never actuation authority.
+type DisplayTemperatureWarning struct {
+	State             string   `json:"state"`
+	Provenance        string   `json:"provenance,omitempty"`
+	TemperatureC      *float64 `json:"temperatureC,omitempty"`
+	Sensor            string   `json:"sensor,omitempty"`
+	WarningThresholdC float64  `json:"warningThresholdC,omitempty"`
+	TripThresholdC    float64  `json:"tripThresholdC,omitempty"`
+	Reason            string   `json:"reason,omitempty"`
+}
+
 type Status struct {
 	Telemetry
-	RecentContact bool     `json:"recentContact,omitempty"`
-	LastContactAt string   `json:"lastContactAt,omitempty"`
-	BandCode      string   `json:"bandCode,omitempty"`
-	BandText      string   `json:"bandText,omitempty"`
-	RXAntenna     string   `json:"rxAntenna,omitempty"`
-	WarningCode   string   `json:"warningCode,omitempty"`
-	AlarmCode     string   `json:"alarmCode,omitempty"`
-	ATUStatusCode string   `json:"atuStatusCode,omitempty"`
-	WarningsText  []string `json:"warningsText,omitempty"`
-	AlarmsText    []string `json:"alarmsText,omitempty"`
-	Warnings      []string `json:"warnings,omitempty"`
-	ActiveAlarms  []string `json:"activeAlarms,omitempty"`
+	DisplayTemperatureWarning *DisplayTemperatureWarning `json:"displayTemperatureWarning,omitempty"`
+	PausedForLease            []string                   `json:"pausedForLease,omitempty"`
+	RecentContact             bool                       `json:"recentContact,omitempty"`
+	LastContactAt             string                     `json:"lastContactAt,omitempty"`
+	BandCode                  string                     `json:"bandCode,omitempty"`
+	BandText                  string                     `json:"bandText,omitempty"`
+	RXAntenna                 string                     `json:"rxAntenna,omitempty"`
+	WarningCode               string                     `json:"warningCode,omitempty"`
+	AlarmCode                 string                     `json:"alarmCode,omitempty"`
+	ATUStatusCode             string                     `json:"atuStatusCode,omitempty"`
+	WarningsText              []string                   `json:"warningsText,omitempty"`
+	AlarmsText                []string                   `json:"alarmsText,omitempty"`
+	Warnings                  []string                   `json:"warnings,omitempty"`
+	ActiveAlarms              []string                   `json:"activeAlarms,omitempty"`
 }
 
 type Response struct {

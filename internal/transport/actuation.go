@@ -16,8 +16,8 @@ const (
 )
 
 // LeaseButtonTransport is an owner-scoped view of an ActuationCoordinator.
-// Safety ownership may preempt fan ownership; neither automatic owner can
-// interleave with manual API writes.
+// Safety ownership may preempt fan ownership, but never a raw passthrough
+// lease. Manual API writes cannot interleave with any lease.
 type LeaseButtonTransport interface {
 	ButtonTransport
 	Acquire() ActuationLease
@@ -98,7 +98,7 @@ func (t *ownedButtonTransport) Acquire() ActuationLease {
 		if c.wakeDone != nil {
 			return nil
 		}
-		if c.lease != nil && c.lease.owner.safety {
+		if c.lease != nil && (c.lease.owner.safety || c.lease.owner.owner == ActuationOwnerRawPassthrough) {
 			return nil
 		}
 		lease := &actuationLease{coordinator: c, owner: t}

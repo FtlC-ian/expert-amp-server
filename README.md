@@ -88,17 +88,30 @@ a client is connected the server stops its own polling and refuses its own
 button and wake writes with HTTP 409; on disconnect it reclaims the port and
 resumes automatically. A second concurrent client is rejected.
 
-**Server-side automatic controls are unavailable during a session, and a session
-is refused rather than started while one is armed.** If automatic fan control or
+**Server-side automatic controls are unavailable during a session. By default a
+session is refused while one is armed.** If automatic fan control or
 overtemperature standby is armed, a connecting client is refused: the server
 closes the connection without sending a byte, so the client sees a clean EOF (or
 `ECONNRESET` if it wrote first) and some clients show only a retry spinner. The
 reason is not delivered on the raw socket — that socket carries the amplifier's
 stream and nothing else. Read it from the server log or
 `GET /api/v1/raw-passthrough`, which names each control to disarm. Nothing is
-silently suspended and nothing is automatically restored afterwards — choosing
+silently suspended and nothing is automatically restored afterwards. Choosing
 passthrough means knowingly running without those controls for as long as the
 client is connected. This does not replace or establish the behavior of the amplifier's own protection firmware.
+
+Set `rawPassthroughAllowWhileArmed: true` to admit leases without disarming.
+It defaults to false and takes effect live, without restart, because admission
+already reads the current settings inside the settings transaction boundary.
+Saved arming settings never change for a lease, including on crash, kill or
+reboot. Armed controls are reported as paused, not as functioning protection.
+After disconnect the existing reclaim path waits for the first fresh direct
+`status-poll` before control can act again, with all normal safety gates intact.
+Turning the option off does not terminate an active lease; it gates the next one.
+With this option on, while a client holds the lease the only overtemperature
+protection is the amplifier's own firmware stepdown. An unattended lease can run
+indefinitely. Raw TCP is unauthenticated and unencrypted. Restrict it to trusted
+operators and never rely on tapped telemetry for server protection.
 
 The dashboard and API keep working meanwhile: the server passively decodes the
 amplifier→client direction as it forwards it, so while the external client polls
@@ -136,7 +149,12 @@ Check `GET /api/v1/raw-passthrough`: it reports `blockedByArmedControls` when a
 session would be refused, `tapFresh` for display freshness, and
 `automaticControlsAvailable`, which reports whether the server owns the serial
 port — false for the lifetime of a lease, true when no client is connected. It
-does not report whether a control is armed; `blockedByArmedControls` does that.
+does not report whether a control is armed; `armedControls` does that.
+`blockedByArmedControls` is empty with the opt-in on. While leased,
+`pausedForLease` names the armed controls that cannot act, even if the option is
+then turned off. The same `pausedForLease` list appears in `/api/v1/status` and
+its WebSocket, with updates within one second even if no telemetry changes.
+The list is omitted when empty, including after disconnect.
 `listenerAvailable` reports whether the TCP listener actually bound. `enabled`
 means configured *and* running, so a listener that failed to bind reports
 `enabled: false` alongside `listenerAvailable: false`, with the bind error in
@@ -144,11 +162,26 @@ means configured *and* running, so a listener that failed to bind reports
 turned off.
 
 Arming automatic fan control or overtemperature standby is refused with HTTP 409
-while a client holds the port. Those controls cannot act during a lease, so
-accepting the change would leave a control that reads as armed and does nothing.
-Disarming is always allowed. `rawPassthroughEnabled` and
+while a client holds the port unless `rawPassthroughAllowWhileArmed` is true in
+the resulting settings. With the opt-in on, arming succeeds and those controls
+are reported as paused until disconnect. Disarming is always allowed.
+`rawPassthroughEnabled` and
 `rawPassthroughListenAddress` take effect on restart, because the listener is
 built from the startup configuration.
+
+### Optional raw client idle timeout
+
+`rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
+from `3` through `86400` to close a lease after that many seconds without bytes
+from the client. Three seconds permits several missed SmartSDR half-second polls;
+a quiet client such as SPE Expert Controller Plus may still be disconnected, so
+leave this disabled unless the client has a known polling cadence. Amplifier-only
+traffic never renews it. Changes are persisted and require restart, like the
+listener settings. Normal release reclaims the port and fresh direct polling
+restores control authority. `GET /api/v1/raw-passthrough` reports the configured
+`clientIdleTimeoutSeconds` (the running value when a controller exists) and
+`lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
+retained until the next release, and resets on restart.
 
 ## API highlights
 
@@ -189,6 +222,20 @@ Automatic fan cooling is disabled by default. Optional overtemperature standby i
 Important upgrade note: the amplifier status protocol sends temperature numbers without a unit. Before enabling temperature monitoring or fan automation, set `amplifierTemperatureUnit` to match the amplifier SET menu (`C` or `F`). All thresholds and API fields ending in `C` remain canonical Celsius.
 
 SPE documents a maximum rate of `115200` with automatic adaptation to lower speeds, so that remains the server default. One field-tested 2K-FA installation only communicated reliably at `57600`; use that as a troubleshooting fallback, not as a model-wide requirement.
+
+### Display-only temperature judgement
+
+For spoken or visual watchers, `/api/v1/status` and `/api/v1/status/ws` include
+`displayTemperatureWarning`. Its `state` is `normal`, `warning`, or `trip`, using
+the hottest displayed sensor and the existing `temperatureWarningC` and
+`temperatureTripC` settings, even when safety monitoring is disabled. The object
+includes `provenance`, `temperatureC`, `sensor`, and the thresholds used. Without
+thresholds it says `disabled`; without a recent reading it says `unavailable`,
+with a `reason` and no current temperature. Tapped evidence retains provenance
+`passthrough-tap`. This is display-only, not an amplifier alarm or protection
+action, and it never latches or uses the safety reset threshold. Settings changes
+apply live. Watch `pausedForLease` alongside it to announce which saved armed
+controls are currently paused; an absent or empty list means none are paused.
 
 ## Menu Debug & Reporting
 

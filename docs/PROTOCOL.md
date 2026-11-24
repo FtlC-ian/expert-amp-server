@@ -21,7 +21,7 @@ For amp status, keep the authority order explicit:
 2. **Display-derived telemetry is fallback data** for fields the status poll does not currently provide, or when protocol-native status is temporarily unavailable.
 3. **Rendered display state and parsed screen text are never the canonical machine-readable contract.** They are useful for UI mirroring, debugging, and conservative fallback extraction.
 
-During a raw TCP lease, passively observed status is labelled `passthrough-tap` and may be shown while fresh, but is never accepted as server actuation authority. Automatic fan control and overtemperature standby must be explicitly disarmed before a lease can start. HTTP/raw TCP are unauthenticated, raw TCP is unencrypted, and WebSocket origins are unrestricted; use explicit trusted-operator access controls.
+During a raw TCP lease, passively observed status is labelled `passthrough-tap` and may be shown while fresh, but is never accepted as server actuation authority. By default automatic fan control and overtemperature standby must be explicitly disarmed before admission. `rawPassthroughAllowWhileArmed` (default false, live) permits admission and arming during a lease without changing saved arming settings. `armedControls` reports arming in raw-passthrough diagnostics; `pausedForLease` names armed but inert controls there and in status and its WebSocket. `blockedByArmedControls` is empty with the opt-in on. Disabling the opt-in does not end an active lease. Reclaim invalidates session evidence; only a fresh direct status poll can re-enable actuation, subject to existing gates. The only overtemperature protection while leased is the amplifier's own firmware stepdown, and an unattended lease can run indefinitely. HTTP/raw TCP are unauthenticated, raw TCP is unencrypted, and WebSocket origins are unrestricted; use explicit trusted-operator access controls.
 
 Contact and content are separate: successfully decoded live display arrivals, including identical frames, update runtime `displayReceivedAt`; content `sequence`/`updatedAt` change only when decoded content changes. Canonical `recentContact` expires after five seconds without eligible contact, and open status WebSockets re-resolve once a second as well as on events. Cached polls, fixture changes, malformed frames, and retired-session frames do not renew display contact. Link liveness is not command acknowledgement or safety authorization.
 
@@ -289,3 +289,31 @@ When real captured frames produce wrong output:
 5. Add a regression test so the fix is permanent.
 
 **Do not guess.** If you cannot determine the correct behavior from available captures, document the uncertainty here and flag it for the next capture session.
+
+### Display-only temperature judgement
+
+Status JSON and its WebSocket expose `displayTemperatureWarning` with `state`,
+`provenance`, the hottest `temperatureC`, `sensor` (`upper`, `lower`, or
+`combiner`), `warningThresholdC`, and `tripThresholdC`. It reuses configured
+temperature thresholds and alarm vocabulary: `normal`, `warning`, `trip`,
+`disabled` when unconfigured, or `unavailable` when stale or missing. Unavailable
+judgements include a reason but no current temperature. It is display evidence
+only, including on `passthrough-tap` frames, and has no reset latch or actuation
+effect. It is independent of amplifier-supplied warning/alarm codes. The existing
+`pausedForLease` list names armed controls that cannot act during a lease and is
+omitted when empty. Watchers can announce both fields without inventing their
+own temperature thresholds.
+
+### Optional raw client idle timeout
+
+`rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
+from `3` through `86400` to close a lease after that many seconds without bytes
+from the client. Three seconds permits several missed SmartSDR half-second polls;
+a quiet client such as SPE Expert Controller Plus may still be disconnected, so
+leave this disabled unless the client has a known polling cadence. Amplifier-only
+traffic never renews it. Changes are persisted and require restart, like the
+listener settings. Normal release reclaims the port and fresh direct polling
+restores control authority. `GET /api/v1/raw-passthrough` reports the configured
+`clientIdleTimeoutSeconds` (the running value when a controller exists) and
+`lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
+retained until the next release, and resets on restart.

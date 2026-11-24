@@ -47,6 +47,9 @@ func TestNewManagerCreatesDefaultConfig(t *testing.T) {
 	if snap.Settings.MenuDebugEnabled {
 		t.Fatal("MenuDebugEnabled = true, want disabled by default")
 	}
+	if snap.Settings.RawPassthroughAllowWhileArmed {
+		t.Fatal("RawPassthroughAllowWhileArmed = true, want disabled by default")
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -71,6 +74,38 @@ func TestNewManagerCreatesDefaultConfig(t *testing.T) {
 	}
 	if raw, ok := saved["menuDebugEnabled"]; !ok || string(raw) != "false" {
 		t.Fatalf("saved menuDebugEnabled = %s, present=%v; want explicit false", raw, ok)
+	}
+}
+
+func TestClientIdleTimeoutValidationAndPersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	mgr, err := NewManager(path, ":8088")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mgr.Get().Settings.RawPassthroughClientIdleTimeoutSeconds != 0 {
+		t.Fatal("timeout must default to disabled")
+	}
+	for _, n := range []int{-1, 1, 2, 86401} {
+		s := mgr.Get().Settings
+		s.RawPassthroughClientIdleTimeoutSeconds = n
+		if _, err := mgr.Update(s); err == nil {
+			t.Fatalf("accepted timeout %d", n)
+		}
+	}
+	for _, n := range []int{3, 86400, 0} {
+		s := mgr.Get().Settings
+		s.RawPassthroughClientIdleTimeoutSeconds = n
+		if _, err := mgr.Update(s); err != nil {
+			t.Fatal(err)
+		}
+		reloaded, err := NewManager(path, ":8088")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := reloaded.Get().Settings.RawPassthroughClientIdleTimeoutSeconds; got != n {
+			t.Fatalf("persisted timeout = %d, want %d", got, n)
+		}
 	}
 }
 

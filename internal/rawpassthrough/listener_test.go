@@ -3,9 +3,11 @@ package rawpassthrough
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,118 @@ import (
 	"github.com/FtlC-ian/expert-amp-server/internal/runtime"
 	"github.com/FtlC-ian/expert-amp-server/internal/serial"
 )
+
+type clientReadStep struct {
+	data []byte
+	err  error
+}
+
+type deadlineClient struct {
+	net.Conn
+	steps     chan clientReadStep
+	reads     chan struct{}
+	deadlines chan time.Time
+	writes    chan []byte
+}
+
+func (c *deadlineClient) SetReadDeadline(deadline time.Time) error {
+	c.deadlines <- deadline
+	return nil
+}
+
+func (c *deadlineClient) Read(p []byte) (int, error) {
+	c.reads <- struct{}{}
+	step := <-c.steps
+	return copy(p, step.data), step.err
+}
+
+func (c *deadlineClient) Write(p []byte) (int, error) {
+	c.writes <- append([]byte(nil), p...)
+	return len(p), nil
+}
+
+func TestClientIdleDeadlineReleasesLease(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			controller, opener, cancel := newTestController(t)
+			defer cancel()
+			if enabled {
+				controller.cfg.ClientIdleTimeout = 3 * time.Second
+			}
+			server, peer := net.Pipe()
+			defer peer.Close()
+			conn := &deadlineClient{Conn: server, steps: make(chan clientReadStep), reads: make(chan struct{}, 8), deadlines: make(chan time.Time, 8), writes: make(chan []byte, 8)}
+			done := make(chan struct{})
+			go func() { controller.serve(context.Background(), conn); close(done) }()
+			await := func(ch <-chan struct{}) {
+				t.Helper()
+				select {
+				case <-ch:
+				case <-time.After(2 * time.Second):
+					t.Fatal("session did not progress")
+				}
+			}
+			await(conn.reads)
+			port := opener.latest()
+			var first time.Time
+			if enabled {
+				first = <-conn.deadlines
+				if time.Until(first) > 3*time.Second || time.Until(first) < 2*time.Second {
+					t.Fatal("wrong idle deadline")
+				}
+			}
+			// A received byte starts a fresh read with a renewed deadline.
+			conn.steps <- clientReadStep{data: []byte{0x90}}
+			select {
+			case <-port.fromHost:
+			case <-time.After(2 * time.Second):
+				t.Fatal("client bytes not forwarded")
+			}
+			await(conn.reads)
+			if enabled {
+				if next := <-conn.deadlines; !next.After(first) {
+					t.Fatal("client traffic did not renew deadline")
+				}
+			}
+			port.toHost <- []byte{0x42}
+			select {
+			case <-conn.writes:
+			case <-time.After(2 * time.Second):
+				t.Fatal("amp bytes not forwarded")
+			}
+			if len(conn.deadlines) != 0 {
+				t.Fatal("amplifier traffic renewed client deadline")
+			}
+			if !controller.Status().ClientConnected {
+				t.Fatal("traffic ended active lease")
+			}
+			if enabled {
+				conn.steps <- clientReadStep{err: os.ErrDeadlineExceeded}
+			} else {
+				if len(conn.deadlines) != 0 {
+					t.Fatal("disabled timeout set a deadline")
+				}
+				conn.steps <- clientReadStep{err: io.EOF}
+			}
+			await(done)
+			status := controller.Status()
+			want := "disconnected"
+			if enabled {
+				want = "client-idle-timeout"
+			}
+			if status.ClientConnected || !status.AutomaticControlsAvailable || status.LastReleaseReason != want {
+				t.Fatalf("release status = %+v", status)
+			}
+			ctx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+			defer stop()
+			handle, err := controller.cfg.Source.BeginRawPassthrough(ctx)
+			if err != nil {
+				t.Fatalf("port not reclaimed: %v", err)
+			}
+			handle.Close()
+		})
+	}
+}
 
 // fakePort is a serial.Port backed by in-memory pipes, so a test can act as the
 // amplifier on the far end of the lease.

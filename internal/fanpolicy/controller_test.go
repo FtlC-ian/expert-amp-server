@@ -66,6 +66,42 @@ func (r *recordingButtons) SendButton(_ context.Context, action api.ButtonAction
 	return api.ActionResult{Name: action.Name, Sent: r.sent}, nil
 }
 
+func TestControllerRejectsTappedEvidenceUntilFreshDirectPollAfterReclaim(t *testing.T) {
+	for _, provenance := range []string{"status-poll", "passthrough-tap"} {
+		t.Run(provenance, func(t *testing.T) {
+			buttons := &sessionRecordingButtons{}
+			controller := NewController(buttons)
+			observeHome := func(generation, session uint64) {
+				observation := rxObservation(homeScreen(), generation)
+				observation.SerialSessionGeneration = session
+				controller.ObserveDisplay(observation)
+			}
+			settings := Settings{Enabled: true, DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 80, NormalTemperatureC: 75}
+			status := statusAt(90, "standby", false)
+			status.Provenance = provenance
+			controller.ObserveSerialSession(1)
+			controller.ObserveFromSerialSession(status, settings, 1)
+			if provenance == "passthrough-tap" {
+				observeHome(1, 1)
+				if got := controller.Current(); len(buttons.actions) != 0 || got.State != StateUnavailable {
+					t.Fatalf("tap authorized navigation: actions=%v result=%+v", buttons.actions, got)
+				}
+			}
+			controller.ObserveSerialSession(2)
+			observeHome(2, 2)
+			if len(buttons.actions) != 0 {
+				t.Fatalf("reclaim reused tap: %v", buttons.actions)
+			}
+			status.Provenance = "status-poll"
+			controller.ObserveFromSerialSession(status, settings, 2)
+			observeHome(3, 2)
+			if strings.Join(buttons.actions, ",") != "set" {
+				t.Fatalf("first fresh direct poll did not enable navigation: %v result=%+v", buttons.actions, controller.Current())
+			}
+		})
+	}
+}
+
 func TestControllerRetainsDesiredPolicyAcrossHysteresis(t *testing.T) {
 	controller := NewController()
 	settings := Settings{Enabled: true, DisplayProfile: SupportedDisplayProfile, HighTemperatureC: 80, NormalTemperatureC: 75}

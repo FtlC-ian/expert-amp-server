@@ -144,7 +144,8 @@ also holds an `ActuationCoordinator` lease under
 error before they reach the serial layer, and a passthrough session refuses to
 start while an automatic transaction is already driving the amplifier.
 
-**Automatic control is refused up front, not degraded.** A passthrough session
+**Automatic controls refuse admission by default.** Unless the live
+`rawPassthroughAllowWhileArmed` opt-in is true (default false), a session
 cannot start while automatic fan control or overtemperature standby is armed.
 The listener asks `Config.ArmedAutomaticControls` before it takes either the
 coordinator lease or the serial port, and refuses the connection by closing it
@@ -162,8 +163,20 @@ described above, not from this one.)
 Nothing is silently suspended for the duration of a lease and nothing is
 automatically restored afterwards: tracking what was suspended and restoring it
 across disconnects, crashes and failed port reclamation is a second state
-machine, and refusal keeps the state simple and honest. An operator who chooses
-passthrough does so knowing those controls are unavailable.
+machine. With the opt-in on, the saved settings stay armed and the existing
+provenance gates keep controls inert during the lease. The existing reclaim
+path resets serial-session evidence and requires a fresh direct `status-poll`
+before actuation can resume, subject to all other safety gates. The
+overtemperature no-retry latch is not spent by tapped frames or an in-flight
+direct poll that reaches safety after admission reserves the coordinator.
+Raw passthrough ownership is non-preemptible, including by safety; a hot poll
+defers without latching until a fresh direct poll after reclaim. Conversely,
+an existing safety hold refuses passthrough admission without retiring the
+live port, allowing the safety action to complete. A crash, kill or
+reboot needs no restoration because the saved arming settings never changed.
+The only overtemperature protection while leased is the amplifier's own firmware
+stepdown; an unattended lease can run indefinitely. Raw TCP is unauthenticated
+and unencrypted, so restrict access to trusted operators.
 
 **Tapped telemetry is display evidence only.** The amplifier→client direction is
 decoded as it is forwarded, using the same `StatusStreamDecoder` as normal
@@ -217,7 +230,8 @@ second source running ahead of it the way a lease does.
 
 Arming is serialized against session setup. `POST /api/v1/settings` is refused
 with 409 when it would arm automatic fan control or overtemperature standby
-during a lease, and the decision is taken inside the same mutex that claims the
+during a lease without the opt-in in the merged settings. With the opt-in on,
+arming is allowed and reported as paused. The decision is inside the same mutex that claims the
 port, so an update cannot race a session being established. The reverse gate —
 refusing a session while those controls are armed — is the same rule seen from
 the other end, and the two read the armed set through the same definition.
@@ -236,6 +250,12 @@ already takes the setup mutex before reading the armed set from config, so
 holding the config lock across the boundary would invert that pair and deadlock
 against a connecting client.
 
+`Config.AllowWhileArmed` reads the current setting at admission, just as
+`Config.ArmedAutomaticControls` reads arming. No new locks are added. Both reads
+run under the existing setup boundary, excluding settings commits. The opt-in
+is live rather than restart-requiring because no listener reconstruction is
+needed. Turning it off never kills an active lease; it gates the next admission.
+
 Raw passthrough also requires polling. With `pollingMode: "off"` no serial
 source is created, so there is nothing to lease; the settings route refuses that
 combination with 400 rather than storing a configuration that asks for
@@ -249,7 +269,15 @@ that will not start is a server whose overtemperature standby is not running.
 `tapFresh` for display freshness. `automaticControlsAvailable` reports serial
 port ownership: false for the lifetime of a lease, true whenever no client holds
 the port. It is not a statement that any control is armed —
-`blockedByArmedControls` is what reports that. `enabled` means configured *and* running, so a
+`armedControls` reports that independently of admission policy.
+`blockedByArmedControls` is empty with the opt-in on and during an active lease.
+`pausedForLease` lists armed controls that cannot act during the lease, regardless
+of later opt-out. The same optional list is added at the server response boundary
+to `/api/v1/status` and its WebSocket, not to internal actuation evidence.
+The existing one-second WebSocket re-resolution picks up lease/settings changes
+even with no telemetry events. Empty lists are omitted; disconnect clears the
+paused list but does not claim that a fresh direct status poll has arrived.
+`enabled` means configured *and* running, so a
 listener that failed to bind reports `enabled: false`; `listenerAvailable` and
 the bind error in `note` are what separate that from a passthrough the operator
 turned off. An operator is never left to infer safety that
@@ -377,7 +405,42 @@ Canonical status `lastContactAt` uses the later of display arrival and eligible 
 - **No vendor binaries.** The repo must not include vendor executables. Protocol/font provenance needs to be documented honestly before public release.
 - **API must be boring and stable.** Prefer explicit JSON over cleverness. The canonical REST surface is the current `/api/v1/...` API; older non-v1 routes are compatibility holdovers, not the preferred contract.
 - **Every feature needs tests.** Decoder changes need regression tests against fixture files.
-- **Wake reserves actuation without holding the coordinator lock across serial I/O.** Manual writes, menu/fan leases, overtemperature acquisition, and a second wake fail busy while the reservation is active. Safety retries only on a newer authoritative status poll after wake completes, keeping the serial read callback nonblocking, and then preempts any lower-priority lease. Owner names are diagnostics only: every successful acquisition returns an opaque lease identity, and only that exact lease can release the current reservation.
+- **Wake reserves actuation without holding the coordinator lock across serial I/O.** Manual writes, menu/fan leases, overtemperature acquisition, and a second wake fail busy while the reservation is active. Safety retries only on a newer authoritative status poll after wake completes, keeping the serial read callback nonblocking, and can preempt fan/menu leases but never raw passthrough. Every successful acquisition returns an opaque lease identity, and only that exact lease can release the current reservation. Owner names identify the raw passthrough preemption boundary as well as providing diagnostics.
 - **Automatic standby is narrow and one-way.** It may send the documented OPERATE toggle once per latched overtemperature episode only with fresh protocol-native OPERATE and RX evidence. It never acts during TX, retries, powers off, or auto-wakes.
 - **Fan navigation is one verified transaction.** Production writes require a promoted profile and support the model- and topology-bound First Series Expert 1.3K-FA and CONFIG-first Second Series Expert 1.5K-FA paths. Automatic, manual, and verification requests share the same temporary-STANDBY path, pause every write during TX, stop on unexpected screens, and restore OPERATE only after verified SAVE/home completion when the controller owned the transition.
 - **Third Series 2K-FA production control is narrower than First/Second Series.** It is bound to `EXPERT 2K-FA`, the exact Third Series topology, and an explicit exact allowlist of operator-declared actual firmware values (`Rel.26_03_24_A` and `Rel.08_06_26_A`) because status polling does not expose firmware. Empty, mistyped, case-variant, or other firmware values fail closed. It maps hardware QUIET to logical Normal cooling and hardware NORMAL to logical high cooling, starts only from verified STANDBY/RX, and never sends DISPLAY or an OPERATE/STANDBY command. The original firmware's exact 23-state reversible D1 report is retained as regression evidence; the newer firmware has a separate read-only re-capture of the unchanged top setup grid and FAN NOISE page/cursor topology, not a claimed second reversible report. Menu Debug remains the guarded evidence path for other firmware or topology combinations.
+
+### Display-only temperature judgement
+
+Status presentation adds `displayTemperatureWarning` only in the HTTP/WebSocket
+`selectedStatus` adapter, after canonical runtime resolution. It calls the pure
+monitoring evaluator with only the existing temperature warning/trip pair and
+uses its hottest-sensor selection and state vocabulary. It never calls a safety
+or fan controller, and no monitoring, fan policy, or actuation path reads this
+field. Configured thresholds apply even if monitoring is disabled. Reset
+thresholds and hysteresis remain exclusive to safety control: this presentation
+does not latch. Missing thresholds yield `disabled`; stale contact or absent
+temperature yields `unavailable` with no current temperature. Canonical tap
+expiry and display fallback still decide which evidence is shown. Protocol
+temperatures also require recent protocol contact, so a fresh display arrival
+cannot renew an old protocol temperature for this judgement. Provenance
+travels with the judgement, including `passthrough-tap` during leases.
+
+The adapter reads config only after status and passthrough snapshots have
+released their locks. The idle timeout uses socket read deadlines and the
+existing once-only finish/reclaim path. Neither feature introduces a lock or
+changes settings mutex -> setup mutex -> config manager lock ordering.
+
+### Optional raw client idle timeout
+
+`rawPassthroughClientIdleTimeoutSeconds` defaults to `0` (disabled). Set an integer
+from `3` through `86400` to close a lease after that many seconds without bytes
+from the client. Three seconds permits several missed SmartSDR half-second polls;
+a quiet client such as SPE Expert Controller Plus may still be disconnected, so
+leave this disabled unless the client has a known polling cadence. Amplifier-only
+traffic never renews it. Changes are persisted and require restart, like the
+listener settings. Normal release reclaims the port and fresh direct polling
+restores control authority. `GET /api/v1/raw-passthrough` reports the configured
+`clientIdleTimeoutSeconds` (the running value when a controller exists) and
+`lastReleaseReason`, including `client-idle-timeout`. The reason is in-memory,
+retained until the next release, and resets on restart.
