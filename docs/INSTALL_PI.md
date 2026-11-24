@@ -75,13 +75,13 @@ Key config fields for a live amp setup are represented in [`packaging/config/con
 
 ### Network serial and SPE-LAN-UNIT
 
-Prefer direct USB where practical. If using an SPE-LAN-UNIT, use firmware 1.0.7 or later (check `http://<unit>/version`); the evidence below covers 1.0.7 only. For network serial bridges, follow the README's [`serialAssertDTR` / `serialAssertRTS` guidance](../README.md#quick-start-for-local-development).
+Prefer direct USB where practical. If using an SPE-LAN-UNIT, use firmware 1.0.7 (check `http://<unit>/version`); later versions are untested. For network serial bridges, follow the README's [`serialAssertDTR` / `serialAssertRTS` guidance](../README.md#quick-start-for-local-development).
 
 [Justin's A/B report](https://github.com/FtlC-ian/expert-amp-server/issues/14#issuecomment-7137023626) and [raw logs](https://gist.github.com/w9fyi/392c451c256d8728ee8a51199f1bc147) establish:
 
 - Firmware 1.0.3 did not answer `0x90` status polls over TCP 7388, leaving the server without protocol-native status, so fan policy and overtemperature standby could not act.
 - On one unit with an EXPERT 2K-FA `Rel.08_06_26_A` in STANDBY/RX, firmware 1.0.7 returned 100/100 status and display responses in each A/B arm, byte-identical to direct USB. Median first-byte latency was about 75 ms for status and 148 ms for display, versus about 8-10 ms over USB; the worst LAN case was 270 ms.
-- The server on 1.0.7 reported `status-poll` provenance and available automatic controls. Passthrough over that path worked, with tapped status and overtemperature standby reported paused during the lease. Availability is not proof of actuation.
+- The server on 1.0.7 reported `status-poll` provenance and available automatic controls. One SmartSDR for Mac passthrough lease of about four minutes over that path tapped 331 status frames, with overtemperature standby reported paused during the lease. Availability is not proof of actuation.
 
 Still unverified: the previously reported roughly 23-minute stall on an open TCP 7388 session, concurrent unit web UI (`/ws`) and TCP 7388 use, fan-policy navigation over the LAN unit, and transmit operation. Gates depend on fresh native evidence and action-specific checks, not the transport label. If a session stops delivering status and display frames, contact expires; stale native status cannot authorize fan policy or overtemperature standby. This report is not hardware qualification.
 
