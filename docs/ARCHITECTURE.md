@@ -232,9 +232,10 @@ Arming is serialized against session setup. `POST /api/v1/settings` is refused
 with 409 when it would arm automatic fan control or overtemperature standby
 during a lease without the opt-in in the merged settings. With the opt-in on,
 arming is allowed and reported as paused. The decision is inside the same mutex that claims the
-port, so an update cannot race a session being established. The reverse gate —
-refusing a session while those controls are armed — is the same rule seen from
-the other end, and the two read the armed set through the same definition.
+port, so an update cannot race a session being established. The reverse gate
+(refusing a session while those controls are armed without the opt-in) is the
+same rule seen from the other end, and the two read the armed set through the
+same definition.
 
 A settings update is one transaction, and the boundary has to contain the read
 as well as the commit. The request body is decoded first, outside every lock,

@@ -1,12 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.5.1 - 2026-11-24
+
+Armed passthrough, client idle timeout, and display temperature warning release, with updated SPE-LAN-UNIT transport evidence. No new hardware qualification is claimed.
 
 ### Added
 
-- Add `rawPassthroughAllowWhileArmed`, disabled by default, to admit raw leases and allow arming during a lease without changing saved automatic fan control or overtemperature standby settings (#52). It takes effect live at admission; disabling it leaves an active lease alone. Report armed controls in `armedControls` and armed but inert controls in `pausedForLease` at `GET /api/v1/raw-passthrough`, with the same paused list in status and its WebSocket. After disconnect, existing fresh direct-poll gates resume control without any suspend/restore state.
+- Add `rawPassthroughAllowWhileArmed`, disabled by default, to admit raw leases and allow arming during a lease without changing saved automatic fan control or overtemperature standby settings (#53). It takes effect live at admission; disabling it leaves an active lease alone. Report armed controls in `armedControls` and armed but inert controls in `pausedForLease` at `GET /api/v1/raw-passthrough`, with the same paused list in status and its WebSocket. After disconnect, existing fresh direct-poll gates resume control without any suspend/restore state.
 - Add `displayTemperatureWarning` to status and its WebSocket, with existing `normal`/`warning`/`trip` vocabulary, displayed sensor provenance, and the configured temperature warning/trip thresholds. Missing or stale readings report `unavailable`; absent thresholds report `disabled`. This live display-only judgement works on tapped lease telemetry without granting actuation authority, latching, or changing `pausedForLease`.
 - Add optional `rawPassthroughClientIdleTimeoutSeconds` (default 0, disabled; 3..86400 seconds otherwise). Only client bytes renew it. Changes require restart; timeout uses normal port reclaim and reports `lastReleaseReason: "client-idle-timeout"`. Low values can disconnect quiet clients.
+- Document [SPE-LAN-UNIT firmware 1.0.7 transport evidence and unverified cases](docs/INSTALL_PI.md#network-serial-and-spe-lan-unit). Unlike tested 1.0.3, it answered native status polls on one unit in STANDBY/RX; this does not qualify fan navigation or transmit operation.
+
+### Fixed
+
+- Keep raw passthrough actuation leases non-preemptible by safety (#53). A hot in-flight direct poll defers without spending the overtemperature no-retry latch; only fresh direct polling after reclaim can resume control. An existing safety hold refuses raw admission without retiring the live serial port.
 
 ### Upgrade and security notes
 

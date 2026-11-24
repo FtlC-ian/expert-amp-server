@@ -53,7 +53,7 @@ Current screenshot index: [`docs/reference/screens/README.md`](../reference/scre
 - `/healthz` is process liveness only; use `/api/v1/status` for serial/protocol health.
 - The service intentionally assumes a trusted station LAN and usually listens on `:8088` for use from another shack PC; do not expose it directly to the public internet.
 - HTTP/raw TCP have no authentication, raw TCP is unencrypted, and WebSocket origins are unrestricted. Network placement does not imply authorization; restrict access to trusted operators.
-- Raw passthrough requires automatic fan control and overtemperature standby to be explicitly disarmed, not silently suspended. Neither tapped provenance nor recent contact grants safety authority.
+- Raw passthrough requires automatic fan control and overtemperature standby to be explicitly disarmed by default. The live `rawPassthroughAllowWhileArmed` opt-in permits admission and arming during a lease without changing saved settings; `pausedForLease` names armed but inert controls. Disabling it does not end an active lease. Reclaim requires fresh direct status polls and all normal gates before control resumes. Neither tapped provenance nor recent contact grants safety authority.
 
 ## Reproducible release preparation
 
@@ -75,19 +75,19 @@ The JSON parse is syntax validation, not a full OpenAPI validator. Also check al
 Use an empty dedicated output directory: the helper's checksum glob otherwise includes old artifacts already there. Explicitly set release metadata (the defaults are a Git describe version and channel `dev`):
 
 ```bash
-VERSION=v0.5.0 COMMIT="$(git rev-parse --short HEAD)" \
+VERSION=v0.5.1 COMMIT="$(git rev-parse --short HEAD)" \
 BUILD_DATE="$(git show -s --format=%cI HEAD)" CHANNEL=release \
-OUT_DIR="$PWD/dist/v0.5.0" packaging/scripts/build-release.sh
-(cd dist/v0.5.0 && shasum -a 256 -c SHA256SUMS)
-go version -m dist/v0.5.0/expert-amp-server_v0.5.0_darwin_arm64
+OUT_DIR="$PWD/dist/v0.5.1" packaging/scripts/build-release.sh
+(cd dist/v0.5.1 && shasum -a 256 -c SHA256SUMS)
+go version -m dist/v0.5.1/expert-amp-server_v0.5.1_darwin_arm64
 ```
 
-Default artifacts for v0.5.0:
+Default artifacts for v0.5.1:
 
-- `expert-amp-server_v0.5.0_linux_arm64`
-- `expert-amp-server_v0.5.0_linux_arm_v7`
-- `expert-amp-server_v0.5.0_linux_amd64`
-- `expert-amp-server_v0.5.0_darwin_arm64`
+- `expert-amp-server_v0.5.1_linux_arm64`
+- `expert-amp-server_v0.5.1_linux_arm_v7`
+- `expert-amp-server_v0.5.1_linux_amd64`
+- `expert-amp-server_v0.5.1_darwin_arm64`
 - `expert-amp-server.service`
 - `config.example.json`
 - `SHA256SUMS` (covers the other six files, not itself)
