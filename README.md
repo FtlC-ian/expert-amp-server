@@ -64,6 +64,8 @@ If no serial port is configured, the app starts in setup/fixture mode and the Se
 
 The advanced `serialAssertDTR` and `serialAssertRTS` settings default to `true` when absent. Set them to `false` for transports such as PTYs or network serial bridges that do not support modem-control ioctls; explicit `false` values remain preserved across settings saves and restarts.
 
+For network serial, see the install guide's [SPE-LAN-UNIT firmware evidence and limitations](docs/INSTALL_PI.md#network-serial-and-spe-lan-unit). Direct USB is recommended where practical.
+
 Third Series Expert 2K-FA production fan control additionally requires the operator-declared actual `fanPolicyFirmwareVersion` setting to equal `Rel.26_03_24_A` or `Rel.08_06_26_A` exactly. Status polling does not attest firmware, so empty, mistyped, case-variant, or other values advertise no supported modes and remain blocked before any amplifier command.
 
 ### Raw serial-over-TCP passthrough (optional, off by default)
@@ -265,7 +267,7 @@ Start here:
 ## Build release artifacts
 
 ```bash
-VERSION=v0.5.0 CHANNEL=release packaging/scripts/build-release.sh
+VERSION=v0.5.1 CHANNEL=release packaging/scripts/build-release.sh
 ```
 
 The release helper builds Linux ARM64, ARMv7, AMD64, and macOS ARM64 by default, injects build metadata, and copies the sample config plus systemd unit into `dist/` with `SHA256SUMS`. Build from a clean, reviewed commit into an empty output directory; see the [release checklist](docs/release/READINESS.md) for verification and publication boundaries. Set `TARGETS="linux/arm64"` for a Pi-only development build.
